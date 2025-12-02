@@ -22,7 +22,7 @@ pydantic-settings==2.1.0
 email-validator==2.1.0
 
 # ML / AI
-torch==2.5.1
+torch==2.6.0
 torchvision==0.21.0
 pillow>=10.4.0
 opencv-python==4.9.0.80
