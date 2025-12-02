@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Eye, EyeOff, Database } from "lucide-react";
 import ComicSearch from "./components/ComicSearch";
+import AdminConsole from "./components/AdminConsole";
 
 // ============================================================================
 // BUILD INFO - Update these on each release
@@ -404,6 +405,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isComicSearchOpen, setIsComicSearchOpen] = useState(false);
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login"); // login, signup
   const [mockUsers, setMockUsers] = useState([
     { id: 1, name: "Demo User", email: "demo@mdmcomics.com", password: "demo123" }
@@ -696,6 +698,15 @@ export default function App() {
                 title="Search Comic Database"
               >
                 <Database className="w-6 h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
+              </button>
+
+              {/* Admin Console Button */}
+              <button
+                onClick={() => setIsAdminOpen(true)}
+                className="relative p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-orange-500 transition-colors group"
+                title="Admin Console"
+              >
+                <Package className="w-6 h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
               </button>
 
               {/* Cart Button */}
@@ -1057,6 +1068,14 @@ export default function App() {
             console.log("Selected comic:", comic);
             setIsComicSearchOpen(false);
           }}
+        />
+      )}
+
+      {/* Admin Console Modal */}
+      {isAdminOpen && (
+        <AdminConsole
+          onClose={() => setIsAdminOpen(false)}
+          token={null}
         />
       )}
 
