@@ -9,7 +9,7 @@ env/
 .env
 
 # ML Models
-models/
+ml/models/
 *.pt
 *.pth
 *.h5
