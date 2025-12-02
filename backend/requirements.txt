@@ -24,7 +24,7 @@ email-validator==2.1.0
 # ML / AI
 torch==2.5.1
 torchvision==0.21.0
-pillow==10.2.0
+pillow>=10.4.0
 opencv-python==4.9.0.80
 numpy==1.26.3
 scikit-learn==1.4.0
