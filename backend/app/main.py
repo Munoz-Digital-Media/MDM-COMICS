@@ -5,7 +5,7 @@ FastAPI application entry point
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import products, users, auth, cart, orders, grading
+from app.api.routes import products, users, auth, cart, orders, grading, comics
 from app.core.config import settings
 
 app = FastAPI(
@@ -32,6 +32,7 @@ app.include_router(products.router, prefix="/api/products", tags=["Products"])
 app.include_router(cart.router, prefix="/api/cart", tags=["Cart"])
 app.include_router(orders.router, prefix="/api/orders", tags=["Orders"])
 app.include_router(grading.router, prefix="/api/grading", tags=["AI Grading"])
+app.include_router(comics.router, prefix="/api", tags=["Comics Database"])
 
 
 @app.get("/", tags=["Health"])

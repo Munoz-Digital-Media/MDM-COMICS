@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Eye, EyeOff } from "lucide-react";
+import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Eye, EyeOff, Database } from "lucide-react";
+import ComicSearch from "./components/ComicSearch";
 
 // ============================================================================
 // BUILD INFO - Update these on each release
@@ -402,6 +403,7 @@ export default function App() {
   // Auth state
   const [user, setUser] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isComicSearchOpen, setIsComicSearchOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login"); // login, signup
   const [mockUsers, setMockUsers] = useState([
     { id: 1, name: "Demo User", email: "demo@mdmcomics.com", password: "demo123" }
@@ -686,6 +688,15 @@ export default function App() {
                   <span className="text-sm text-zinc-400 group-hover:text-orange-500 transition-colors hidden sm:block">Sign In</span>
                 </button>
               )}
+
+                            {/* Comic Database Search Button */}
+              <button
+                onClick={() => setIsComicSearchOpen(true)}
+                className="relative p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-orange-500 transition-colors group"
+                title="Search Comic Database"
+              >
+                <Database className="w-6 h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
+              </button>
 
               {/* Cart Button */}
               <button
@@ -1036,6 +1047,17 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+            {/* Comic Database Search Modal */}
+      {isComicSearchOpen && (
+        <ComicSearch
+          onClose={() => setIsComicSearchOpen(false)}
+          onSelectComic={(comic) => {
+            console.log("Selected comic:", comic);
+            setIsComicSearchOpen(false);
+          }}
+        />
       )}
 
       {/* Auth Modal */}
