@@ -1,9 +1,12 @@
 """
 Authentication routes
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.security import (
@@ -18,6 +21,40 @@ from app.schemas.user import UserCreate, UserResponse, UserLogin
 from app.schemas.auth import Token, RefreshToken
 
 router = APIRouter()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+# Admin setup secret - set this in Railway env vars
+ADMIN_SETUP_SECRET = os.getenv("ADMIN_SETUP_SECRET", "mdm-admin-setup-2024")
+
+
+class AdminSetupRequest(BaseModel):
+    email: str
+    secret: str
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """Get current user from token"""
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id = payload.get("sub")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+    
+    return user
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -68,6 +105,12 @@ async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
     )
 
 
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_user)):
+    """Get current authenticated user"""
+    return current_user
+
+
 @router.post("/refresh", response_model=Token)
 async def refresh_token(token_data: RefreshToken, db: AsyncSession = Depends(get_db)):
     """Get new access token using refresh token"""
@@ -93,3 +136,27 @@ async def refresh_token(token_data: RefreshToken, db: AsyncSession = Depends(get
         access_token=create_access_token({"sub": user.id}),
         refresh_token=create_refresh_token({"sub": user.id})
     )
+
+
+@router.post("/admin-setup")
+async def setup_admin(request: AdminSetupRequest, db: AsyncSession = Depends(get_db)):
+    """One-time admin setup - requires secret key"""
+    if request.secret != ADMIN_SETUP_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid setup secret"
+        )
+    
+    result = await db.execute(select(User).where(User.email == request.email))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found. Please register first."
+        )
+    
+    user.is_admin = True
+    await db.commit()
+    
+    return {"message": f"User {request.email} is now an admin"}
