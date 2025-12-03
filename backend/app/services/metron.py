@@ -3,7 +3,8 @@ Metron Comic Database API Service
 https://metron.cloud/
 """
 import httpx
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
+from contextlib import asynccontextmanager
 from ..core.config import settings
 
 
@@ -13,15 +14,30 @@ class MetronService:
     def __init__(self):
         self.base_url = settings.METRON_API_BASE
         self.auth = (settings.METRON_USERNAME, settings.METRON_PASSWORD)
+        self._client: Optional[httpx.AsyncClient] = None
+
+    @asynccontextmanager
+    async def _get_client(self):
+        """Get or create a shared HTTP client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                auth=self.auth,
+                timeout=30.0
+            )
+        yield self._client
+
+    async def close(self):
+        """Close the HTTP client."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     async def _request(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         """Make authenticated request to Metron API."""
-        async with httpx.AsyncClient() as client:
+        async with self._get_client() as client:
             response = await client.get(
                 f"{self.base_url}/{endpoint}/",
-                auth=self.auth,
-                params=params,
-                timeout=30.0
+                params=params
             )
             response.raise_for_status()
             return response.json()
@@ -58,11 +74,9 @@ class MetronService:
 
     async def get_issue(self, issue_id: int) -> Dict[str, Any]:
         """Get detailed information about a specific issue."""
-        async with httpx.AsyncClient() as client:
+        async with self._get_client() as client:
             response = await client.get(
-                f"{self.base_url}/issue/{issue_id}/",
-                auth=self.auth,
-                timeout=30.0
+                f"{self.base_url}/issue/{issue_id}/"
             )
             response.raise_for_status()
             return response.json()
@@ -95,11 +109,9 @@ class MetronService:
 
     async def get_series(self, series_id: int) -> Dict[str, Any]:
         """Get detailed information about a specific series."""
-        async with httpx.AsyncClient() as client:
+        async with self._get_client() as client:
             response = await client.get(
-                f"{self.base_url}/series/{series_id}/",
-                auth=self.auth,
-                timeout=30.0
+                f"{self.base_url}/series/{series_id}/"
             )
             response.raise_for_status()
             return response.json()

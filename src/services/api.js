@@ -21,7 +21,13 @@ async function fetchAPI(endpoint, options = {}) {
     });
 
     if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `API Error: ${response.status}`);
+    }
+
+    // Handle 204 No Content
+    if (response.status === 204) {
+      return null;
     }
 
     return await response.json();
@@ -112,7 +118,7 @@ export const productsAPI = {
   },
 
   search: async (query) => {
-    return fetchAPI(`/products/search?q=${encodeURIComponent(query)}`);
+    return fetchAPI(`/products?search=${encodeURIComponent(query)}`);
   },
 };
 
