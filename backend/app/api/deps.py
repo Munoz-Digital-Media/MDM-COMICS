@@ -20,7 +20,7 @@ async def get_current_user(
     """Get current authenticated user"""
     payload = decode_token(credentials.credentials)
 
-    if not payload or payload.get("type") \!= "access":
+    if not payload or payload.get("type") != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
@@ -64,7 +64,7 @@ async def get_optional_user(
         return None
 
     payload = decode_token(credentials.credentials)
-    if not payload or payload.get("type") \!= "access":
+    if not payload or payload.get("type") != "access":
         return None
 
     user_id = payload.get("sub")
