@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.core.database import get_db
 from app.services.comic_cache import comic_cache
 from app.services.metron import metron_service
 

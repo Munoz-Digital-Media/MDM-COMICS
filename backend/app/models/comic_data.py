@@ -5,7 +5,7 @@ Stores ALL data points from Metron API for internal use
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, Table, Float, JSON
 from sqlalchemy.orm import relationship
-from app.db.database import Base
+from app.core.database import Base
 
 
 # Many-to-many association tables
