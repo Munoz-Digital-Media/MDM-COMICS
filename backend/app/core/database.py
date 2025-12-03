@@ -35,6 +35,9 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Initialize database tables"""
+    """Initialize database tables - drops and recreates all tables for schema sync"""
     async with engine.begin() as conn:
+        # Drop all tables first to ensure schema is in sync
+        # This is safe during development - use migrations in production
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
