@@ -128,7 +128,7 @@ export const authAPI = {
   },
 
   register: async (name, email, password) => {
-    return fetchAPI('/auth/register', {
+    return fetchAPI('/auth/signup', {
       method: 'POST',
       body: JSON.stringify({ name, email, password }),
     });

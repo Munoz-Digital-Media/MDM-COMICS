@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Eye, EyeOff, Database } from "lucide-react";
+import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Eye, EyeOff, Database, Shield } from "lucide-react";
+import { authAPI } from "./services/api";
 import ComicSearch from "./components/ComicSearch";
 import AdminConsole from "./components/AdminConsole";
 
@@ -403,13 +404,25 @@ export default function App() {
   
   // Auth state
   const [user, setUser] = useState(null);
+  const [authToken, setAuthToken] = useState(localStorage.getItem('mdm_token'));
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isComicSearchOpen, setIsComicSearchOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login"); // login, signup
-  const [mockUsers, setMockUsers] = useState([
-    { id: 1, name: "Demo User", email: "demo@mdmcomics.com", password: "demo123" }
-  ]);
+
+  // Load user from token on mount
+  useEffect(() => {
+    if (authToken) {
+      authAPI.me(authToken)
+        .then(userData => {
+          setUser({ ...userData, token: authToken });
+        })
+        .catch(() => {
+          localStorage.removeItem('mdm_token');
+          setAuthToken(null);
+        });
+    }
+  }, []);
 
   // Show notification
   const showNotification = (message, type = "success") => {
@@ -458,48 +471,7 @@ export default function App() {
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Auth functions
-  const handleSignup = (name, email, password) => {
-    // Check if email already exists
-    if (mockUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-      showNotification("Email already registered", "error");
-      return false;
-    }
-    
-    const newUser = {
-      id: Date.now(),
-      name,
-      email,
-      password
-    };
-    
-    setMockUsers([...mockUsers, newUser]);
-    setUser({ id: newUser.id, name: newUser.name, email: newUser.email });
-    setIsAuthModalOpen(false);
-    showNotification(`Welcome to MDM Comics, ${name}!`);
-    return true;
-  };
-
-  const handleLogin = (email, password) => {
-    const foundUser = mockUsers.find(
-      u => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-    );
-    
-    if (foundUser) {
-      setUser({ id: foundUser.id, name: foundUser.name, email: foundUser.email });
-      setIsAuthModalOpen(false);
-      showNotification(`Welcome back, ${foundUser.name}!`);
-      return true;
-    } else {
-      showNotification("Invalid email or password", "error");
-      return false;
-    }
-  };
-
-  const handleLogout = () => {
-    setUser(null);
-    showNotification("You've been logged out");
-  };
+// Auth functions  const handleSignup = async (name, email, password) => {    try {      const result = await authAPI.register(name, email, password);      if (result.access_token) {        localStorage.setItem('mdm_token', result.access_token);        setAuthToken(result.access_token);        const userData = await authAPI.me(result.access_token);        setUser({ ...userData, token: result.access_token });        setIsAuthModalOpen(false);        showNotification(`Welcome to MDM Comics, ${name}!`);        return true;      }    } catch (err) {      showNotification(err.message || "Registration failed", "error");      return false;    }  };  const handleLogin = async (email, password) => {    try {      const result = await authAPI.login(email, password);      if (result.access_token) {        localStorage.setItem('mdm_token', result.access_token);        setAuthToken(result.access_token);        const userData = await authAPI.me(result.access_token);        setUser({ ...userData, token: result.access_token });        setIsAuthModalOpen(false);        showNotification(`Welcome back, ${userData.name}!`);        return true;      }    } catch (err) {      showNotification("Invalid email or password", "error");      return false;    }  };  const handleLogout = () => {    localStorage.removeItem('mdm_token');    setAuthToken(null);    setUser(null);    setIsAdminOpen(false);    showNotification("You've been logged out");  };
 
   // Filtered and sorted products
   const filteredProducts = useMemo(() => {
@@ -700,14 +672,7 @@ export default function App() {
                 <Database className="w-6 h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
               </button>
 
-              {/* Admin Console Button */}
-              <button
-                onClick={() => setIsAdminOpen(true)}
-                className="relative p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-orange-500 transition-colors group"
-                title="Admin Console"
-              >
-                <Package className="w-6 h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
-              </button>
+{/* Admin Console Button - Only for admins */}              {user?.is_admin && (                <button                  onClick={() => setIsAdminOpen(true)}                  className="relative p-3 bg-zinc-900 border border-red-800 rounded-xl hover:border-red-500 transition-colors group"                  title="Admin Console"                >                  <Shield className="w-6 h-6 text-red-400 group-hover:text-red-500 transition-colors" />                </button>              )}
 
               {/* Cart Button */}
               <button
@@ -1075,7 +1040,7 @@ export default function App() {
       {isAdminOpen && (
         <AdminConsole
           onClose={() => setIsAdminOpen(false)}
-          token={null}
+          token={user?.token}
         />
       )}
 
