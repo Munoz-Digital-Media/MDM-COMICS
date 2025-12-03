@@ -19,29 +19,29 @@ async def get_current_user(
 ) -> User:
     """Get current authenticated user"""
     payload = decode_token(credentials.credentials)
-    
-    if not payload or payload.get("type") != "access":
+
+    if not payload or payload.get("type") \!= "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-    
+
     user_id = payload.get("sub")
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == int(user_id)))
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found"
         )
-    
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account is disabled"
         )
-    
+
     return user
 
 
@@ -62,11 +62,11 @@ async def get_optional_user(
     """Get current user if authenticated, None otherwise"""
     if not credentials:
         return None
-    
+
     payload = decode_token(credentials.credentials)
-    if not payload or payload.get("type") != "access":
+    if not payload or payload.get("type") \!= "access":
         return None
-    
+
     user_id = payload.get("sub")
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == int(user_id)))
     return result.scalar_one_or_none()
