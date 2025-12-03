@@ -471,7 +471,50 @@ export default function App() {
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-// Auth functions  const handleSignup = async (name, email, password) => {    try {      const result = await authAPI.register(name, email, password);      if (result.access_token) {        localStorage.setItem('mdm_token', result.access_token);        setAuthToken(result.access_token);        const userData = await authAPI.me(result.access_token);        setUser({ ...userData, token: result.access_token });        setIsAuthModalOpen(false);        showNotification(`Welcome to MDM Comics, ${name}!`);        return true;      }    } catch (err) {      showNotification(err.message || "Registration failed", "error");      return false;    }  };  const handleLogin = async (email, password) => {    try {      const result = await authAPI.login(email, password);      if (result.access_token) {        localStorage.setItem('mdm_token', result.access_token);        setAuthToken(result.access_token);        const userData = await authAPI.me(result.access_token);        setUser({ ...userData, token: result.access_token });        setIsAuthModalOpen(false);        showNotification(`Welcome back, ${userData.name}!`);        return true;      }    } catch (err) {      showNotification("Invalid email or password", "error");      return false;    }  };  const handleLogout = () => {    localStorage.removeItem('mdm_token');    setAuthToken(null);    setUser(null);    setIsAdminOpen(false);    showNotification("You've been logged out");  };
+// Auth functions
+  const handleSignup = async (name, email, password) => {
+    try {
+      const result = await authAPI.register(name, email, password);
+      if (result.access_token) {
+        localStorage.setItem('mdm_token', result.access_token);
+        setAuthToken(result.access_token);
+        const userData = await authAPI.me(result.access_token);
+        setUser({ ...userData, token: result.access_token });
+        setIsAuthModalOpen(false);
+        showNotification(`Welcome to MDM Comics, ${name}!`);
+        return true;
+      }
+    } catch (err) {
+      showNotification(err.message || "Registration failed", "error");
+      return false;
+    }
+  };
+
+  const handleLogin = async (email, password) => {
+    try {
+      const result = await authAPI.login(email, password);
+      if (result.access_token) {
+        localStorage.setItem('mdm_token', result.access_token);
+        setAuthToken(result.access_token);
+        const userData = await authAPI.me(result.access_token);
+        setUser({ ...userData, token: result.access_token });
+        setIsAuthModalOpen(false);
+        showNotification(`Welcome back, ${userData.name}!`);
+        return true;
+      }
+    } catch (err) {
+      showNotification("Invalid email or password", "error");
+      return false;
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('mdm_token');
+    setAuthToken(null);
+    setUser(null);
+    setIsAdminOpen(false);
+    showNotification("You've been logged out");
+  };
 
   // Filtered and sorted products
   const filteredProducts = useMemo(() => {

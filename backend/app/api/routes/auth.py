@@ -23,7 +23,7 @@ from app.api.deps import get_current_user  # Use centralized auth dependency
 router = APIRouter()
 
 # Admin setup secret - set this in Railway env vars
-ADMIN_SETUP_SECRET = os.getenv("ADMIN_SETUP_SECRET", "mdm-admin-setup-2024")
+ADMIN_SETUP_SECRET = os.getenv("ADMIN_SETUP_SECRET")  # Must be set in env, no default
 
 
 class AdminSetupRequest(BaseModel):
@@ -31,9 +31,9 @@ class AdminSetupRequest(BaseModel):
     secret: str
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
-    """Register a new user"""
+    """Register a new user and return tokens"""
     # Check if email exists
     result = await db.execute(select(User).where(User.email == user_data.email))
     if result.scalar_one_or_none():
@@ -52,7 +52,11 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(user)
 
-    return user
+    # Return tokens so user is automatically logged in
+    return Token(
+        access_token=create_access_token({"sub": str(user.id)}),
+        refresh_token=create_refresh_token({"sub": str(user.id)})
+    )
 
 
 @router.post("/login", response_model=Token)
@@ -115,6 +119,11 @@ async def refresh_token(token_data: RefreshToken, db: AsyncSession = Depends(get
 @router.post("/admin-setup")
 async def setup_admin(request: AdminSetupRequest, db: AsyncSession = Depends(get_db)):
     """One-time admin setup - requires secret key"""
+    if not ADMIN_SETUP_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin setup not configured"
+        )
     if request.secret != ADMIN_SETUP_SECRET:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
