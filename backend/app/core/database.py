@@ -36,8 +36,10 @@ async def get_db() -> AsyncSession:
 
 async def init_db():
     """Initialize database tables - drops and recreates all tables for schema sync"""
+    from sqlalchemy import text
     async with engine.begin() as conn:
-        # Drop all tables first to ensure schema is in sync
+        # Use raw SQL to drop all tables with CASCADE to handle foreign key dependencies
         # This is safe during development - use migrations in production
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
         await conn.run_sync(Base.metadata.create_all)
