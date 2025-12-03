@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import products, users, auth, cart, orders, grading, comics
 from app.core.config import settings
-from app.db.database import init_db
+from app.core.database import init_db
 
 # Import models to register them with SQLAlchemy
 from app.models import (
