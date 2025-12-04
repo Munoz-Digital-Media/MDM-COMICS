@@ -273,6 +273,7 @@ class ComicCacheService:
         number: Optional[str] = None,
         publisher_name: Optional[str] = None,
         cover_year: Optional[int] = None,
+        upc: Optional[str] = None,
         page: int = 1,
         user_id: Optional[int] = None,
         ip_address: Optional[str] = None
@@ -288,6 +289,7 @@ class ComicCacheService:
             number=number,
             publisher_name=publisher_name,
             cover_year=cover_year,
+            upc=upc,
             page=page
         )
 
@@ -302,6 +304,7 @@ class ComicCacheService:
                 "number": number,
                 "publisher_name": publisher_name,
                 "cover_year": cover_year,
+                "upc": upc,
                 "page": page
             },
             response_code=200,

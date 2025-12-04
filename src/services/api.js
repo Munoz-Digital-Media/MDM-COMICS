@@ -42,14 +42,15 @@ async function fetchAPI(endpoint, options = {}) {
  */
 export const comicsAPI = {
   /**
-   * Search for comics by series name, issue number, publisher, or year
+   * Search for comics by series name, issue number, publisher, year, or UPC barcode
    */
-  search: async ({ series, number, publisher, year, page = 1 }) => {
+  search: async ({ series, number, publisher, year, upc, page = 1 }) => {
     const params = new URLSearchParams();
     if (series) params.append('series', series);
     if (number) params.append('number', number);
     if (publisher) params.append('publisher', publisher);
     if (year) params.append('year', year);
+    if (upc) params.append('upc', upc);
     params.append('page', page);
 
     return fetchAPI(`/comics/search?${params.toString()}`);
