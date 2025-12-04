@@ -17,7 +17,7 @@ export default function AdminConsole({ onClose, token }) {
   const [productForm, setProductForm] = useState({
     sku: "", name: "", description: "", category: "comics", subcategory: "",
     price: "", original_price: "", stock: 1, image_url: "",
-    issue_number: "", publisher: "", year: "", featured: false, tags: [],
+    issue_number: "", publisher: "", year: "", upc: "", featured: false, tags: [],
     variant: "",
   });
   const [saving, setSaving] = useState(false);
@@ -215,7 +215,7 @@ export default function AdminConsole({ onClose, token }) {
         sku: "COMIC-" + comic.id, name: seriesName + (issueNum ? " #" + issueNum : ""),
         description: buildEnhancedDescription(details), category: "comics", subcategory: pubName,
         price: "", original_price: coverPrice, stock: 1, image_url: details.image || comic.image || "",
-        issue_number: issueNum, publisher: pubName, year: coverYear, featured: false, tags: [],
+        issue_number: issueNum, publisher: pubName, year: coverYear, upc: details.upc || "", featured: false, tags: [],
         variant: "",
       });
       setActiveTab("create");
@@ -251,7 +251,7 @@ export default function AdminConsole({ onClose, token }) {
       setProductForm({
         sku: "", name: "", description: "", category: "comics", subcategory: "",
         price: "", original_price: "", stock: 1, image_url: "",
-        issue_number: "", publisher: "", year: "", featured: false, tags: [],
+        issue_number: "", publisher: "", year: "", upc: "", featured: false, tags: [],
         variant: "",
       });
       setSelectedComic(null);
@@ -617,6 +617,10 @@ export default function AdminConsole({ onClose, token }) {
                     <label className="block text-sm text-zinc-400 mb-1">Year</label>
                     <input type="number" min="1900" max="2099" value={productForm.year} onChange={(e) => setProductForm({ ...productForm, year: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">UPC Barcode</label>
+                  <input type="text" inputMode="numeric" pattern="[0-9]*" value={productForm.upc} onChange={(e) => { const val = e.target.value.replace(/[^0-9]/g, ''); setProductForm({ ...productForm, upc: val }); }} placeholder="Numeric only" className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white font-mono" />
                 </div>
                 <div>
                   <label className="block text-sm text-zinc-400 mb-1">Image URL</label>
