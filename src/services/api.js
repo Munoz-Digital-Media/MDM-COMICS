@@ -3,7 +3,9 @@
  * Handles all communication with the backend
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+// Use production API in production, localhost for dev
+const API_BASE = import.meta.env.VITE_API_URL ||
+  (window.location.hostname === 'localhost' ? 'http://localhost:8080/api' : 'https://api.mdmcomics.com/api');
 
 /**
  * Generic fetch wrapper with error handling
