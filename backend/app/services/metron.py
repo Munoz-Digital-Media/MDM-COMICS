@@ -48,6 +48,7 @@ class MetronService:
         number: Optional[str] = None,
         publisher_name: Optional[str] = None,
         cover_year: Optional[int] = None,
+        upc: Optional[str] = None,
         page: int = 1
     ) -> Dict[str, Any]:
         """
@@ -58,6 +59,7 @@ class MetronService:
             number: Issue number (e.g., "300")
             publisher_name: Publisher name (e.g., "marvel")
             cover_year: Year of cover date
+            upc: UPC barcode number
             page: Page number for pagination
         """
         params = {"page": page}
@@ -69,6 +71,8 @@ class MetronService:
             params["publisher_name"] = publisher_name
         if cover_year:
             params["cover_year"] = cover_year
+        if upc:
+            params["upc"] = upc
 
         return await self._request("issue", params)
 

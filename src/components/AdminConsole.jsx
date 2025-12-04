@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { X, Search, Plus, Trash2, Save, Package, Loader2, ShoppingBag, Upload, Camera } from "lucide-react";
+import { X, Search, Plus, Trash2, Save, Package, Loader2, ShoppingBag, Upload, Camera, Barcode } from "lucide-react";
 import { comicsAPI } from "../services/api";
 import { adminAPI } from "../services/adminApi";
 
 export default function AdminConsole({ onClose, token }) {
   const [activeTab, setActiveTab] = useState("search");
-  const [searchParams, setSearchParams] = useState({ series: "", number: "", publisher: "" });
+  const [searchParams, setSearchParams] = useState({ series: "", number: "", publisher: "", upc: "" });
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [products, setProducts] = useState([]);
@@ -31,6 +31,12 @@ export default function AdminConsole({ onClose, token }) {
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
+  // Search mode: 'text', 'upc', or 'image'
+  const searchMode = uploadedImage ? 'image'
+    : searchParams.upc ? 'upc'
+    : (searchParams.series || searchParams.number || searchParams.publisher) ? 'text'
+    : null;
+
   useEffect(() => {
     if (activeTab === "products") loadProducts();
   }, [activeTab]);
@@ -51,9 +57,12 @@ export default function AdminConsole({ onClose, token }) {
     try {
       const result = await comicsAPI.search({
         series: searchParams.series, number: searchParams.number,
-        publisher: searchParams.publisher, page: 1,
+        publisher: searchParams.publisher, upc: searchParams.upc, page: 1,
       });
       setSearchResults(result.results || []);
+      if (result.results?.length === 0) {
+        setMessage({ type: "info", text: "No results found" });
+      }
     } catch (err) {
       setMessage({ type: "error", text: "Search failed: " + err.message });
     } finally { setSearchLoading(false); }
@@ -116,13 +125,34 @@ export default function AdminConsole({ onClose, token }) {
     }
   };
 
-  // Clear image search
+  // Clear all search (text, UPC, and image)
+  const clearAllSearch = () => {
+    // Clear text/UPC search
+    setSearchParams({ series: "", number: "", publisher: "", upc: "" });
+    setSearchResults([]);
+    // Clear image search
+    setUploadedImage(null);
+    setImagePreview(null);
+    setImageSearchResults([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    // Clear any messages
+    setMessage(null);
+  };
+
+  // Clear image search only
   const clearImageSearch = () => {
     setUploadedImage(null);
     setImagePreview(null);
     setImageSearchResults([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (cameraInputRef.current) cameraInputRef.current.value = '';
+  };
+
+  // Clear text/UPC search only
+  const clearTextSearch = () => {
+    setSearchParams({ series: "", number: "", publisher: "", upc: "" });
+    setSearchResults([]);
   };
 
   const buildEnhancedDescription = (details) => {
@@ -279,11 +309,59 @@ export default function AdminConsole({ onClose, token }) {
         <div className="flex-1 overflow-auto p-4">
           {activeTab === "search" && (
             <div>
-              <form onSubmit={handleSearch} className="flex gap-3 mb-4">
-                <input type="text" placeholder="Series name..." value={searchParams.series} onChange={(e) => setSearchParams({ ...searchParams, series: e.target.value })} className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
-                <input type="text" placeholder="Issue #" value={searchParams.number} onChange={(e) => setSearchParams({ ...searchParams, number: e.target.value })} className="w-24 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
-                <input type="text" placeholder="Publisher" value={searchParams.publisher} onChange={(e) => setSearchParams({ ...searchParams, publisher: e.target.value })} className="w-32 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
-                <button type="submit" disabled={searchLoading} className="px-6 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:opacity-50">
+              {/* Clear All Button */}
+              {(searchMode || searchResults.length > 0 || imageSearchResults.length > 0) && (
+                <div className="flex justify-end mb-3">
+                  <button
+                    type="button"
+                    onClick={clearAllSearch}
+                    className="px-4 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <X className="w-4 h-4" />
+                    Clear All
+                  </button>
+                </div>
+              )}
+
+              {/* UPC Barcode Search */}
+              <div className={"mb-4 " + (searchMode === 'image' || searchMode === 'text' ? "opacity-50 pointer-events-none" : "")}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Barcode className="w-4 h-4 text-zinc-400" />
+                  <span className="text-sm text-zinc-400">Barcode Search</span>
+                </div>
+                <form onSubmit={handleSearch} className="flex gap-3">
+                  <input
+                    type="text"
+                    placeholder="Enter UPC barcode (numbers only)..."
+                    value={searchParams.upc}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, ''); // Only allow digits
+                      setSearchParams({ ...searchParams, upc: val });
+                    }}
+                    disabled={searchMode === 'image' || searchMode === 'text'}
+                    className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white disabled:opacity-50 font-mono"
+                    pattern="[0-9]*"
+                    inputMode="numeric"
+                  />
+                  <button type="submit" disabled={searchLoading || !searchParams.upc || searchMode === 'image' || searchMode === 'text'} className="px-6 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:opacity-50">
+                    {searchLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Scan"}
+                  </button>
+                </form>
+              </div>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3 my-4">
+                <div className="flex-1 border-t border-zinc-700"></div>
+                <span className="text-xs text-zinc-500">OR</span>
+                <div className="flex-1 border-t border-zinc-700"></div>
+              </div>
+
+              {/* Text Search Form */}
+              <form onSubmit={handleSearch} className={"flex gap-3 mb-4 " + (searchMode === 'image' || searchMode === 'upc' ? "opacity-50 pointer-events-none" : "")}>
+                <input type="text" placeholder="Series name..." value={searchParams.series} onChange={(e) => setSearchParams({ ...searchParams, series: e.target.value })} disabled={searchMode === 'image' || searchMode === 'upc'} className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white disabled:opacity-50" />
+                <input type="text" placeholder="Issue #" value={searchParams.number} onChange={(e) => setSearchParams({ ...searchParams, number: e.target.value })} disabled={searchMode === 'image' || searchMode === 'upc'} className="w-24 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white disabled:opacity-50" />
+                <input type="text" placeholder="Publisher" value={searchParams.publisher} onChange={(e) => setSearchParams({ ...searchParams, publisher: e.target.value })} disabled={searchMode === 'image' || searchMode === 'upc'} className="w-32 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white disabled:opacity-50" />
+                <button type="submit" disabled={searchLoading || searchMode === 'image' || searchMode === 'upc'} className="px-6 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:opacity-50">
                   {searchLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Search"}
                 </button>
               </form>
@@ -315,7 +393,7 @@ export default function AdminConsole({ onClose, token }) {
               )}
 
               {/* Image Search Section */}
-              <div className="border-t border-zinc-700 pt-4 mt-4">
+              <div className={"border-t border-zinc-700 pt-4 mt-4 " + (searchMode === 'text' || searchMode === 'upc' ? "opacity-50 pointer-events-none" : "")}>
                 <h4 className="text-sm font-medium text-zinc-300 mb-3 flex items-center gap-2">
                   <Camera className="w-4 h-4" />
                   Or Search by Cover Image
@@ -323,15 +401,16 @@ export default function AdminConsole({ onClose, token }) {
 
                 {/* Drop Zone */}
                 <div
-                  className={"border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer " +
+                  className={"border-2 border-dashed rounded-xl p-6 text-center transition-colors " +
+                    (searchMode === 'text' || searchMode === 'upc' ? "cursor-not-allowed " : "cursor-pointer ") +
                     (imagePreview ? "border-orange-500 bg-orange-500/5" : "border-zinc-600 hover:border-orange-500")}
-                  onClick={() => fileInputRef.current?.click()}
-                  onDrop={handleDrop}
+                  onClick={() => !searchMode && fileInputRef.current?.click()}
+                  onDrop={(e) => { if (!searchMode) handleDrop(e); else e.preventDefault(); }}
                   onDragOver={(e) => e.preventDefault()}
                   role="button"
                   aria-label="Upload comic cover image"
-                  tabIndex={0}
-                  onKeyDown={(e) => e.key === 'Enter' && fileInputRef.current?.click()}
+                  tabIndex={searchMode === 'text' || searchMode === 'upc' ? -1 : 0}
+                  onKeyDown={(e) => e.key === 'Enter' && !searchMode && fileInputRef.current?.click()}
                 >
                   {imagePreview ? (
                     <div className="relative">
@@ -359,6 +438,7 @@ export default function AdminConsole({ onClose, token }) {
                   type="file"
                   accept="image/jpeg,image/png"
                   onChange={handleImageUpload}
+                  disabled={searchMode === 'text' || searchMode === 'upc'}
                   className="hidden"
                   aria-label="Select comic cover image file"
                 />
@@ -367,7 +447,8 @@ export default function AdminConsole({ onClose, token }) {
                 <button
                   type="button"
                   onClick={() => cameraInputRef.current?.click()}
-                  className="mt-3 w-full py-2 bg-zinc-800 text-zinc-300 rounded-lg hover:bg-zinc-700 flex items-center justify-center gap-2 transition-colors"
+                  disabled={searchMode === 'text' || searchMode === 'upc'}
+                  className="mt-3 w-full py-2 bg-zinc-800 text-zinc-300 rounded-lg hover:bg-zinc-700 flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="Take photo of comic cover"
                 >
                   <Camera className="w-4 h-4" />
@@ -380,6 +461,7 @@ export default function AdminConsole({ onClose, token }) {
                   accept="image/*"
                   capture="environment"
                   onChange={handleImageUpload}
+                  disabled={searchMode === 'text' || searchMode === 'upc'}
                   className="hidden"
                 />
 
@@ -491,8 +573,18 @@ export default function AdminConsole({ onClose, token }) {
                   <input type="text" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" required />
                 </div>
                 <div>
-                  <label className="block text-sm text-zinc-400 mb-1">Variant <span className="text-zinc-600">(e.g., Newsstand, 2nd Print, Foil Cover)</span></label>
-                  <input type="text" value={productForm.variant} onChange={(e) => setProductForm({ ...productForm, variant: e.target.value })} placeholder="Leave blank for standard cover" className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-600" />
+                  <label className="block text-sm text-zinc-400 mb-1">Variant <span className="text-zinc-600">(letters only - e.g., Newsstand, Gold Foil Cover)</span></label>
+                  <input
+                    type="text"
+                    value={productForm.variant}
+                    onChange={(e) => {
+                      // Allow only letters, spaces, and common punctuation (no pure numbers)
+                      const val = e.target.value.replace(/[0-9]/g, '');
+                      setProductForm({ ...productForm, variant: val });
+                    }}
+                    placeholder="Leave blank for standard cover"
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-600"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm text-zinc-400 mb-1">Description</label>
@@ -501,15 +593,15 @@ export default function AdminConsole({ onClose, token }) {
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-sm text-zinc-400 mb-1">Price *</label>
-                    <input type="number" step="0.01" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" required />
+                    <input type="number" step="0.01" min="0.01" max="99999.99" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" required />
                   </div>
                   <div>
                     <label className="block text-sm text-zinc-400 mb-1">Original Price</label>
-                    <input type="number" step="0.01" value={productForm.original_price} onChange={(e) => setProductForm({ ...productForm, original_price: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
+                    <input type="number" step="0.01" min="0" max="99999.99" value={productForm.original_price} onChange={(e) => setProductForm({ ...productForm, original_price: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
                   </div>
                   <div>
                     <label className="block text-sm text-zinc-400 mb-1">Stock</label>
-                    <input type="number" value={productForm.stock} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
+                    <input type="number" min="0" max="9999" value={productForm.stock} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
@@ -523,7 +615,7 @@ export default function AdminConsole({ onClose, token }) {
                   </div>
                   <div>
                     <label className="block text-sm text-zinc-400 mb-1">Year</label>
-                    <input type="number" value={productForm.year} onChange={(e) => setProductForm({ ...productForm, year: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
+                    <input type="number" min="1900" max="2099" value={productForm.year} onChange={(e) => setProductForm({ ...productForm, year: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white" />
                   </div>
                 </div>
                 <div>

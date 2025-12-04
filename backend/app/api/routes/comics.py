@@ -25,12 +25,14 @@ async def search_comics(
     number: Optional[str] = Query(None, description="Issue number (e.g., '300')"),
     publisher: Optional[str] = Query(None, description="Publisher name (e.g., 'marvel')"),
     year: Optional[int] = Query(None, description="Cover year"),
+    upc: Optional[str] = Query(None, description="UPC barcode number"),
     page: int = Query(1, ge=1, description="Page number"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Search for comic issues in the Metron database.
     All results are cached locally for future use.
+    Supports UPC barcode search for exact match.
     """
     try:
         ip_address = request.client.host if request.client else None
@@ -41,6 +43,7 @@ async def search_comics(
             number=number,
             publisher_name=publisher,
             cover_year=year,
+            upc=upc,
             page=page,
             ip_address=ip_address
         )
@@ -53,6 +56,7 @@ async def search_comics(
                 number=number,
                 publisher_name=publisher,
                 cover_year=year,
+                upc=upc,
                 page=page
             )
             return results
