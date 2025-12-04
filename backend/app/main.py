@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import products, users, auth, cart, orders, grading, comics
+from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout
 from app.core.config import settings
 from app.core.database import init_db
 
@@ -51,6 +51,7 @@ app.include_router(cart.router, prefix="/api/cart", tags=["Cart"])
 app.include_router(orders.router, prefix="/api/orders", tags=["Orders"])
 app.include_router(grading.router, prefix="/api/grading", tags=["AI Grading"])
 app.include_router(comics.router, prefix="/api", tags=["Comics Database"])
+app.include_router(checkout.router, prefix="/api", tags=["Checkout"])
 
 
 @app.get("/", tags=["Health"])

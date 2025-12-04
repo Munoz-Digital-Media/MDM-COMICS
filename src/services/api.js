@@ -193,10 +193,36 @@ export const healthAPI = {
   },
 };
 
+/**
+ * Checkout API
+ */
+export const checkoutAPI = {
+  getConfig: async () => {
+    return fetchAPI('/checkout/config');
+  },
+
+  createPaymentIntent: async (token, items) => {
+    return fetchAPI('/checkout/create-payment-intent', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  confirmOrder: async (token, paymentIntentId, items) => {
+    return fetchAPI('/checkout/confirm-order', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ payment_intent_id: paymentIntentId, items }),
+    });
+  },
+};
+
 export default {
   comics: comicsAPI,
   products: productsAPI,
   auth: authAPI,
   cart: cartAPI,
+  checkout: checkoutAPI,
   health: healthAPI,
 };
