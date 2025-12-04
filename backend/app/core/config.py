@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     METRON_PASSWORD: str = ""
     METRON_API_BASE: str = "https://metron.cloud/api"
 
+    # Stripe Payments
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = True

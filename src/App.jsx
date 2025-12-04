@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect } from "react";
   import { authAPI } from "./services/api";
   import ComicSearch from "./components/ComicSearch";
   import AdminConsole from "./components/AdminConsole";
+  import CheckoutForm, { OrderSuccess } from "./components/CheckoutForm";
 
   // ============================================================================
   // BUILD INFO - Update these on each release
@@ -402,6 +403,7 @@ import React, { useState, useMemo, useEffect } from "react";
     const [sortBy, setSortBy] = useState("featured");
     const [currentView, setCurrentView] = useState("shop");
     const [notification, setNotification] = useState(null);
+    const [completedOrder, setCompletedOrder] = useState(null);
 
     // Auth state
     const [user, setUser] = useState(null);
@@ -913,71 +915,96 @@ import React, { useState, useMemo, useEffect } from "react";
         {/* Checkout View */}
         {currentView === "checkout" && (
           <main className="max-w-4xl mx-auto px-4 py-12">
-            <button
-              onClick={() => setCurrentView("shop")}
-              className="text-orange-500 hover:text-orange-400 mb-8 flex items-center gap-2"
-            >
-              ← Back to Shop
-            </button>
+            {completedOrder ? (
+              <OrderSuccess
+                order={completedOrder}
+                onClose={() => {
+                  setCompletedOrder(null);
+                  setCart([]);
+                  setCurrentView("shop");
+                }}
+              />
+            ) : (
+              <>
+                <button
+                  onClick={() => setCurrentView("shop")}
+                  className="text-orange-500 hover:text-orange-400 mb-8 flex items-center gap-2"
+                >
+                  ← Back to Shop
+                </button>
 
-            <h2 className="font-comic text-4xl text-white mb-8">CHECKOUT</h2>
+                <h2 className="font-comic text-4xl text-white mb-8">CHECKOUT</h2>
 
-            <div className="grid md:grid-cols-2 gap-8">
-              {/* Order Summary */}
-              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-                <h3 className="font-bold text-xl text-white mb-4">Order Summary</h3>
-                <div className="space-y-4 mb-6">
-                  {cart.map((item) => (
-                    <div key={item.id} className="flex items-center gap-4">
-                      <img src={item.image} alt={item.name} className="w-16 h-16 object-cover rounded-lg" />
-                      <div className="flex-1">
-                        <p className="text-white font-semibold">{item.name}</p>
-                        <p className="text-zinc-500 text-sm">Qty: {item.quantity}</p>
+                {!user ? (
+                  <div className="bg-zinc-900 rounded-2xl p-8 border border-zinc-800 text-center">
+                    <p className="text-zinc-400 mb-4">Please sign in to complete your purchase</p>
+                    <button
+                      onClick={() => setIsAuthModalOpen(true)}
+                      className="px-6 py-3 bg-orange-500 text-white rounded-xl font-semibold hover:bg-orange-600"
+                    >
+                      Sign In
+                    </button>
+                  </div>
+                ) : cart.length === 0 ? (
+                  <div className="bg-zinc-900 rounded-2xl p-8 border border-zinc-800 text-center">
+                    <p className="text-zinc-400 mb-4">Your cart is empty</p>
+                    <button
+                      onClick={() => setCurrentView("shop")}
+                      className="px-6 py-3 bg-orange-500 text-white rounded-xl font-semibold hover:bg-orange-600"
+                    >
+                      Continue Shopping
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid md:grid-cols-2 gap-8">
+                    {/* Order Summary */}
+                    <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+                      <h3 className="font-bold text-xl text-white mb-4">Order Summary</h3>
+                      <div className="space-y-4 mb-6">
+                        {cart.map((item) => (
+                          <div key={item.id} className="flex items-center gap-4">
+                            <img src={item.image} alt={item.name} className="w-16 h-16 object-cover rounded-lg" />
+                            <div className="flex-1">
+                              <p className="text-white font-semibold">{item.name}</p>
+                              <p className="text-zinc-500 text-sm">Qty: {item.quantity}</p>
+                            </div>
+                            <p className="text-orange-500 font-bold">${(item.price * item.quantity).toFixed(2)}</p>
+                          </div>
+                        ))}
                       </div>
-                      <p className="text-orange-500 font-bold">${(item.price * item.quantity).toFixed(2)}</p>
+                      <div className="border-t border-zinc-800 pt-4 space-y-2">
+                        <div className="flex justify-between text-zinc-400">
+                          <span>Subtotal</span>
+                          <span>${cartTotal.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-zinc-400">
+                          <span>Shipping</span>
+                          <span>{cartTotal >= 50 ? "FREE" : "$5.99"}</span>
+                        </div>
+                        <div className="flex justify-between text-xl font-bold text-white pt-2 border-t border-zinc-800">
+                          <span>Total</span>
+                          <span>${(cartTotal + (cartTotal >= 50 ? 0 : 5.99)).toFixed(2)}</span>
+                        </div>
+                      </div>
                     </div>
-                  ))}
-                </div>
-                <div className="border-t border-zinc-800 pt-4 space-y-2">
-                  <div className="flex justify-between text-zinc-400">
-                    <span>Subtotal</span>
-                    <span>${cartTotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-zinc-400">
-                    <span>Shipping</span>
-                    <span>{cartTotal >= 50 ? "FREE" : "$5.99"}</span>
-                  </div>
-                  <div className="flex justify-between text-xl font-bold text-white pt-2 border-t border-zinc-800">
-                    <span>Total</span>
-                    <span>${(cartTotal + (cartTotal >= 50 ? 0 : 5.99)).toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
 
-              {/* Payment Options */}
-              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-                <h3 className="font-bold text-xl text-white mb-4">Payment Method</h3>
-                <div className="space-y-3">
-                  <button className="w-full p-4 bg-[#0070ba] rounded-xl text-white font-bold hover:bg-[#005ea6] transition-colors">
-                    Pay with PayPal
-                  </button>
-                  <button className="w-full p-4 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl text-white font-bold hover:opacity-90 transition-opacity">
-                    Pay with Card (Stripe)
-                  </button>
-                  <div className="flex gap-3">
-                    <button className="flex-1 p-4 bg-black border border-zinc-700 rounded-xl text-white font-bold hover:bg-zinc-900 transition-colors">
-                      Apple Pay
-                    </button>
-                    <button className="flex-1 p-4 bg-white rounded-xl text-black font-bold hover:bg-zinc-200 transition-colors">
-                      Google Pay
-                    </button>
+                    {/* Payment Form */}
+                    <div>
+                      <CheckoutForm
+                        token={authToken}
+                        cartItems={cart}
+                        total={cartTotal + (cartTotal >= 50 ? 0 : 5.99)}
+                        onSuccess={(order) => {
+                          setCompletedOrder(order);
+                          showNotification("Order placed successfully!", "success");
+                        }}
+                        onCancel={() => setCurrentView("shop")}
+                      />
+                    </div>
                   </div>
-                </div>
-                <p className="text-zinc-500 text-xs mt-4 text-center">
-                  🔒 Your payment information is encrypted and secure
-                </p>
-              </div>
-            </div>
+                )}
+              </>
+            )}
           </main>
         )}
 
