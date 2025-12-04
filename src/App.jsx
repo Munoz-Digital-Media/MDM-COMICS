@@ -4,16 +4,21 @@ import React, { useState, useMemo, useEffect } from "react";
   import ComicSearch from "./components/ComicSearch";
   import AdminConsole from "./components/AdminConsole";
   import CheckoutForm, { OrderSuccess } from "./components/CheckoutForm";
+  import ComingSoon from "./components/ComingSoon";
 
   // ============================================================================
   // BUILD INFO - Update these on each release
   // ============================================================================
   const BUILD_INFO = {
-    version: "1.3.0",
-    buildNumber: 13,
+    version: "1.4.0",
+    buildNumber: 14,
     buildDate: new Date().toISOString(),
     environment: "development"
   };
+
+  // Set to true to show "Coming Soon" page to visitors
+  // Logged-in users bypass this and see the full site
+  const UNDER_CONSTRUCTION = true;
 
   // ============================================================================
   // PRODUCT DATA - Replace with API calls when backend is ready
@@ -558,6 +563,25 @@ import React, { useState, useMemo, useEffect } from "react";
     // ============================================================================
     // RENDER
     // ============================================================================
+
+    // Show Coming Soon page if under construction and user is not logged in
+    if (UNDER_CONSTRUCTION && !user) {
+      return (
+        <ComingSoon
+          onLogin={async (token) => {
+            setAuthToken(token);
+            try {
+              const userData = await authAPI.me(token);
+              setUser({ ...userData, token });
+            } catch {
+              localStorage.removeItem('mdm_token');
+              setAuthToken(null);
+            }
+          }}
+        />
+      );
+    }
+
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ fontFamily: "'Barlow', sans-serif" }}>
         {/* Google Fonts & Custom CSS */}
