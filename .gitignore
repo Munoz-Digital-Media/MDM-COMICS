@@ -44,3 +44,6 @@ coverage
 
 # Misc
 *.pem
+
+# Corporate solutions / proprietary implementations
+implementations/

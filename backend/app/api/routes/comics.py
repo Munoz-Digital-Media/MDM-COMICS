@@ -3,12 +3,17 @@ Comic search and lookup routes using Metron API
 All searches are cached to local database for data capture.
 """
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Depends, Request
+import io
+from fastapi import APIRouter, HTTPException, Query, Depends, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from PIL import Image
+import imagehash
 
 from app.core.database import get_db
 from app.services.comic_cache import comic_cache
 from app.services.metron import metron_service
+from app.models.comic_data import ComicIssue, ComicSeries
 
 router = APIRouter(prefix="/comics", tags=["comics"])
 
@@ -177,3 +182,82 @@ async def search_creators(
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error searching creators: {str(e)}")
+
+
+@router.post("/search-by-image")
+async def search_by_image(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Search for comics by cover image using perceptual hashing.
+    Returns potential matches ranked by similarity.
+    """
+    # Validate file type
+    if file.content_type not in ["image/jpeg", "image/png"]:
+        raise HTTPException(status_code=400, detail="Only JPEG and PNG images allowed")
+
+    # Read and validate file size (10MB max)
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be under 10MB")
+
+    try:
+        # Compute perceptual hash of uploaded image
+        img = Image.open(io.BytesIO(content))
+        uploaded_hash = imagehash.phash(img)
+
+        # Query database for issues with cover_hash in raw_data
+        result = await db.execute(
+            select(ComicIssue)
+            .where(ComicIssue.raw_data.isnot(None))
+            .limit(2000)
+        )
+        issues = result.scalars().all()
+
+        # Calculate hamming distance for each
+        matches = []
+        for issue in issues:
+            raw_data = issue.raw_data
+            if not raw_data:
+                continue
+
+            cover_hash = raw_data.get("cover_hash")
+            if not cover_hash:
+                continue
+
+            try:
+                db_hash = imagehash.hex_to_hash(cover_hash)
+                distance = db_hash - uploaded_hash
+
+                # Lower distance = better match (0 = identical)
+                # Threshold of 15 is reasonable for comic covers
+                if distance <= 15:
+                    confidence = max(0, 1 - (distance / 15))
+
+                    # Get series name from raw_data or relationship
+                    series_name = ""
+                    if raw_data.get("series"):
+                        series_name = raw_data["series"].get("name", "")
+
+                    matches.append({
+                        "id": issue.metron_id,
+                        "issue": f"{series_name} #{issue.number}" if series_name else f"Issue #{issue.number}",
+                        "series": {"name": series_name},
+                        "number": issue.number,
+                        "image": issue.image or raw_data.get("image"),
+                        "cover_date": str(issue.cover_date) if issue.cover_date else None,
+                        "confidence": round(confidence, 2),
+                        "distance": distance
+                    })
+            except Exception:
+                continue
+
+        # Sort by confidence (highest first)
+        matches.sort(key=lambda x: x["confidence"], reverse=True)
+
+        # Return top 10 matches
+        return {"matches": matches[:10]}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Image processing failed: {str(e)}")
