@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { X, Search, Plus, Trash2, Save, Package, Loader2, ShoppingBag, Upload, Camera, Barcode } from "lucide-react";
+import { X, Search, Plus, Trash2, Save, Package, Loader2, ShoppingBag, Upload, Camera, ScanLine } from "lucide-react";
 import { comicsAPI } from "../services/api";
 import { adminAPI } from "../services/adminApi";
 
@@ -326,7 +326,7 @@ export default function AdminConsole({ onClose, token }) {
               {/* UPC Barcode Search */}
               <div className={"mb-4 " + (searchMode === 'image' || searchMode === 'text' ? "opacity-50 pointer-events-none" : "")}>
                 <div className="flex items-center gap-2 mb-2">
-                  <Barcode className="w-4 h-4 text-zinc-400" />
+                  <ScanLine className="w-4 h-4 text-zinc-400" />
                   <span className="text-sm text-zinc-400">Barcode Search</span>
                 </div>
                 <form onSubmit={handleSearch} className="flex gap-3">
