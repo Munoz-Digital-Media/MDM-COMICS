@@ -20,9 +20,10 @@ pydantic==2.5.3
 pydantic-settings==2.1.0
 email-validator==2.1.0
 
-# Image Processing (for grade estimator mock)
+# Image Processing (for grade estimator mock + cover search)
 pillow>=10.4.0
 numpy==1.26.3
+imagehash>=4.3.1
 
 # Storage (S3 compatible)
 boto3==1.34.14

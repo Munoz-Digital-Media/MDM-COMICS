@@ -55,11 +55,30 @@ export const adminAPI = {
     const page = options.page || 1;
     const per_page = options.per_page || 20;
     const search = options.search || '';
-    
+
     let url = '/products?page=' + page + '&per_page=' + per_page;
     if (search) url += '&search=' + encodeURIComponent(search);
-    
+
     return fetchAPI(url);
+  },
+
+  searchByImage: async (token, formData) => {
+    const url = API_BASE + '/comics/search-by-image';
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        // Note: Don't set Content-Type for FormData - browser sets it with boundary
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Image search failed');
+    }
+
+    return response.json();
   },
 };
 
