@@ -132,13 +132,29 @@ async def search_funko_url(client: httpx.AsyncClient, title: str) -> Optional[st
         response.raise_for_status()
 
         # Look for product URLs in response
-        # Pattern: /product-name/12345.html
-        matches = re.findall(r'href="(/[\w-]+/\d+\.html)"', response.text)
-        if matches:
-            return f"https://funko.com{matches[0]}"
+        # Pattern: /product-slug/ID.html where ID can be numeric or alphanumeric
+        # Examples: /pop-batman/86369.html, /dc-dog-collar/DCCPDC0001.html
+        patterns = [
+            r'href="(https://funko\.com/[a-z0-9-]+/[A-Za-z0-9]+\.html)"',  # Full URL
+            r'href="(/[a-z0-9-]+/[A-Za-z0-9]+\.html)"',  # Relative URL
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, response.text, re.IGNORECASE)
+            if matches:
+                for url in matches:
+                    if url.startswith("/"):
+                        url = f"https://funko.com{url}"
+                    # Skip non-product pages
+                    if "/search" in url or "/collections" in url or "/fandoms" in url or "/all-funko" in url:
+                        continue
+                    logger.info(f"Found URL for '{title}': {url}")
+                    return url
+
+        logger.warning(f"No product URL found for '{title}' (response len: {len(response.text)})")
         return None
     except Exception as e:
-        logger.debug(f"Search failed for '{title}': {e}")
+        logger.warning(f"Search failed for '{title}': {e}")
         return None
 
 
