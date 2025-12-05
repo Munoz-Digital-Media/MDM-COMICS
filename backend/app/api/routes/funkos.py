@@ -29,6 +29,11 @@ class FunkoResponse(BaseModel):
     handle: str
     title: str
     image_url: Optional[str]
+    category: Optional[str]
+    license: Optional[str]
+    product_type: Optional[str]
+    box_number: Optional[str]
+    funko_url: Optional[str]
     series: List[FunkoSeriesResponse]
 
     class Config:
@@ -51,12 +56,16 @@ class SeriesSearchResponse(BaseModel):
 async def search_funkos(
     q: str = Query(None, description="Search query (title)"),
     series: str = Query(None, description="Filter by series name"),
+    category: str = Query(None, description="Filter by category"),
+    license: str = Query(None, description="Filter by license"),
+    product_type: str = Query(None, description="Filter by product type"),
+    box_number: str = Query(None, description="Filter by box number"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Search Funkos by title or series.
+    Search Funkos by title, series, category, license, product type, or box number.
     Returns paginated results.
     """
     query = select(Funko).options(selectinload(Funko.series))
@@ -68,6 +77,18 @@ async def search_funkos(
 
     if series:
         query = query.join(Funko.series).where(FunkoSeriesName.name.ilike(f"%{series}%"))
+
+    if category:
+        query = query.where(Funko.category.ilike(f"%{category}%"))
+
+    if license:
+        query = query.where(Funko.license.ilike(f"%{license}%"))
+
+    if product_type:
+        query = query.where(Funko.product_type.ilike(f"%{product_type}%"))
+
+    if box_number:
+        query = query.where(Funko.box_number == box_number)
 
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())
