@@ -83,6 +83,28 @@ class Settings(BaseSettings):
     STRIPE_PUBLISHABLE_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
 
+    # Admin Security (P0-2: Separate from JWT SECRET_KEY)
+    # If not set, admin promotion endpoint is disabled in production
+    ADMIN_PROMOTION_SECRET: str = ""
+
+    # Database Pool Configuration (P2-7)
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_RECYCLE: int = 3600  # 1 hour
+
+    # Stock Cleanup Scheduler (P0-1)
+    STOCK_CLEANUP_INTERVAL_MINUTES: int = 5
+    STOCK_CLEANUP_ENABLED: bool = True
+
+    # Rate Limiting (P1-3)
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_DEFAULT: str = "100/minute"
+    RATE_LIMIT_AUTH: str = "5/minute"
+    RATE_LIMIT_CHECKOUT: str = "10/minute"
+
+    # Feature Flags (P3-12)
+    UNDER_CONSTRUCTION: bool = True
+
     @model_validator(mode="after")
     def validate_production_config(self):
         """Runtime validation to catch insecure production configurations."""
@@ -115,6 +137,20 @@ class Settings(BaseSettings):
                 errors.append(
                     "Localhost DATABASE_URL detected in production. "
                     "Configure proper database connection."
+                )
+
+            # P3-15: Check CORS origins in production
+            cors_warnings = []
+            for origin in self.CORS_ORIGINS:
+                if origin == "*":
+                    cors_warnings.append("Wildcard '*' CORS origin is insecure in production")
+                elif "localhost" in origin or "127.0.0.1" in origin:
+                    cors_warnings.append(f"Localhost CORS origin '{origin}' should be removed in production")
+
+            if cors_warnings:
+                logger.warning(
+                    "P3-15 CORS WARNINGS in production:\n" +
+                    "\n".join(f"  - {w}" for w in cors_warnings)
                 )
 
             if errors:

@@ -19,9 +19,8 @@ import React, { useState, useMemo, useEffect } from "react";
     environment: "development"
   };
 
-  // Set to true to show "Coming Soon" page to visitors
-  // Logged-in users bypass this and see the full site
-  const UNDER_CONSTRUCTION = true;
+  // P3-12: UNDER_CONSTRUCTION flag is now fetched from API via /api/config
+  // This allows toggling via environment variable without rebuilding frontend
 
   // ============================================================================
   // PRODUCT CARD COMPONENT
@@ -131,6 +130,9 @@ import React, { useState, useMemo, useEffect } from "react";
     const [isAdminOpen, setIsAdminOpen] = useState(false);
     const [authMode, setAuthMode] = useState("login");
 
+    // P3-12: Under construction flag from API (defaults to true for safety)
+    const [underConstruction, setUnderConstruction] = useState(true);
+
     // Load user from token on mount
     useEffect(() => {
       if (authToken) {
@@ -143,6 +145,20 @@ import React, { useState, useMemo, useEffect } from "react";
             setAuthToken(null);
           });
       }
+    }, []);
+
+    // P3-12: Fetch config from API on mount
+    useEffect(() => {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      fetch(`${API_URL}/api/config`)
+        .then(res => res.json())
+        .then(config => {
+          setUnderConstruction(config.under_construction ?? true);
+        })
+        .catch(() => {
+          // On error, default to under construction for safety
+          setUnderConstruction(true);
+        });
     }, []);
 
     // Show notification
@@ -283,7 +299,7 @@ import React, { useState, useMemo, useEffect } from "react";
     // ============================================================================
 
     // Show Coming Soon page if under construction and user is not logged in
-    if (UNDER_CONSTRUCTION && !user) {
+    if (underConstruction && !user) {
       return (
         <ComingSoon
           onLogin={async (token) => {

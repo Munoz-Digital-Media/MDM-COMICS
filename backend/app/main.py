@@ -1,24 +1,27 @@
 """
 MDM Comics Backend
 FastAPI application entry point
+
+Risk Mitigation Implementation:
+- P0-1: Stock cleanup scheduler with heartbeat metrics
+- P2-8: Enhanced health endpoint with DB ping
+- P3-14: Dead Funko scraper code removed
 """
 import asyncio
 import json
 import logging
-import re
+from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
-from urllib.parse import quote_plus
 
-import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, text
 
 from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos
 from app.core.config import settings
-from app.core.database import init_db, AsyncSessionLocal
+from app.core.database import init_db, AsyncSessionLocal, engine
 
 # Import models to register them with SQLAlchemy
 from app.models import (
@@ -30,8 +33,14 @@ from app.models import (
 
 logger = logging.getLogger(__name__)
 
-# Background enrichment task reference
-_enrichment_task: Optional[asyncio.Task] = None
+# P0-1: Background task references
+_stock_cleanup_task: Optional[asyncio.Task] = None
+_cleanup_heartbeat: dict = {
+    "last_run": None,
+    "last_success": None,
+    "records_processed": 0,
+    "errors": 0,
+}
 
 
 async def import_funkos_if_needed():
@@ -124,159 +133,48 @@ async def import_funkos_if_needed():
         logger.info(f"BE-007: Funko import complete! {imported} new entries added, {skipped} already existed.")
 
 
-# ============== FUNKO ENRICHMENT (Background Task) ==============
+# ============== P0-1: STOCK CLEANUP SCHEDULER ==============
 
-SCRAPER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-}
+async def run_stock_cleanup():
+    """
+    P0-1: Run stock cleanup to release expired reservations.
+    Updates heartbeat metrics for health monitoring.
+    """
+    global _cleanup_heartbeat
+    from app.services.stock_cleanup import release_expired_reservations
 
-
-async def search_funko_url(client: httpx.AsyncClient, title: str) -> Optional[str]:
-    """Search Funko.com and return the best matching product URL."""
-    search_url = f"https://funko.com/search?q={quote_plus(title)}"
-    try:
-        response = await client.get(search_url, headers=SCRAPER_HEADERS, follow_redirects=True)
-        response.raise_for_status()
-
-        # Look for product URLs in response
-        # Pattern: /product-slug/ID.html where ID can be numeric or alphanumeric
-        # Examples: /pop-batman/86369.html, /dc-dog-collar/DCCPDC0001.html
-        # Also handle URL-encoded chars like %23 for #
-        patterns = [
-            r'href="(https://funko\.com/[a-zA-Z0-9%_-]+/[A-Za-z0-9]+\.html)"',  # Full URL
-            r'href="(/[a-zA-Z0-9%_-]+/[A-Za-z0-9]+\.html)"',  # Relative URL
-        ]
-
-        for pattern in patterns:
-            matches = re.findall(pattern, response.text, re.IGNORECASE)
-            if matches:
-                for url in matches:
-                    if url.startswith("/"):
-                        url = f"https://funko.com{url}"
-                    # Skip non-product pages
-                    if "/search" in url or "/collections" in url or "/fandoms" in url or "/all-funko" in url:
-                        continue
-                    logger.info(f"Found URL for '{title}': {url}")
-                    return url
-
-        logger.warning(f"No product URL found for '{title}' (response len: {len(response.text)})")
-        return None
-    except Exception as e:
-        logger.warning(f"Search failed for '{title}': {e}")
-        return None
-
-
-async def scrape_funko_details(client: httpx.AsyncClient, url: str) -> dict:
-    """Scrape product details from a Funko.com product page."""
-    details = {"category": None, "license": None, "product_type": None, "box_number": None, "funko_url": url}
+    _cleanup_heartbeat["last_run"] = datetime.now(timezone.utc).isoformat()
 
     try:
-        response = await client.get(url, headers=SCRAPER_HEADERS, follow_redirects=True)
-        response.raise_for_status()
-        text = response.text
+        stats = await release_expired_reservations()
+        _cleanup_heartbeat["last_success"] = datetime.now(timezone.utc).isoformat()
+        _cleanup_heartbeat["records_processed"] += stats.get("reservations_released", 0)
 
-        # Parse using regex (faster than BeautifulSoup for simple extraction)
-        # Look for patterns like <dt>Category:</dt><dd>...<a>Value</a>...</dd>
-        patterns = [
-            (r'<dt[^>]*>\s*Category[^<]*</dt>\s*<dd[^>]*>.*?(?:<a[^>]*>([^<]+)</a>|([^<]+))', 'category'),
-            (r'<dt[^>]*>\s*License[^<]*</dt>\s*<dd[^>]*>.*?(?:<a[^>]*>([^<]+)</a>|([^<]+))', 'license'),
-            (r'<dt[^>]*>\s*Product Type[^<]*</dt>\s*<dd[^>]*>.*?(?:<a[^>]*>([^<]+)</a>|([^<]+))', 'product_type'),
-            (r'<dt[^>]*>\s*Box Number[^<]*</dt>\s*<dd[^>]*>\s*(\d+)', 'box_number'),
-        ]
-
-        for pattern, field in patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-            if match:
-                # Get the first non-None group
-                value = next((g for g in match.groups() if g), None)
-                if value:
-                    details[field] = value.strip()
-
-        return details
+        if stats.get("reservations_released", 0) > 0:
+            logger.info(
+                f"Stock cleanup: released {stats['reservations_released']} reservations, "
+                f"restored {stats['stock_restored']} units"
+            )
     except Exception as e:
-        logger.debug(f"Failed to scrape {url}: {e}")
-        return details
+        _cleanup_heartbeat["errors"] += 1
+        logger.error(f"Stock cleanup failed: {e}")
 
 
-async def enrich_funkos_background(batch_size: int = 50, delay: float = 2.0, max_batches: int = 10):
-    """Background task to enrich Funko entries with data from Funko.com."""
-    logger.info("Starting background Funko enrichment...")
+async def stock_cleanup_scheduler():
+    """
+    P0-1: Background scheduler that runs stock cleanup at configured intervals.
+    Runs until cancelled during shutdown.
+    """
+    interval_seconds = settings.STOCK_CLEANUP_INTERVAL_MINUTES * 60
+    logger.info(f"Stock cleanup scheduler started (interval: {settings.STOCK_CLEANUP_INTERVAL_MINUTES} minutes)")
 
-    total_enriched = 0
-    total_failed = 0
-    batches_processed = 0
+    while True:
+        try:
+            await run_stock_cleanup()
+        except Exception as e:
+            logger.error(f"Stock cleanup scheduler error: {e}")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        while batches_processed < max_batches:
-            async with AsyncSessionLocal() as db:
-                # Get Funkos that need enrichment (no category set)
-                result = await db.execute(
-                    select(Funko)
-                    .where(Funko.category.is_(None))
-                    .limit(batch_size)
-                )
-                funkos = result.scalars().all()
-
-                if not funkos:
-                    logger.info("No more Funkos to enrich!")
-                    break
-
-                logger.info(f"Enrichment batch {batches_processed + 1}: Processing {len(funkos)} Funkos...")
-
-                for funko in funkos:
-                    try:
-                        # Search for product URL
-                        product_url = await search_funko_url(client, funko.title)
-
-                        if product_url:
-                            # Scrape details
-                            details = await scrape_funko_details(client, product_url)
-
-                            if any([details["category"], details["license"], details["product_type"], details["box_number"]]):
-                                await db.execute(
-                                    update(Funko)
-                                    .where(Funko.id == funko.id)
-                                    .values(
-                                        category=details["category"],
-                                        license=details["license"],
-                                        product_type=details["product_type"],
-                                        box_number=details["box_number"],
-                                        funko_url=details["funko_url"],
-                                    )
-                                )
-                                total_enriched += 1
-                                logger.debug(f"Enriched: {funko.title} -> Box#{details['box_number']}, {details['license']}")
-                            else:
-                                # Mark as attempted (set empty string to avoid re-processing)
-                                await db.execute(
-                                    update(Funko)
-                                    .where(Funko.id == funko.id)
-                                    .values(category="")
-                                )
-                                total_failed += 1
-                        else:
-                            # No URL found, mark as attempted
-                            await db.execute(
-                                update(Funko)
-                                .where(Funko.id == funko.id)
-                                .values(category="")
-                            )
-                            total_failed += 1
-
-                        # Rate limiting
-                        await asyncio.sleep(delay)
-
-                    except Exception as e:
-                        logger.error(f"Error enriching {funko.title}: {e}")
-                        total_failed += 1
-
-                await db.commit()
-                batches_processed += 1
-                logger.info(f"Batch {batches_processed} complete. Total enriched: {total_enriched}, failed: {total_failed}")
-
-    logger.info(f"Background enrichment finished. Enriched: {total_enriched}, Failed: {total_failed}")
+        await asyncio.sleep(interval_seconds)
 
 
 async def migrate_funko_columns():
@@ -317,8 +215,13 @@ async def migrate_funko_columns():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database tables on startup."""
-    global _enrichment_task
+    """
+    Initialize database and background tasks on startup.
+
+    P0-1: Now includes stock cleanup scheduler
+    P3-14: Funko scraper code removed (blocked by Funko.com)
+    """
+    global _stock_cleanup_task
 
     await init_db()
     # Migrate funko columns (add new enrichment fields)
@@ -326,24 +229,22 @@ async def lifespan(app: FastAPI):
     # Import Funkos if database is empty
     await import_funkos_if_needed()
 
-    # NOTE: Background enrichment disabled - Funko.com blocks Railway's IP ranges
-    # Enrichment must be done via client-side calls or a proxy service
-    # _enrichment_task = asyncio.create_task(enrich_funkos_background(
-    #     batch_size=50,   # 50 Funkos per batch
-    #     delay=2.0,       # 2 seconds between requests (be nice to Funko.com)
-    #     max_batches=20   # Process up to 1000 Funkos per server restart
-    # ))
-    logger.info("Background Funko enrichment DISABLED (Funko.com blocks cloud IPs)")
+    # P0-1: Start stock cleanup scheduler if enabled
+    if settings.STOCK_CLEANUP_ENABLED:
+        _stock_cleanup_task = asyncio.create_task(stock_cleanup_scheduler())
+        logger.info("Stock cleanup scheduler ENABLED")
+    else:
+        logger.info("Stock cleanup scheduler DISABLED via config")
 
     yield
 
     # Cleanup on shutdown
-    if _enrichment_task and not _enrichment_task.done():
-        _enrichment_task.cancel()
+    if _stock_cleanup_task and not _stock_cleanup_task.done():
+        _stock_cleanup_task.cancel()
         try:
-            await _enrichment_task
+            await _stock_cleanup_task
         except asyncio.CancelledError:
-            logger.info("Background enrichment task cancelled")
+            logger.info("Stock cleanup scheduler cancelled")
 
 
 app = FastAPI(
@@ -385,10 +286,61 @@ async def root():
     }
 
 
+@app.get("/api/config", tags=["Config"])
+async def get_config():
+    """
+    P3-12: Public configuration endpoint for frontend feature flags.
+    Returns non-sensitive configuration values.
+    """
+    return {
+        "under_construction": settings.UNDER_CONSTRUCTION,
+    }
+
+
 @app.get("/health", tags=["Health"])
 async def health_check():
-    return {
+    """
+    P2-8: Enhanced health check with actual DB ping and cleanup heartbeat.
+    Returns 503 if database is unreachable.
+    """
+    from fastapi import Response
+    from fastapi.responses import JSONResponse
+
+    health_status = {
         "status": "healthy",
-        "database": "connected",
-        "ml_model": "loaded"
+        "database": "unknown",
+        "stock_cleanup": _cleanup_heartbeat,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+    # P2-8: Actually ping the database
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+        health_status["database"] = "connected"
+    except Exception as e:
+        health_status["database"] = f"error: {str(e)[:50]}"
+        health_status["status"] = "unhealthy"
+        return JSONResponse(status_code=503, content=health_status)
+
+    return health_status
+
+
+@app.get("/health/detailed", tags=["Health"])
+async def detailed_health_check():
+    """
+    Detailed health check with pool statistics.
+    Useful for debugging connection issues.
+    """
+    health = await health_check()
+
+    # Add pool stats
+    pool = engine.pool
+    health["pool"] = {
+        "size": pool.size(),
+        "checked_in": pool.checkedin(),
+        "checked_out": pool.checkedout(),
+        "overflow": pool.overflow(),
+    }
+
+    return health
