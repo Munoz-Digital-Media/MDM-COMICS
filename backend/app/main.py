@@ -253,12 +253,50 @@ async def enrich_funkos_background(batch_size: int = 50, delay: float = 2.0, max
     logger.info(f"Background enrichment finished. Enriched: {total_enriched}, Failed: {total_failed}")
 
 
+async def migrate_funko_columns():
+    """Add enrichment columns to funkos table if they don't exist."""
+    from sqlalchemy import text
+    from app.core.database import engine
+
+    columns_to_add = [
+        ("category", "VARCHAR(255)"),
+        ("license", "VARCHAR(255)"),
+        ("product_type", "VARCHAR(100)"),
+        ("box_number", "VARCHAR(50)"),
+        ("funko_url", "TEXT"),
+    ]
+
+    async with engine.begin() as conn:
+        for col_name, col_type in columns_to_add:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE funkos ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+                ))
+                logger.info(f"Added column: {col_name}")
+            except Exception as e:
+                # Column already exists or other issue
+                pass
+
+        # Add indexes
+        for col in ["category", "license", "product_type", "box_number"]:
+            try:
+                await conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_funkos_{col} ON funkos({col})"
+                ))
+            except Exception:
+                pass
+
+    logger.info("Funko columns migration complete")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database tables on startup."""
     global _enrichment_task
 
     await init_db()
+    # Migrate funko columns (add new enrichment fields)
+    await migrate_funko_columns()
     # Import Funkos if database is empty
     await import_funkos_if_needed()
 
