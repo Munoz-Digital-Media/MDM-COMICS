@@ -10,7 +10,8 @@ import { Loader2, CreditCard, Lock, CheckCircle, AlertCircle } from 'lucide-reac
 import { checkoutAPI } from '../services/api';
 
 // Payment form component (inside Elements provider)
-function PaymentForm({ clientSecret, token, cartItems, total, onSuccess, onCancel }) {
+// P1-5: Removed token prop - auth handled via HttpOnly cookies
+function PaymentForm({ clientSecret, cartItems, total, onSuccess, onCancel }) {
   const stripe = useStripe();
   const elements = useElements();
   const [processing, setProcessing] = useState(false);
@@ -44,8 +45,9 @@ function PaymentForm({ clientSecret, token, cartItems, total, onSuccess, onCance
 
       if (paymentIntent && paymentIntent.status === 'succeeded') {
         // Payment successful - create order in our database
+        // P1-5: No token needed - auth via cookies
         const orderResult = await checkoutAPI.confirmOrder(
-          token,
+          null,  // P1-5: token no longer needed
           paymentIntent.id,
           cartItems.map(item => ({
             product_id: item.product_id || item.id,
@@ -120,7 +122,8 @@ function PaymentForm({ clientSecret, token, cartItems, total, onSuccess, onCance
 }
 
 // Main checkout component
-export default function CheckoutForm({ token, cartItems, total, onSuccess, onCancel }) {
+// P1-5: Removed token prop - auth handled via HttpOnly cookies
+export default function CheckoutForm({ cartItems, total, onSuccess, onCancel }) {
   const [stripePromise, setStripePromise] = useState(null);
   const [clientSecret, setClientSecret] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -142,7 +145,8 @@ export default function CheckoutForm({ token, cartItems, total, onSuccess, onCan
         quantity: item.quantity
       }));
 
-      const paymentIntent = await checkoutAPI.createPaymentIntent(token, items);
+      // P1-5: No token needed - auth via cookies
+      const paymentIntent = await checkoutAPI.createPaymentIntent(null, items);
       setClientSecret(paymentIntent.client_secret);
     } catch (err) {
       setError(err.message || 'Failed to initialize checkout');
@@ -199,7 +203,6 @@ export default function CheckoutForm({ token, cartItems, total, onSuccess, onCan
     >
       <PaymentForm
         clientSecret={clientSecret}
-        token={token}
         cartItems={cartItems}
         total={total}
         onSuccess={onSuccess}

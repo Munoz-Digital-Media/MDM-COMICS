@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTH: str = "5/minute"
     RATE_LIMIT_CHECKOUT: str = "10/minute"
 
+    # Cookie/CSRF Settings (P1-5)
+    COOKIE_DOMAIN: str = ""  # Empty = auto-detect from request
+    COOKIE_SECURE: bool = True  # Set to False for local dev without HTTPS
+    COOKIE_SAMESITE: str = "lax"  # "strict", "lax", or "none"
+    CSRF_SECRET_KEY: str = ""  # If empty, derives from SECRET_KEY
+
     # Feature Flags (P3-12)
     UNDER_CONSTRUCTION: bool = True
 

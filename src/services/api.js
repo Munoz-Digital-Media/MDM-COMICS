@@ -1,25 +1,66 @@
 /**
  * MDM Comics API Service
  * Handles all communication with the backend
+ *
+ * P1-5: Updated for cookie-based auth with CSRF protection
+ * - Uses credentials: 'include' to send cookies
+ * - Reads CSRF token from cookie and sends in header
+ * - Falls back to header-based auth for compatibility
  */
 
 // Use production API in production, localhost for dev
 const API_BASE = import.meta.env.VITE_API_URL ||
   (window.location.hostname === 'localhost' ? 'http://localhost:8080/api' : 'https://api.mdmcomics.com/api');
 
+// CSRF token cookie name
+const CSRF_COOKIE_NAME = 'mdm_csrf_token';
+
+/**
+ * Get CSRF token from cookie
+ */
+function getCsrfToken() {
+  const cookies = document.cookie.split(';');
+  for (const cookie of cookies) {
+    const [name, value] = cookie.trim().split('=');
+    if (name === CSRF_COOKIE_NAME) {
+      return decodeURIComponent(value);
+    }
+  }
+  return null;
+}
+
 /**
  * Generic fetch wrapper with error handling
+ *
+ * P1-5: Updated to:
+ * - Include credentials (cookies) in all requests
+ * - Add CSRF token header for mutations
+ * - Support both cookie and header auth
  */
 async function fetchAPI(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
+  const method = options.method || 'GET';
+
+  // Build headers
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  // P1-5: Add CSRF token for mutations (non-GET requests)
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+  }
 
   try {
     const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
       ...options,
+      headers,
+      // P1-5: Include cookies in all requests
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -127,62 +168,115 @@ export const productsAPI = {
 
 /**
  * Auth API
+ *
+ * P1-5: Updated for cookie-based auth
+ * - Tokens are now set as HttpOnly cookies by the server
+ * - We still receive tokens in response for backwards compatibility
+ * - Frontend stores csrf_token for sending with mutations
  */
 export const authAPI = {
   login: async (email, password) => {
-    return fetchAPI('/auth/login', {
+    const result = await fetchAPI('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
+    // P1-5: Server sets HttpOnly cookies automatically
+    // access_token is still returned for backwards compatibility
+    return result;
   },
 
   register: async (name, email, password) => {
-    return fetchAPI('/auth/register', {
+    const result = await fetchAPI('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ name, email, password }),
     });
+    // P1-5: Server sets HttpOnly cookies automatically
+    return result;
   },
 
-  me: async (token) => {
-    return fetchAPI('/auth/me', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+  logout: async () => {
+    // P1-5: New endpoint that clears HttpOnly cookies
+    return fetchAPI('/auth/logout', {
+      method: 'POST',
     });
+  },
+
+  /**
+   * Get current user
+   * P1-5: No longer needs token parameter - uses cookie
+   * Still accepts token for backwards compatibility
+   */
+  me: async (token = null) => {
+    const options = {};
+    // Support legacy header-based auth if token provided
+    if (token) {
+      options.headers = {
+        Authorization: `Bearer ${token}`,
+      };
+    }
+    return fetchAPI('/auth/me', options);
+  },
+
+  /**
+   * Refresh tokens
+   * P1-5: Uses refresh token from cookie, falls back to body
+   */
+  refresh: async (refreshToken = null) => {
+    const options = {
+      method: 'POST',
+    };
+    if (refreshToken) {
+      options.body = JSON.stringify({ refresh_token: refreshToken });
+    }
+    return fetchAPI('/auth/refresh', options);
   },
 };
 
 /**
  * Cart API
+ *
+ * P1-5: Updated for cookie-based auth - no longer needs token parameter
+ * Still accepts token for backwards compatibility with mobile/API clients
  */
 export const cartAPI = {
-  get: async (token) => {
-    return fetchAPI('/cart', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+  get: async (token = null) => {
+    const options = {};
+    if (token) {
+      options.headers = { Authorization: `Bearer ${token}` };
+    }
+    return fetchAPI('/cart', options);
   },
 
   addItem: async (token, productId, quantity = 1) => {
-    return fetchAPI('/cart/items', {
+    const options = {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ product_id: productId, quantity }),
-    });
+    };
+    if (token) {
+      options.headers = { Authorization: `Bearer ${token}` };
+    }
+    return fetchAPI('/cart/items', options);
   },
 
   updateItem: async (token, itemId, quantity) => {
-    return fetchAPI(`/cart/items/${itemId}`, {
+    const options = {
       method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ quantity }),
-    });
+    };
+    if (token) {
+      options.headers = { Authorization: `Bearer ${token}` };
+    }
+    return fetchAPI(`/cart/items/${itemId}`, options);
   },
 
   removeItem: async (token, itemId) => {
-    return fetchAPI(`/cart/items/${itemId}`, {
+    const options = {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    };
+    if (token) {
+      options.headers = { Authorization: `Bearer ${token}` };
+    }
+    return fetchAPI(`/cart/items/${itemId}`, options);
   },
 };
 
@@ -197,6 +291,8 @@ export const healthAPI = {
 
 /**
  * Checkout API
+ *
+ * P1-5: Updated for cookie-based auth
  */
 export const checkoutAPI = {
   getConfig: async () => {
@@ -204,19 +300,25 @@ export const checkoutAPI = {
   },
 
   createPaymentIntent: async (token, items) => {
-    return fetchAPI('/checkout/create-payment-intent', {
+    const options = {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ items }),
-    });
+    };
+    if (token) {
+      options.headers = { Authorization: `Bearer ${token}` };
+    }
+    return fetchAPI('/checkout/create-payment-intent', options);
   },
 
   confirmOrder: async (token, paymentIntentId, items) => {
-    return fetchAPI('/checkout/confirm-order', {
+    const options = {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ payment_intent_id: paymentIntentId, items }),
-    });
+    };
+    if (token) {
+      options.headers = { Authorization: `Bearer ${token}` };
+    }
+    return fetchAPI('/checkout/confirm-order', options);
   },
 };
 
