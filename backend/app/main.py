@@ -26,37 +26,52 @@ logger = logging.getLogger(__name__)
 
 
 async def import_funkos_if_needed():
-    """One-time import of Funko data if database is empty."""
+    """Import Funko data, skipping any that already exist (idempotent)."""
     async with AsyncSessionLocal() as db:
-        # Check if we already have Funkos
-        result = await db.execute(select(func.count(Funko.id)))
-        count = result.scalar() or 0
-
-        if count > 0:
-            logger.info(f"Funko database already populated with {count} entries")
-            return
-
         # Find the JSON file
         json_path = Path(__file__).parent.parent / "funko_data.json"
         if not json_path.exists():
             logger.warning(f"Funko data file not found at {json_path}")
             return
 
-        logger.info("Starting one-time Funko import...")
+        # Get current count
+        result = await db.execute(select(func.count(Funko.id)))
+        current_count = result.scalar() or 0
 
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
-        logger.info(f"Loading {len(data)} Funkos...")
+        total_in_file = len(data)
 
-        # Cache for series names
-        series_cache = {}
+        # If we have all the funkos, skip import
+        if current_count >= total_in_file:
+            logger.info(f"Funko database already has {current_count} entries (file has {total_in_file}). Skipping import.")
+            return
+
+        logger.info(f"Starting Funko import... DB has {current_count}, file has {total_in_file}")
+
+        # Get all existing handles to skip duplicates
+        existing_result = await db.execute(select(Funko.handle))
+        existing_handles = set(row[0] for row in existing_result.fetchall())
+        logger.info(f"Found {len(existing_handles)} existing handles to skip")
+
+        # Get existing series names
+        series_result = await db.execute(select(FunkoSeriesName))
+        series_cache = {s.name: s for s in series_result.scalars().all()}
+        logger.info(f"Loaded {len(series_cache)} existing series names")
+
         imported = 0
+        skipped = 0
         batch_size = 500
 
         for i, item in enumerate(data):
             handle = item.get('handle', '')
             if not handle:
+                continue
+
+            # Skip if already exists
+            if handle in existing_handles:
+                skipped += 1
                 continue
 
             # Get or create series
@@ -79,15 +94,16 @@ async def import_funkos_if_needed():
                 series=funko_series
             )
             db.add(funko)
+            existing_handles.add(handle)  # Add to set so we skip if duplicated in file
             imported += 1
 
             # Commit in batches
             if imported % batch_size == 0:
                 await db.commit()
-                logger.info(f"Imported {imported} Funkos...")
+                logger.info(f"Imported {imported} Funkos (skipped {skipped})...")
 
         await db.commit()
-        logger.info(f"Funko import complete! {imported} entries added.")
+        logger.info(f"Funko import complete! {imported} new entries added, {skipped} skipped (already existed).")
 
 
 @asynccontextmanager
