@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { X, Search, Plus, Trash2, Save, Package, Loader2, ShoppingBag, Upload, Camera, ScanLine } from "lucide-react";
-import { comicsAPI } from "../services/api";
+import { X, Search, Plus, Trash2, Save, Package, Loader2, ShoppingBag, Upload, Camera, ScanLine, Tag, ChevronLeft, ChevronRight } from "lucide-react";
+import { comicsAPI, funkosAPI } from "../services/api";
 import { adminAPI } from "../services/adminApi";
 
 export default function AdminConsole({ onClose, token }) {
@@ -31,6 +31,16 @@ export default function AdminConsole({ onClose, token }) {
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
+  // Funko search state
+  const [funkoSearchQuery, setFunkoSearchQuery] = useState("");
+  const [funkoSeriesFilter, setFunkoSeriesFilter] = useState("");
+  const [funkoResults, setFunkoResults] = useState([]);
+  const [funkoLoading, setFunkoLoading] = useState(false);
+  const [funkoPage, setFunkoPage] = useState(1);
+  const [funkoTotalPages, setFunkoTotalPages] = useState(1);
+  const [funkoTotal, setFunkoTotal] = useState(0);
+  const [funkoStats, setFunkoStats] = useState(null);
+
   // Search mode: 'text', 'upc', or 'image'
   const searchMode = uploadedImage ? 'image'
     : searchParams.upc ? 'upc'
@@ -40,6 +50,11 @@ export default function AdminConsole({ onClose, token }) {
   useEffect(() => {
     if (activeTab === "products") loadProducts();
   }, [activeTab]);
+
+  // Load Funko stats on mount
+  useEffect(() => {
+    funkosAPI.getStats().then(setFunkoStats).catch(() => {});
+  }, []);
 
   const loadProducts = async () => {
     setProductsLoading(true);
@@ -66,6 +81,52 @@ export default function AdminConsole({ onClose, token }) {
     } catch (err) {
       setMessage({ type: "error", text: "Search failed: " + err.message });
     } finally { setSearchLoading(false); }
+  };
+
+  // Funko search handler
+  const handleFunkoSearch = async (pageNum = 1) => {
+    if (!funkoSearchQuery.trim() && !funkoSeriesFilter.trim()) return;
+
+    setFunkoLoading(true);
+    try {
+      const data = await funkosAPI.search({
+        q: funkoSearchQuery || undefined,
+        series: funkoSeriesFilter || undefined,
+        page: pageNum,
+        per_page: 20,
+      });
+      setFunkoResults(data.results || []);
+      setFunkoTotalPages(data.pages || 1);
+      setFunkoTotal(data.total || 0);
+      setFunkoPage(pageNum);
+    } catch (err) {
+      setMessage({ type: "error", text: "Funko search failed: " + err.message });
+    } finally {
+      setFunkoLoading(false);
+    }
+  };
+
+  // Select a Funko to create a product
+  const selectFunko = (funko) => {
+    setProductForm({
+      sku: "FUNKO-" + funko.id,
+      name: funko.title,
+      description: funko.series?.map(s => s.name).join(", ") || "",
+      category: "funko",
+      subcategory: funko.series?.[0]?.name || "",
+      price: "",
+      original_price: "",
+      stock: 1,
+      image_url: funko.image_url || "",
+      issue_number: "",
+      publisher: "",
+      year: "",
+      upc: "",
+      featured: false,
+      tags: funko.series?.map(s => s.name) || [],
+      variant: "",
+    });
+    setActiveTab("create");
   };
 
   // Image upload handler with validation
@@ -298,8 +359,11 @@ export default function AdminConsole({ onClose, token }) {
           <button onClick={() => setActiveTab("search")} className={"px-6 py-3 font-medium " + (activeTab === "search" ? "text-orange-500 border-b-2 border-orange-500" : "text-zinc-400 hover:text-white")}>
             <Search className="w-4 h-4 inline mr-2" />Find Comics
           </button>
+          <button onClick={() => setActiveTab("funkos")} className={"px-6 py-3 font-medium " + (activeTab === "funkos" ? "text-purple-500 border-b-2 border-purple-500" : "text-zinc-400 hover:text-white")}>
+            <Package className="w-4 h-4 inline mr-2" />Find Funkos
+          </button>
           <button onClick={() => setActiveTab("products")} className={"px-6 py-3 font-medium " + (activeTab === "products" ? "text-orange-500 border-b-2 border-orange-500" : "text-zinc-400 hover:text-white")}>
-            <Package className="w-4 h-4 inline mr-2" />Products ({productsTotal})
+            <ShoppingBag className="w-4 h-4 inline mr-2" />Products ({productsTotal})
           </button>
           <button onClick={() => setActiveTab("create")} className={"px-6 py-3 font-medium " + (activeTab === "create" ? "text-orange-500 border-b-2 border-orange-500" : "text-zinc-400 hover:text-white")}>
             <Plus className="w-4 h-4 inline mr-2" />Create Product
@@ -517,6 +581,146 @@ export default function AdminConsole({ onClose, token }) {
               </div>
 
               {detailsLoading && <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><Loader2 className="w-8 h-8 text-orange-500 animate-spin" /></div>}
+            </div>
+          )}
+
+          {activeTab === "funkos" && (
+            <div>
+              {/* Funko Search Form */}
+              <div className="mb-6">
+                <p className="text-sm text-zinc-500 mb-3">
+                  Search {funkoStats ? `${funkoStats.total_funkos.toLocaleString()} Funkos` : 'the database'}
+                </p>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      value={funkoSearchQuery}
+                      onChange={(e) => setFunkoSearchQuery(e.target.value)}
+                      onKeyPress={(e) => e.key === "Enter" && handleFunkoSearch(1)}
+                      placeholder="Search by title (e.g., Spider-Man, Darth Vader)"
+                      className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
+                    />
+                  </div>
+                  <div className="w-48">
+                    <input
+                      type="text"
+                      value={funkoSeriesFilter}
+                      onChange={(e) => setFunkoSeriesFilter(e.target.value)}
+                      onKeyPress={(e) => e.key === "Enter" && handleFunkoSearch(1)}
+                      placeholder="Series (optional)"
+                      className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleFunkoSearch(1)}
+                    disabled={funkoLoading || (!funkoSearchQuery.trim() && !funkoSeriesFilter.trim())}
+                    className="px-6 py-2 bg-purple-500 rounded-lg font-medium text-white hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {funkoLoading ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Search className="w-5 h-5" />
+                    )}
+                    Search
+                  </button>
+                </div>
+              </div>
+
+              {/* Results */}
+              {funkoResults.length === 0 && !funkoLoading && (
+                <div className="text-center py-12">
+                  <Package className="w-16 h-16 text-zinc-700 mx-auto mb-4" />
+                  <p className="text-zinc-500">Search for Funko POPs by name or series</p>
+                </div>
+              )}
+
+              {funkoResults.length > 0 && (
+                <>
+                  <div className="flex justify-between items-center mb-4">
+                    <p className="text-zinc-500 text-sm">
+                      Showing {funkoResults.length} of {funkoTotal.toLocaleString()} results
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {funkoResults.map((funko) => (
+                      <div
+                        key={funko.id}
+                        className="bg-zinc-800 rounded-xl border border-zinc-700 overflow-hidden cursor-pointer hover:border-purple-500 hover:shadow-lg hover:shadow-purple-500/10 transition-all group"
+                      >
+                        <div className="aspect-square bg-zinc-900 relative overflow-hidden">
+                          {funko.image_url ? (
+                            <img
+                              src={funko.image_url}
+                              alt={funko.title}
+                              className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+                              onError={(e) => {
+                                e.target.onerror = null;
+                                e.target.src = `https://placehold.co/400x400/27272a/a855f7?text=+`;
+                              }}
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <Package className="w-12 h-12 text-zinc-700" />
+                            </div>
+                          )}
+                          <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <button
+                              onClick={() => selectFunko(funko)}
+                              className="px-4 py-2 bg-purple-500 text-white rounded-lg font-medium flex items-center gap-2 hover:bg-purple-600 transition-colors"
+                            >
+                              <ShoppingBag className="w-4 h-4" />
+                              Create Product
+                            </button>
+                          </div>
+                        </div>
+                        <div className="p-3" onClick={() => selectFunko(funko)}>
+                          <h4 className="text-white font-bold text-sm line-clamp-2 mb-2">
+                            {funko.title}
+                          </h4>
+                          {funko.series && funko.series.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {funko.series.slice(0, 2).map((s, i) => (
+                                <span
+                                  key={i}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-700 rounded text-xs text-zinc-400"
+                                >
+                                  <Tag className="w-3 h-3" />
+                                  {s.name.length > 15 ? s.name.substring(0, 15) + '...' : s.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Pagination */}
+                  {funkoTotalPages > 1 && (
+                    <div className="flex items-center justify-center gap-4 mt-6">
+                      <button
+                        onClick={() => handleFunkoSearch(funkoPage - 1)}
+                        disabled={funkoPage <= 1 || funkoLoading}
+                        className="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft className="w-5 h-5 text-zinc-400" />
+                      </button>
+                      <span className="text-zinc-400">
+                        Page {funkoPage} of {funkoTotalPages}
+                      </span>
+                      <button
+                        onClick={() => handleFunkoSearch(funkoPage + 1)}
+                        disabled={funkoPage >= funkoTotalPages || funkoLoading}
+                        className="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronRight className="w-5 h-5 text-zinc-400" />
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
