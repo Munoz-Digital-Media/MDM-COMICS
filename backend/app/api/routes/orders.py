@@ -1,10 +1,12 @@
 """
 Order routes
+
+P2-10: Added pagination support
 """
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
@@ -16,6 +18,10 @@ from app.api.deps import get_current_user
 
 router = APIRouter()
 
+# P2-10: Pagination limits
+MAX_PAGE_SIZE = 100
+DEFAULT_PAGE_SIZE = 20
+
 
 def generate_order_number() -> str:
     """Generate unique order number"""
@@ -25,18 +31,34 @@ def generate_order_number() -> str:
 @router.get("", response_model=OrderList)
 async def list_orders(
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Items per page"),
 ):
-    """Get current user's orders"""
+    """
+    Get current user's orders with pagination.
+
+    P2-10: Added pagination to prevent unbounded queries.
+    """
+    # Get total count
+    count_result = await db.execute(
+        select(func.count(Order.id)).where(Order.user_id == user.id)
+    )
+    total = count_result.scalar() or 0
+
+    # Get paginated orders
+    offset = (page - 1) * page_size
     result = await db.execute(
         select(Order)
         .where(Order.user_id == user.id)
         .options(selectinload(Order.items))
         .order_by(Order.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
     )
     orders = result.scalars().all()
-    
-    return OrderList(orders=orders, total=len(orders))
+
+    return OrderList(orders=orders, total=total)
 
 
 @router.get("/{order_id}", response_model=OrderResponse)
