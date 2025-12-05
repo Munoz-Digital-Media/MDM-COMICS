@@ -3,6 +3,7 @@ Authentication routes
 
 P1-3: Rate limited to prevent brute force attacks
 P1-5: HttpOnly cookies + CSRF protection
+P2-8: Token revocation support (logout, logout all devices)
 """
 import os
 from typing import Optional
@@ -26,6 +27,7 @@ from app.core.cookies import (
     clear_auth_cookies,
     get_refresh_token_from_cookie,
 )
+from app.core.token_blacklist import token_blacklist
 from app.models.user import User
 from app.schemas.user import UserCreate, UserResponse, UserLogin
 from app.schemas.auth import Token, RefreshToken
@@ -162,6 +164,30 @@ async def logout(request: Request, response: Response):
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current authenticated user"""
     return current_user
+
+
+@router.post("/logout-all")
+async def logout_all_devices(
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    P2-8: Logout from all devices.
+
+    Revokes all tokens issued before now for this user.
+    Clears current session cookies.
+    """
+    # Revoke all tokens for this user
+    token_blacklist.revoke_all_user_tokens(current_user.id)
+
+    # Clear current session cookies
+    clear_auth_cookies(response, request)
+
+    return {
+        "message": "Logged out from all devices successfully",
+        "user_id": current_user.id
+    }
 
 
 @router.post("/refresh", response_model=AuthResponse)
