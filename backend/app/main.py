@@ -10,6 +10,7 @@ Risk Mitigation Implementation:
 - P2-8: Enhanced health endpoint with DB ping
 - P2-10: Request size limits
 - P2-11: HTTP client lifecycle management
+- P2-5: Request metrics collection and monitoring
 - P3-14: Dead Funko scraper code removed
 """
 import asyncio
@@ -34,6 +35,8 @@ from app.core.database import init_db, AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.core.error_handler import ErrorSanitizationMiddleware
 from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.monitoring import RequestMetricsMiddleware, metrics, record_db_metrics, get_prometheus_metrics
+from app.core.backup import get_backup_status, get_restore_instructions
 from app.services.metron import metron_service
 
 # Import models to register them with SQLAlchemy
@@ -268,10 +271,57 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     title="MDM Comics API",
-    description="AI-powered comic book grading and e-commerce platform",
-    version="0.1.0",
+    description="""
+## MDM Comics E-Commerce API
+
+AI-powered comic book grading and e-commerce platform for collectors.
+
+### Features
+- **Authentication**: JWT-based auth with HttpOnly cookies and CSRF protection
+- **Products**: Browse, search, and manage comic inventory
+- **Cart & Checkout**: Full shopping cart with Stripe payment integration
+- **Comic Database**: Search comics via Metron API with local caching
+- **Funko Database**: Browse and search Funko Pop! collectibles
+- **AI Grading**: Coming soon - ML-powered comic grade estimation
+
+### Authentication
+Most endpoints require authentication. Use `/api/auth/login` to get tokens.
+Tokens are set as HttpOnly cookies for web clients, or returned in the response body for API clients.
+
+### Rate Limits
+- Auth endpoints: 5 requests/minute
+- Checkout: 10 requests/minute
+- General: 100 requests/minute
+
+### Security
+- All mutations require CSRF token (for cookie-based auth)
+- Passwords must be 8+ chars with uppercase, lowercase, and digit
+- Tokens expire in 30 minutes (access) / 7 days (refresh)
+    """,
+    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    openapi_tags=[
+        {"name": "Health", "description": "Health check and monitoring endpoints"},
+        {"name": "Authentication", "description": "User registration, login, and token management"},
+        {"name": "Users", "description": "User profile management"},
+        {"name": "Products", "description": "Product catalog and inventory management"},
+        {"name": "Cart", "description": "Shopping cart operations"},
+        {"name": "Checkout", "description": "Payment and order processing"},
+        {"name": "Orders", "description": "Order history and management"},
+        {"name": "Comics Database", "description": "Comic book search via Metron API"},
+        {"name": "Funko Database", "description": "Funko Pop! collectibles database"},
+        {"name": "AI Grading", "description": "AI-powered comic grade estimation (coming soon)"},
+        {"name": "Config", "description": "Public configuration endpoints"},
+    ],
+    contact={
+        "name": "MDM Comics Support",
+        "url": "https://mdmcomics.com",
+        "email": "support@mdmcomics.com",
+    },
+    license_info={
+        "name": "Proprietary",
+    },
 )
 
 # P1-3: Rate limiting
@@ -303,6 +353,9 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestSizeLimitMiddleware)
+
+# P2-5: Request metrics collection
+app.add_middleware(RequestMetricsMiddleware)
 
 # P2-4: Error sanitization (catches unhandled exceptions)
 app.add_middleware(ErrorSanitizationMiddleware)
@@ -397,4 +450,67 @@ async def detailed_health_check():
         "overflow": pool.overflow(),
     }
 
+    # P2-5: Record DB metrics for monitoring
+    await record_db_metrics(pool)
+
     return health
+
+
+@app.get("/metrics", tags=["Health"])
+async def prometheus_metrics():
+    """
+    P2-5: Prometheus-compatible metrics endpoint.
+
+    Returns application metrics in text format for monitoring systems.
+    Includes request latency, error rates, and database pool stats.
+    """
+    from starlette.responses import Response
+
+    # Update DB pool metrics
+    await record_db_metrics(engine.pool)
+
+    return Response(
+        content=get_prometheus_metrics(),
+        media_type="text/plain; charset=utf-8"
+    )
+
+
+@app.get("/metrics/json", tags=["Health"])
+async def json_metrics():
+    """
+    P2-5: JSON metrics endpoint for dashboards.
+
+    Returns all collected metrics in JSON format for easier integration
+    with custom dashboards or alerting systems.
+    """
+    # Update DB pool metrics
+    await record_db_metrics(engine.pool)
+
+    return metrics.get_all_metrics()
+
+
+@app.get("/health/backup", tags=["Health"])
+async def backup_status():
+    """
+    P2-3: Database backup status and configuration.
+
+    Returns current backup configuration, most recent backup info,
+    and Railway managed backup details.
+
+    Note: Railway PostgreSQL includes automatic point-in-time recovery.
+    """
+    return get_backup_status()
+
+
+@app.get("/health/backup/restore-guide", tags=["Health"])
+async def restore_guide():
+    """
+    P2-3: Database restore instructions.
+
+    Returns step-by-step instructions for restoring from various backup sources.
+    """
+    from starlette.responses import Response
+    return Response(
+        content=get_restore_instructions(),
+        media_type="text/plain; charset=utf-8"
+    )
