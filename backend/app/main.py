@@ -134,9 +134,10 @@ async def search_funko_url(client: httpx.AsyncClient, title: str) -> Optional[st
         # Look for product URLs in response
         # Pattern: /product-slug/ID.html where ID can be numeric or alphanumeric
         # Examples: /pop-batman/86369.html, /dc-dog-collar/DCCPDC0001.html
+        # Also handle URL-encoded chars like %23 for #
         patterns = [
-            r'href="(https://funko\.com/[a-z0-9-]+/[A-Za-z0-9]+\.html)"',  # Full URL
-            r'href="(/[a-z0-9-]+/[A-Za-z0-9]+\.html)"',  # Relative URL
+            r'href="(https://funko\.com/[a-zA-Z0-9%_-]+/[A-Za-z0-9]+\.html)"',  # Full URL
+            r'href="(/[a-zA-Z0-9%_-]+/[A-Za-z0-9]+\.html)"',  # Relative URL
         ]
 
         for pattern in patterns:
