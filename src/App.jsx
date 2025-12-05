@@ -122,29 +122,33 @@ import React, { useState, useMemo, useEffect } from "react";
     const [completedOrder, setCompletedOrder] = useState(null);
 
     // Auth state
+    // P1-5: Removed localStorage token storage - now using HttpOnly cookies
     const [user, setUser] = useState(null);
-    const [authToken, setAuthToken] = useState(localStorage.getItem('mdm_token'));
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
     const [isComicSearchOpen, setIsComicSearchOpen] = useState(false);
     const [isFunkoSearchOpen, setIsFunkoSearchOpen] = useState(false);
     const [isAdminOpen, setIsAdminOpen] = useState(false);
     const [authMode, setAuthMode] = useState("login");
+    const [authLoading, setAuthLoading] = useState(true);
 
     // P3-12: Under construction flag from API (defaults to true for safety)
     const [underConstruction, setUnderConstruction] = useState(true);
 
-    // Load user from token on mount
+    // P1-5: Load user from cookie-based session on mount
+    // No longer needs localStorage - server reads token from HttpOnly cookie
     useEffect(() => {
-      if (authToken) {
-        authAPI.me(authToken)
-          .then(userData => {
-            setUser({ ...userData, token: authToken });
-          })
-          .catch(() => {
-            localStorage.removeItem('mdm_token');
-            setAuthToken(null);
-          });
-      }
+      setAuthLoading(true);
+      authAPI.me()
+        .then(userData => {
+          setUser(userData);
+        })
+        .catch(() => {
+          // Not authenticated or session expired
+          setUser(null);
+        })
+        .finally(() => {
+          setAuthLoading(false);
+        });
     }, []);
 
     // P3-12: Fetch config from API on mount
@@ -214,18 +218,17 @@ import React, { useState, useMemo, useEffect } from "react";
     const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
     // Auth functions
+    // P1-5: Updated for cookie-based auth - no more localStorage
     const handleSignup = async (name, email, password) => {
       try {
         const result = await authAPI.register(name, email, password);
-        if (result.access_token) {
-          localStorage.setItem('mdm_token', result.access_token);
-          setAuthToken(result.access_token);
-          const userData = await authAPI.me(result.access_token);
-          setUser({ ...userData, token: result.access_token });
-          setIsAuthModalOpen(false);
-          showNotification(`Welcome to MDM Comics, ${name}!`);
-          return true;
-        }
+        // P1-5: Server sets HttpOnly cookies automatically
+        // Fetch user data to confirm auth worked
+        const userData = await authAPI.me();
+        setUser(userData);
+        setIsAuthModalOpen(false);
+        showNotification(`Welcome to MDM Comics, ${name}!`);
+        return true;
       } catch (err) {
         showNotification(err.message || "Registration failed", "error");
         return false;
@@ -235,24 +238,27 @@ import React, { useState, useMemo, useEffect } from "react";
     const handleLogin = async (email, password) => {
       try {
         const result = await authAPI.login(email, password);
-        if (result.access_token) {
-          localStorage.setItem('mdm_token', result.access_token);
-          setAuthToken(result.access_token);
-          const userData = await authAPI.me(result.access_token);
-          setUser({ ...userData, token: result.access_token });
-          setIsAuthModalOpen(false);
-          showNotification(`Welcome back, ${userData.name}!`);
-          return true;
-        }
+        // P1-5: Server sets HttpOnly cookies automatically
+        // Fetch user data to confirm auth worked
+        const userData = await authAPI.me();
+        setUser(userData);
+        setIsAuthModalOpen(false);
+        showNotification(`Welcome back, ${userData.name}!`);
+        return true;
       } catch (err) {
         showNotification("Invalid email or password", "error");
         return false;
       }
     };
 
-    const handleLogout = () => {
-      localStorage.removeItem('mdm_token');
-      setAuthToken(null);
+    const handleLogout = async () => {
+      try {
+        // P1-5: Call logout endpoint to clear HttpOnly cookies
+        await authAPI.logout();
+      } catch (err) {
+        // Logout even if API call fails
+        console.error("Logout API error:", err);
+      }
       setUser(null);
       setIsAdminOpen(false);
       showNotification("You've been logged out");
@@ -777,7 +783,6 @@ import React, { useState, useMemo, useEffect } from "react";
                     {/* Payment Form */}
                     <div>
                       <CheckoutForm
-                        token={authToken}
                         cartItems={cart}
                         total={cartTotal + (cartTotal >= 50 ? 0 : 5.99)}
                         onSuccess={(order) => {
