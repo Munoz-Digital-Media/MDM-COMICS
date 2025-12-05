@@ -12,6 +12,7 @@ from app.models.comic_data import (
     ComicArc,
     MetronAPILog,
 )
+from app.models.funko import Funko, FunkoSeriesName
 
 __all__ = [
     "User",
@@ -27,4 +28,6 @@ __all__ = [
     "ComicCreator",
     "ComicArc",
     "MetronAPILog",
+    "Funko",
+    "FunkoSeriesName",
 ]

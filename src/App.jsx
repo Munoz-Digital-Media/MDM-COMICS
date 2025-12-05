@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
   import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Eye, EyeOff, Database, Shield } from "lucide-react";
   import { authAPI } from "./services/api";
   import ComicSearch from "./components/ComicSearch";
+  import FunkoSearch from "./components/FunkoSearch";
   import AdminConsole from "./components/AdminConsole";
   import CheckoutForm, { OrderSuccess } from "./components/CheckoutForm";
   import ComingSoon from "./components/ComingSoon";
@@ -10,8 +11,8 @@ import React, { useState, useMemo, useEffect } from "react";
   // BUILD INFO - Update these on each release
   // ============================================================================
   const BUILD_INFO = {
-    version: "1.4.0",
-    buildNumber: 14,
+    version: "1.5.0",
+    buildNumber: 15,
     buildDate: new Date().toISOString(),
     environment: "development"
   };
@@ -415,6 +416,7 @@ import React, { useState, useMemo, useEffect } from "react";
     const [authToken, setAuthToken] = useState(localStorage.getItem('mdm_token'));
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
     const [isComicSearchOpen, setIsComicSearchOpen] = useState(false);
+    const [isFunkoSearchOpen, setIsFunkoSearchOpen] = useState(false);
     const [isAdminOpen, setIsAdminOpen] = useState(false);
     const [authMode, setAuthMode] = useState("login");
 
@@ -744,6 +746,15 @@ import React, { useState, useMemo, useEffect } from "react";
                   title="Search Comic Database"
                 >
                   <Database className="w-6 h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
+                </button>
+
+                {/* Funko Database Search Button */}
+                <button
+                  onClick={() => setIsFunkoSearchOpen(true)}
+                  className="relative p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-purple-500 transition-colors group"
+                  title="Search Funko Database"
+                >
+                  <Package className="w-6 h-6 text-zinc-400 group-hover:text-purple-500 transition-colors" />
                 </button>
 
                 {/* Admin Console Button - Only for admins */}
@@ -1141,6 +1152,17 @@ import React, { useState, useMemo, useEffect } from "react";
             onSelectComic={(comic) => {
               console.log("Selected comic:", comic);
               setIsComicSearchOpen(false);
+            }}
+          />
+        )}
+
+        {/* Funko Database Search Modal */}
+        {isFunkoSearchOpen && (
+          <FunkoSearch
+            onClose={() => setIsFunkoSearchOpen(false)}
+            onSelectFunko={(funko) => {
+              console.log("Selected funko:", funko);
+              setIsFunkoSearchOpen(false);
             }}
           />
         )}

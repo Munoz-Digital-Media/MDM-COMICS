@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout
+from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos
 from app.core.config import settings
 from app.core.database import init_db
 
@@ -14,7 +14,8 @@ from app.core.database import init_db
 from app.models import (
     User, Product, CartItem, Order, OrderItem, GradeRequest,
     ComicPublisher, ComicSeries, ComicIssue, ComicCharacter,
-    ComicCreator, ComicArc, MetronAPILog
+    ComicCreator, ComicArc, MetronAPILog,
+    Funko, FunkoSeriesName
 )
 
 
@@ -52,6 +53,7 @@ app.include_router(orders.router, prefix="/api/orders", tags=["Orders"])
 app.include_router(grading.router, prefix="/api/grading", tags=["AI Grading"])
 app.include_router(comics.router, prefix="/api", tags=["Comics Database"])
 app.include_router(checkout.router, prefix="/api", tags=["Checkout"])
+app.include_router(funkos.router, prefix="/api", tags=["Funko Database"])
 
 
 @app.get("/", tags=["Health"])

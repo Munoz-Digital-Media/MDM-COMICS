@@ -220,6 +220,49 @@ export const checkoutAPI = {
   },
 };
 
+/**
+ * Funko API
+ */
+export const funkosAPI = {
+  /**
+   * Search Funkos by title or series
+   */
+  search: async ({ q, series, page = 1, per_page = 20 }) => {
+    const params = new URLSearchParams();
+    if (q) params.append('q', q);
+    if (series) params.append('series', series);
+    params.append('page', page);
+    params.append('per_page', per_page);
+
+    return fetchAPI(`/funkos/search?${params.toString()}`);
+  },
+
+  /**
+   * Get Funko by ID
+   */
+  getById: async (id) => {
+    return fetchAPI(`/funkos/${id}`);
+  },
+
+  /**
+   * Get series list
+   */
+  getSeries: async (q, limit = 50) => {
+    const params = new URLSearchParams();
+    if (q) params.append('q', q);
+    params.append('limit', limit);
+
+    return fetchAPI(`/funkos/series?${params.toString()}`);
+  },
+
+  /**
+   * Get database stats
+   */
+  getStats: async () => {
+    return fetchAPI('/funkos/stats/count');
+  },
+};
+
 export default {
   comics: comicsAPI,
   products: productsAPI,
@@ -227,4 +270,5 @@ export default {
   cart: cartAPI,
   checkout: checkoutAPI,
   health: healthAPI,
+  funkos: funkosAPI,
 };
