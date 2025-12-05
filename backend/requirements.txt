@@ -34,6 +34,9 @@ httpx==0.26.0
 # Web Scraping
 beautifulsoup4==4.12.3
 
+# User Agent Parsing (for analytics)
+user-agents==2.2.0
+
 # Payments
 stripe==7.0.0
 
