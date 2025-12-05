@@ -1,6 +1,8 @@
 """
 Comic search and lookup routes using Metron API
 All searches are cached to local database for data capture.
+
+P2-1: Image upload validation with magic bytes check
 """
 from typing import Optional
 import io
@@ -11,6 +13,7 @@ from PIL import Image
 import imagehash
 
 from app.core.database import get_db
+from app.core.upload_validation import validate_image_upload
 from app.services.comic_cache import comic_cache
 from app.services.metron import metron_service
 from app.models.comic_data import ComicIssue, ComicSeries
@@ -199,15 +202,17 @@ async def search_by_image(
 
     BE-003 OPTIMIZATION: Uses indexed cover_hash column instead of
     scanning raw_data JSON. Only queries issues that HAVE a cover_hash.
-    """
-    # Validate file type
-    if file.content_type not in ["image/jpeg", "image/png"]:
-        raise HTTPException(status_code=400, detail="Only JPEG and PNG images allowed")
 
-    # Read and validate file size (10MB max)
-    content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image must be under 10MB")
+    P2-1: Enhanced image validation with magic bytes check.
+    """
+    # P2-1: Comprehensive image validation (type, size, magic bytes, dimensions)
+    content = await validate_image_upload(
+        file,
+        allowed_types=["image/jpeg", "image/png"],
+        max_size_mb=10,
+        validate_dimensions=True,
+        max_dimension=8192
+    )
 
     try:
         # Compute perceptual hash of uploaded image

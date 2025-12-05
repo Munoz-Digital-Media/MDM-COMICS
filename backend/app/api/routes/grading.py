@@ -4,12 +4,15 @@ AI Grading routes
 DISABLED: The AI grading feature is under development.
 All estimation endpoints return 503 until a real ML model is deployed.
 Returning random "AI" grades would be deceptive (FTC/constitution_ui.json violation).
+
+P2-1: Image upload validation with magic bytes check
 """
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
+from app.core.upload_validation import validate_image_upload
 from app.models.grading import GradeRequest as GradeRequestModel
 from app.models.user import User
 from app.schemas.grading import GradeRequest, GradeEstimate
@@ -58,7 +61,17 @@ async def estimate_from_upload(
     """
     Grade estimate from uploaded image file.
     DISABLED: Returns 503 until real ML model is deployed.
+
+    P2-1: Image validation happens before feature check for security.
     """
+    # P2-1: Validate image first (even if feature is disabled, reject bad uploads)
+    await validate_image_upload(
+        file,
+        allowed_types=["image/jpeg", "image/png"],
+        max_size_mb=10,
+        validate_dimensions=True
+    )
+
     _check_grading_enabled()
     # Real implementation will go here when model is ready
 

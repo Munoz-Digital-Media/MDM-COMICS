@@ -5,6 +5,8 @@ FastAPI application entry point
 Risk Mitigation Implementation:
 - P0-1: Stock cleanup scheduler with heartbeat metrics
 - P1-3: Rate limiting with SlowAPI
+- P2-4: Error sanitization middleware
+- P2-7: Security headers (CSP, X-Frame-Options, etc.)
 - P2-8: Enhanced health endpoint with DB ping
 - P2-10: Request size limits
 - P2-11: HTTP client lifecycle management
@@ -30,6 +32,8 @@ from app.api.routes import products, users, auth, cart, orders, grading, comics,
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
+from app.core.error_handler import ErrorSanitizationMiddleware
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.services.metron import metron_service
 
 # Import models to register them with SQLAlchemy
@@ -299,6 +303,12 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestSizeLimitMiddleware)
+
+# P2-4: Error sanitization (catches unhandled exceptions)
+app.add_middleware(ErrorSanitizationMiddleware)
+
+# P2-7: Security headers (CSP, X-Frame-Options, etc.)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # CORS - adjust origins for production
 app.add_middleware(

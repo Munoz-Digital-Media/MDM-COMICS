@@ -4,7 +4,10 @@ API dependencies
 P1-5: Updated to support both cookie-based and header-based auth.
 Cookie-based is preferred for security (HttpOnly, CSRF protected).
 Header-based is kept for API compatibility and mobile apps.
+
+P2-8: Token revocation support via blacklist checking.
 """
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -19,6 +22,7 @@ from app.core.cookies import (
     get_csrf_token_from_header,
 )
 from app.core.csrf import tokens_match
+from app.core.token_blacklist import token_blacklist
 from app.models.user import User
 
 # Optional bearer - doesn't fail if no Authorization header
@@ -108,6 +112,18 @@ async def get_current_user(
         )
 
     user_id = payload.get("sub")
+
+    # P2-8: Check if token has been revoked
+    jti = payload.get("jti")
+    iat = payload.get("iat")
+    issued_at = datetime.fromtimestamp(iat, tz=timezone.utc) if iat else datetime.now(timezone.utc)
+
+    if token_blacklist.is_token_revoked(jti, int(user_id), issued_at):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked"
+        )
+
     result = await db.execute(select(User).where(User.id == int(user_id)))
     user = result.scalar_one_or_none()
 
