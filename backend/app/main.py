@@ -4,7 +4,10 @@ FastAPI application entry point
 
 Risk Mitigation Implementation:
 - P0-1: Stock cleanup scheduler with heartbeat metrics
+- P1-3: Rate limiting with SlowAPI
 - P2-8: Enhanced health endpoint with DB ping
+- P2-10: Request size limits
+- P2-11: HTTP client lifecycle management
 - P3-14: Dead Funko scraper code removed
 """
 import asyncio
@@ -15,13 +18,19 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select, func, text
 
 from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
+from app.core.rate_limit import limiter, rate_limit_exceeded_handler
+from app.services.metron import metron_service
 
 # Import models to register them with SQLAlchemy
 from app.models import (
@@ -219,6 +228,7 @@ async def lifespan(app: FastAPI):
     Initialize database and background tasks on startup.
 
     P0-1: Now includes stock cleanup scheduler
+    P2-11: HTTP client lifecycle management (metron_service cleanup)
     P3-14: Funko scraper code removed (blocked by Funko.com)
     """
     global _stock_cleanup_task
@@ -246,6 +256,10 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             logger.info("Stock cleanup scheduler cancelled")
 
+    # P2-11: Close HTTP clients to prevent connection leaks
+    await metron_service.close()
+    logger.info("Metron HTTP client closed")
+
 
 app = FastAPI(
     lifespan=lifespan,
@@ -255,6 +269,36 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# P1-3: Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+
+# P2-10: Request size limit middleware (10MB max)
+MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject requests that exceed the size limit."""
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > MAX_REQUEST_SIZE:
+            logger.warning(
+                f"Request size limit exceeded: {content_length} bytes from {request.client.host}"
+            )
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "error": "request_too_large",
+                    "message": f"Request body exceeds maximum size of {MAX_REQUEST_SIZE // (1024*1024)}MB",
+                },
+            )
+        return await call_next(request)
+
+
+app.add_middleware(RequestSizeLimitMiddleware)
 
 # CORS - adjust origins for production
 app.add_middleware(

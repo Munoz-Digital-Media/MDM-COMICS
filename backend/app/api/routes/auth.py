@@ -1,8 +1,10 @@
 """
 Authentication routes
+
+P1-3: Rate limited to prevent brute force attacks
 """
 import os
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -15,6 +17,8 @@ from app.core.security import (
     create_refresh_token,
     decode_token,
 )
+from app.core.rate_limit import limiter
+from app.core.config import settings
 from app.models.user import User
 from app.schemas.user import UserCreate, UserResponse, UserLogin
 from app.schemas.auth import Token, RefreshToken
@@ -32,7 +36,8 @@ class AdminSetupRequest(BaseModel):
 
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+@limiter.limit(settings.RATE_LIMIT_AUTH)
+async def register(request: Request, user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """Register a new user and return tokens"""
     # Check if email exists
     result = await db.execute(select(User).where(User.email == user_data.email))
@@ -60,7 +65,8 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
+@limiter.limit(settings.RATE_LIMIT_AUTH)
+async def login(request: Request, credentials: UserLogin, db: AsyncSession = Depends(get_db)):
     """Login and get access token"""
     result = await db.execute(select(User).where(User.email == credentials.email))
     user = result.scalar_one_or_none()

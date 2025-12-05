@@ -6,12 +6,15 @@ SAFE CHECKOUT FLOW with stock reservation per constitution.json §15:
 2. confirm-order: Verify reservation, convert to sale
 3. Background job: Release expired reservations
 4. P1-4: Stripe webhook for payment verification (replaces client-trust model)
+5. P1-3: Rate limited to prevent abuse
+6. P2-9: Observability logging for checkout flows
 
 This prevents the race condition where two users could pay for the same item.
 """
 import stripe
 import logging
 import uuid
+import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from pydantic import BaseModel
@@ -21,6 +24,7 @@ from sqlalchemy import select, delete, update
 
 from app.core.config import settings
 from app.core.database import get_db, AsyncSessionLocal
+from app.core.rate_limit import limiter
 from app.api.routes.auth import get_current_user
 from app.models import User, Product, Order, OrderItem, StockReservation
 from app.models.stock_reservation import RESERVATION_TTL_MINUTES
@@ -51,8 +55,10 @@ class ConfirmOrderRequest(BaseModel):
 
 
 @router.post("/create-payment-intent")
+@limiter.limit(settings.RATE_LIMIT_CHECKOUT)
 async def create_payment_intent(
-    request: PaymentIntentRequest,
+    request: Request,
+    payload: PaymentIntentRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -69,14 +75,17 @@ async def create_payment_intent(
 
     If payment fails/expires, background job restores stock.
     """
+    # P2-9: Start timing for observability
+    start_time = time.time()
+
     if not settings.STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
 
-    if not request.items:
+    if not payload.items:
         raise HTTPException(status_code=400, detail="No items in cart")
 
-    product_ids = [item.product_id for item in request.items]
-    quantities = {item.product_id: item.quantity for item in request.items}
+    product_ids = [item.product_id for item in payload.items]
+    quantities = {item.product_id: item.quantity for item in payload.items}
 
     # Step 1: Single query with FOR UPDATE lock
     # This prevents other transactions from modifying these rows
@@ -138,7 +147,7 @@ async def create_payment_intent(
             currency="usd",
             metadata={
                 "user_id": str(current_user.id),
-                "item_count": str(len(request.items))
+                "item_count": str(len(payload.items))
             },
             automatic_payment_methods={"enabled": True}
         )
@@ -162,9 +171,15 @@ async def create_payment_intent(
     # Commit: stock decremented + reservations created
     await db.commit()
 
+    # P2-9: Observability - log checkout metrics
+    duration_ms = (time.time() - start_time) * 1000
     logger.info(
-        f"Created payment intent {intent.id} for user {current_user.id} "
-        f"with {len(reservations_to_create)} reserved items"
+        f"CHECKOUT_METRIC: payment_intent_created "
+        f"user_id={current_user.id} "
+        f"intent_id={intent.id} "
+        f"amount_cents={total_cents} "
+        f"item_count={len(reservations_to_create)} "
+        f"duration_ms={duration_ms:.2f}"
     )
 
     return {

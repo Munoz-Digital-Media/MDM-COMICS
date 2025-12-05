@@ -37,6 +37,9 @@ beautifulsoup4==4.12.3
 # Payments
 stripe==7.0.0
 
+# Rate Limiting (P1-3)
+slowapi==0.1.9
+
 # Auth
 bcrypt==4.0.1
 
