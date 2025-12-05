@@ -3,8 +3,9 @@ Stock Reservation model
 
 Used to temporarily reserve stock between payment intent creation and order confirmation.
 Prevents overselling race conditions per constitution.json §15 (Checkout & Payment Safety).
+P2-6: Uses timezone-aware datetime
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, CheckConstraint
 from sqlalchemy.orm import relationship
 
@@ -34,7 +35,7 @@ class StockReservation(Base):
     quantity = Column(Integer, nullable=False)
     payment_intent_id = Column(String(255), nullable=False, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("User")
@@ -43,9 +44,9 @@ class StockReservation(Base):
     @property
     def is_expired(self) -> bool:
         """Check if this reservation has expired."""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
 
     @classmethod
     def create_expiry(cls, ttl_minutes: int = RESERVATION_TTL_MINUTES) -> datetime:
         """Calculate expiry timestamp from now."""
-        return datetime.utcnow() + timedelta(minutes=ttl_minutes)
+        return datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)

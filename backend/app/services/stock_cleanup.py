@@ -5,9 +5,10 @@ Background service to release expired stock reservations.
 Should be run every 5 minutes via scheduler (APScheduler, cron, etc.).
 
 Per constitution.json §15: "Stock reservation before capture; fail closed."
+P2-6: Uses timezone-aware datetime
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +37,7 @@ async def release_expired_reservations() -> dict:
             # Find all expired reservations with FOR UPDATE lock
             result = await db.execute(
                 select(StockReservation)
-                .where(StockReservation.expires_at < datetime.utcnow())
+                .where(StockReservation.expires_at < datetime.now(timezone.utc))
                 .with_for_update()
             )
             expired = result.scalars().all()
@@ -71,7 +72,7 @@ async def release_expired_reservations() -> dict:
             # Delete all expired reservations
             await db.execute(
                 delete(StockReservation)
-                .where(StockReservation.expires_at < datetime.utcnow())
+                .where(StockReservation.expires_at < datetime.now(timezone.utc))
             )
 
             await db.commit()
@@ -109,7 +110,7 @@ async def get_reservation_stats() -> dict:
         active = total - expired
 
         # Group by expiry time bucket
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expiring_soon = sum(
             1 for r in all_reservations
             if not r.is_expired and (r.expires_at - now).seconds < 300  # < 5 min
