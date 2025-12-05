@@ -1,18 +1,29 @@
 """
 Stripe Checkout API Routes
-Minimal data to Stripe - customer info stays with us.
+
+SAFE CHECKOUT FLOW with stock reservation per constitution.json §15:
+1. create-payment-intent: FOR UPDATE lock on products, reserve stock
+2. confirm-order: Verify reservation, convert to sale
+3. Background job: Release expired reservations
+
+This prevents the race condition where two users could pay for the same item.
 """
 import stripe
-from fastapi import APIRouter, HTTPException, Depends, Request
+import logging
+from datetime import datetime, timedelta
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete, update
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.api.routes.auth import get_current_user
-from app.models import User, Product, Order, OrderItem
+from app.models import User, Product, Order, OrderItem, StockReservation
+from app.models.stock_reservation import RESERVATION_TTL_MINUTES
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/checkout", tags=["checkout"])
 
@@ -25,11 +36,12 @@ class CheckoutItem(BaseModel):
     quantity: int
 
 
-class CheckoutRequest(BaseModel):
+class PaymentIntentRequest(BaseModel):
     items: List[CheckoutItem]
 
 
-class PaymentIntentRequest(BaseModel):
+class ConfirmOrderRequest(BaseModel):
+    payment_intent_id: str
     items: List[CheckoutItem]
 
 
@@ -40,11 +52,17 @@ async def create_payment_intent(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Create a Stripe PaymentIntent for the cart items.
-    Returns client_secret for frontend to complete payment.
+    Create a Stripe PaymentIntent with stock reservation.
 
-    We do NOT send customer email/name/address to Stripe here.
-    Only the amount and our internal reference.
+    SAFE CHECKOUT FLOW:
+    1. Lock products with FOR UPDATE (pessimistic locking)
+    2. Validate stock availability
+    3. Decrement stock (reserve)
+    4. Create reservation records
+    5. Create Stripe PaymentIntent
+    6. Return client_secret
+
+    If payment fails/expires, background job restores stock.
     """
     if not settings.STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
@@ -52,41 +70,64 @@ async def create_payment_intent(
     if not request.items:
         raise HTTPException(status_code=400, detail="No items in cart")
 
-    # Calculate total from database prices (never trust client-side prices)
+    product_ids = [item.product_id for item in request.items]
+    quantities = {item.product_id: item.quantity for item in request.items}
+
+    # Step 1: Single query with FOR UPDATE lock
+    # This prevents other transactions from modifying these rows
+    result = await db.execute(
+        select(Product)
+        .where(Product.id.in_(product_ids))
+        .with_for_update()  # Pessimistic lock
+    )
+    products = {p.id: p for p in result.scalars().all()}
+
+    # Validate all products exist
+    missing = set(product_ids) - set(products.keys())
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Products not found: {list(missing)}"
+        )
+
+    # Step 2 & 3: Validate stock and reserve
     total_cents = 0
     line_items = []
+    reservations_to_create = []
 
-    for item in request.items:
-        result = await db.execute(
-            select(Product).where(Product.id == item.product_id)
-        )
-        product = result.scalar_one_or_none()
+    for product_id, qty in quantities.items():
+        product = products[product_id]
 
-        if not product:
-            raise HTTPException(status_code=404, detail=f"Product {item.product_id} not found")
-
-        if product.stock < item.quantity:
+        if product.stock < qty:
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient stock for {product.name}"
+                detail=f"Insufficient stock for {product.name} "
+                       f"(requested: {qty}, available: {product.stock})"
             )
 
-        item_total = int(product.price * 100) * item.quantity  # Convert to cents
+        # Reserve stock (decrement now)
+        product.stock -= qty
+
+        item_total = int(product.price * 100) * qty
         total_cents += item_total
+
         line_items.append({
             "product_id": product.id,
             "name": product.name,
-            "quantity": item.quantity,
+            "quantity": qty,
             "unit_price": int(product.price * 100)
         })
 
-    if total_cents < 50:  # Stripe minimum is $0.50
+        reservations_to_create.append({
+            "product_id": product.id,
+            "quantity": qty
+        })
+
+    if total_cents < 50:  # Stripe minimum
         raise HTTPException(status_code=400, detail="Order total must be at least $0.50")
 
+    # Step 5: Create Stripe PaymentIntent
     try:
-        # Create PaymentIntent - minimal data to Stripe
-        # We only send: amount, currency, and our internal metadata
-        # Customer info stays in OUR database
         intent = stripe.PaymentIntent.create(
             amount=total_cents,
             currency="usd",
@@ -94,25 +135,41 @@ async def create_payment_intent(
                 "user_id": str(current_user.id),
                 "item_count": str(len(request.items))
             },
-            # Automatic payment methods lets Stripe optimize for conversion
-            # while still using Elements on our site
             automatic_payment_methods={"enabled": True}
         )
-
-        return {
-            "client_secret": intent.client_secret,
-            "payment_intent_id": intent.id,
-            "amount": total_cents,
-            "line_items": line_items
-        }
-
     except stripe.error.StripeError as e:
+        # Rollback will restore stock on exception
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Step 4: Create reservation records
+    expires_at = StockReservation.create_expiry(RESERVATION_TTL_MINUTES)
 
-class ConfirmOrderRequest(BaseModel):
-    payment_intent_id: str
-    items: List[CheckoutItem]
+    for res in reservations_to_create:
+        reservation = StockReservation(
+            user_id=current_user.id,
+            product_id=res["product_id"],
+            quantity=res["quantity"],
+            payment_intent_id=intent.id,
+            expires_at=expires_at
+        )
+        db.add(reservation)
+
+    # Commit: stock decremented + reservations created
+    await db.commit()
+
+    logger.info(
+        f"Created payment intent {intent.id} for user {current_user.id} "
+        f"with {len(reservations_to_create)} reserved items"
+    )
+
+    return {
+        "client_secret": intent.client_secret,
+        "payment_intent_id": intent.id,
+        "amount": total_cents,
+        "line_items": line_items,
+        "reservation_expires_at": expires_at.isoformat(),
+        "reservation_ttl_minutes": RESERVATION_TTL_MINUTES
+    }
 
 
 @router.post("/confirm-order")
@@ -122,14 +179,18 @@ async def confirm_order(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Called after successful payment to create the order in our database.
-    Verifies payment succeeded before creating order.
+    Called after successful payment to create the order.
+
+    SAFE FLOW:
+    1. Verify payment succeeded with Stripe
+    2. Verify reservation exists and belongs to user
+    3. Create order from reservation data
+    4. Delete reservation (stock already decremented)
     """
     import uuid
-    from datetime import datetime
 
     try:
-        # Verify payment succeeded with Stripe
+        # Step 1: Verify payment with Stripe
         intent = stripe.PaymentIntent.retrieve(request.payment_intent_id)
 
         if intent.status != "succeeded":
@@ -142,36 +203,56 @@ async def confirm_order(
         if intent.metadata.get("user_id") != str(current_user.id):
             raise HTTPException(status_code=403, detail="Payment does not belong to this user")
 
-        # Check if order already exists for this payment
-        existing = await db.execute(
-            select(Order).where(Order.payment_id == request.payment_intent_id)
+        # Step 2: Check reservation exists
+        result = await db.execute(
+            select(StockReservation)
+            .where(StockReservation.payment_intent_id == request.payment_intent_id)
+            .where(StockReservation.user_id == current_user.id)
         )
-        if existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="Order already created for this payment")
+        reservations = result.scalars().all()
 
-        # Generate order number
+        if not reservations:
+            # Check if order already exists (idempotency)
+            existing = await db.execute(
+                select(Order).where(Order.payment_id == request.payment_intent_id)
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Order already created for this payment")
+
+            # No reservation and no order - reservation may have expired
+            raise HTTPException(
+                status_code=400,
+                detail="Reservation expired or not found. Please try checkout again."
+            )
+
+        # Check if any reservations are expired
+        expired = [r for r in reservations if r.is_expired]
+        if expired:
+            logger.warning(
+                f"Confirming order with {len(expired)} expired reservations "
+                f"for payment {request.payment_intent_id}"
+            )
+
+        # Step 3: Create order
         order_number = f"MDM-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
 
-        # Calculate totals from items
+        # Calculate totals from reservations
         subtotal = 0
         order_items_data = []
 
-        for item in request.items:
+        for reservation in reservations:
             result = await db.execute(
-                select(Product).where(Product.id == item.product_id)
+                select(Product).where(Product.id == reservation.product_id)
             )
             product = result.scalar_one_or_none()
             if product:
-                item_total = product.price * item.quantity
+                item_total = product.price * reservation.quantity
                 subtotal += item_total
                 order_items_data.append({
                     "product": product,
-                    "quantity": item.quantity
+                    "quantity": reservation.quantity
                 })
-                # Reduce stock
-                product.stock -= item.quantity
 
-        # Create order
         order = Order(
             user_id=current_user.id,
             order_number=order_number,
@@ -197,7 +278,15 @@ async def confirm_order(
             )
             db.add(order_item)
 
+        # Step 4: Delete reservations (stock was already decremented)
+        await db.execute(
+            delete(StockReservation)
+            .where(StockReservation.payment_intent_id == request.payment_intent_id)
+        )
+
         await db.commit()
+
+        logger.info(f"Order {order_number} created for payment {request.payment_intent_id}")
 
         return {
             "order_id": order.id,
@@ -208,6 +297,52 @@ async def confirm_order(
 
     except stripe.error.StripeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/cancel-reservation")
+async def cancel_reservation(
+    payment_intent_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Cancel a reservation and restore stock.
+    Called when user cancels checkout.
+    """
+    # Find reservations for this payment intent
+    result = await db.execute(
+        select(StockReservation)
+        .where(StockReservation.payment_intent_id == payment_intent_id)
+        .where(StockReservation.user_id == current_user.id)
+    )
+    reservations = result.scalars().all()
+
+    if not reservations:
+        return {"status": "no_reservation", "message": "No active reservation found"}
+
+    # Restore stock for each reservation
+    for reservation in reservations:
+        await db.execute(
+            update(Product)
+            .where(Product.id == reservation.product_id)
+            .values(stock=Product.stock + reservation.quantity)
+        )
+
+    # Delete reservations
+    await db.execute(
+        delete(StockReservation)
+        .where(StockReservation.payment_intent_id == payment_intent_id)
+        .where(StockReservation.user_id == current_user.id)
+    )
+
+    await db.commit()
+
+    logger.info(f"Cancelled {len(reservations)} reservations for payment {payment_intent_id}")
+
+    return {
+        "status": "cancelled",
+        "reservations_released": len(reservations)
+    }
 
 
 @router.get("/config")

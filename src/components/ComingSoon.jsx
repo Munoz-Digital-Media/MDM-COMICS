@@ -1,7 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Instagram, Twitter, Facebook, Youtube, Mail, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { authAPI } from '../services/api';
 
+/**
+ * ComingSoon page with login capability
+ *
+ * FE-001 FIX: Previously there was concern about user lockout.
+ * This component now:
+ * 1. Checks for existing token on mount (auto-login if valid)
+ * 2. Has visible "Sign In" link below social icons
+ * 3. Shows login form when clicked
+ */
 export default function ComingSoon({ onLogin }) {
   const [showLogin, setShowLogin] = useState(false);
   const [email, setEmail] = useState('');
@@ -9,6 +18,22 @@ export default function ComingSoon({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // FE-001: Auto-check for existing token on mount
+  useEffect(() => {
+    const existingToken = localStorage.getItem('mdm_token');
+    if (existingToken) {
+      // Verify token is still valid
+      authAPI.me(existingToken)
+        .then(() => {
+          onLogin(existingToken);
+        })
+        .catch(() => {
+          // Token invalid, remove it
+          localStorage.removeItem('mdm_token');
+        });
+    }
+  }, [onLogin]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -129,14 +154,14 @@ export default function ComingSoon({ onLogin }) {
           </button>
         </div>
 
-        {/* Admin Login Toggle */}
+        {/* Login Toggle - FE-001: More visible sign in option */}
         {!showLogin ? (
           <button
             onClick={() => setShowLogin(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-zinc-600 hover:text-zinc-400 text-sm transition-colors"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-zinc-900/60 border border-zinc-800 rounded-xl text-zinc-400 hover:text-orange-500 hover:border-orange-500/50 transition-all"
           >
             <Lock className="w-4 h-4" />
-            <span>Admin Access</span>
+            <span>Sign In</span>
           </button>
         ) : (
           <div className="max-w-sm mx-auto bg-zinc-900/80 backdrop-blur border border-zinc-800 rounded-2xl p-6 fade-in">

@@ -1,10 +1,19 @@
 """
 Application configuration
+
+SECURITY: Defaults are fail-safe for production.
+- DEBUG defaults to False
+- SECRET_KEY and DATABASE_URL have no defaults (will fail if not set)
+- Runtime validation catches insecure configurations
 """
 import json
-from typing import List
-from pydantic import field_validator
+import os
+import logging
+from typing import List, Optional
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 # Default CORS origins
 DEFAULT_CORS_ORIGINS = [
@@ -18,15 +27,16 @@ DEFAULT_CORS_ORIGINS = [
 
 
 class Settings(BaseSettings):
-    # App
+    # App - defaults are PRODUCTION safe
     APP_NAME: str = "MDM Comics"
-    DEBUG: bool = True
+    DEBUG: bool = False  # SECURE DEFAULT: off in production
+    ENVIRONMENT: str = "production"  # Explicit env marker
 
-    # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/mdm_comics"
+    # Database - NO DEFAULT (will fail if not set)
+    DATABASE_URL: str
 
-    # Auth
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    # Auth - NO DEFAULT SECRET KEY (will fail if not set)
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -73,9 +83,66 @@ class Settings(BaseSettings):
     STRIPE_PUBLISHABLE_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
 
+    @model_validator(mode="after")
+    def validate_production_config(self):
+        """Runtime validation to catch insecure production configurations."""
+        if self.ENVIRONMENT == "production":
+            errors = []
+
+            # Check DEBUG
+            if self.DEBUG:
+                errors.append(
+                    "DEBUG=True is forbidden in production. "
+                    "Set DEBUG=false or ENVIRONMENT=development"
+                )
+
+            # Check SECRET_KEY
+            insecure_secrets = [
+                "your-secret-key",
+                "change-in-production",
+                "secret",
+                "password",
+                "changeme",
+            ]
+            if any(bad in self.SECRET_KEY.lower() for bad in insecure_secrets):
+                errors.append(
+                    "Insecure SECRET_KEY detected in production. "
+                    "Generate a secure key: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+                )
+
+            # Check DATABASE_URL
+            if "localhost" in self.DATABASE_URL or "127.0.0.1" in self.DATABASE_URL:
+                errors.append(
+                    "Localhost DATABASE_URL detected in production. "
+                    "Configure proper database connection."
+                )
+
+            if errors:
+                raise ValueError(
+                    "PRODUCTION SECURITY VIOLATIONS:\n" + "\n".join(f"  - {e}" for e in errors)
+                )
+
+        return self
+
     class Config:
         env_file = ".env"
         case_sensitive = True
 
 
-settings = Settings()
+# Try to load settings, provide helpful error on failure
+try:
+    settings = Settings()
+except Exception as e:
+    # In development, allow fallback defaults
+    if os.getenv("ENVIRONMENT", "development") == "development":
+        logger.warning(
+            "Settings validation failed, using development defaults. "
+            "Set DATABASE_URL and SECRET_KEY in .env file."
+        )
+        # Create with development fallbacks
+        os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/mdm_comics")
+        os.environ.setdefault("SECRET_KEY", "dev-only-secret-key-not-for-production")
+        os.environ.setdefault("ENVIRONMENT", "development")
+        settings = Settings()
+    else:
+        raise

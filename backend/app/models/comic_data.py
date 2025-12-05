@@ -126,6 +126,10 @@ class ComicIssue(Base):
     # Ratings and maturity
     rating = Column(String(50))  # Teen, Mature, etc.
 
+    # Perceptual hash of cover image for image search (BE-003 optimization)
+    # 64-bit pHash stored as hex string - indexed for efficient lookup
+    cover_hash = Column(String(16), index=True)
+
     # Raw Metron response - STORE EVERYTHING
     raw_data = Column(JSON)
 

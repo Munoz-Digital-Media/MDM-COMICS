@@ -3,6 +3,7 @@ from app.models.product import Product
 from app.models.cart import CartItem
 from app.models.order import Order, OrderItem
 from app.models.grading import GradeRequest
+from app.models.stock_reservation import StockReservation
 from app.models.comic_data import (
     ComicPublisher,
     ComicSeries,
@@ -21,6 +22,7 @@ __all__ = [
     "Order",
     "OrderItem",
     "GradeRequest",
+    "StockReservation",
     "ComicPublisher",
     "ComicSeries",
     "ComicIssue",
