@@ -35,7 +35,13 @@ _enrichment_task: Optional[asyncio.Task] = None
 
 
 async def import_funkos_if_needed():
-    """Import Funko data, skipping any that already exist (idempotent)."""
+    """
+    Import Funko data using handle-based reconciliation (BE-007 fix).
+
+    This function now uses handle-based comparison instead of count-based,
+    ensuring that new Funkos in the JSON file are always imported even if
+    the total count is similar. This is more robust for incremental updates.
+    """
     async with AsyncSessionLocal() as db:
         # Find the JSON file
         json_path = Path(__file__).parent.parent / "funko_data.json"
@@ -43,28 +49,31 @@ async def import_funkos_if_needed():
             logger.warning(f"Funko data file not found at {json_path}")
             return
 
-        # Get current count
-        result = await db.execute(select(func.count(Funko.id)))
-        current_count = result.scalar() or 0
-
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         total_in_file = len(data)
-
-        # If we have all the funkos, skip import
-        if current_count >= total_in_file:
-            logger.info(f"Funko database already has {current_count} entries (file has {total_in_file}). Skipping import.")
+        if total_in_file == 0:
+            logger.info("Funko data file is empty, nothing to import.")
             return
 
-        logger.info(f"Starting Funko import... DB has {current_count}, file has {total_in_file}")
-
-        # Get all existing handles to skip duplicates
+        # BE-007 FIX: Get all existing handles for content-based reconciliation
+        # This replaces the count-based check that could miss new items
         existing_result = await db.execute(select(Funko.handle))
         existing_handles = set(row[0] for row in existing_result.fetchall())
-        logger.info(f"Found {len(existing_handles)} existing handles to skip")
+        logger.info(f"Found {len(existing_handles)} existing Funko handles in database")
 
-        # Get existing series names
+        # Calculate how many new items we need to import
+        file_handles = set(item.get('handle', '') for item in data if item.get('handle'))
+        new_handles = file_handles - existing_handles
+
+        if not new_handles:
+            logger.info(f"Funko database is in sync with file ({len(existing_handles)} entries). No import needed.")
+            return
+
+        logger.info(f"BE-007: Handle-based sync found {len(new_handles)} new Funkos to import")
+
+        # Get existing series names for efficient lookup
         series_result = await db.execute(select(FunkoSeriesName))
         series_cache = {s.name: s for s in series_result.scalars().all()}
         logger.info(f"Loaded {len(series_cache)} existing series names")
@@ -73,12 +82,12 @@ async def import_funkos_if_needed():
         skipped = 0
         batch_size = 500
 
-        for i, item in enumerate(data):
+        for item in data:
             handle = item.get('handle', '')
             if not handle:
                 continue
 
-            # Skip if already exists
+            # Skip if already exists (handle-based check)
             if handle in existing_handles:
                 skipped += 1
                 continue
@@ -112,7 +121,7 @@ async def import_funkos_if_needed():
                 logger.info(f"Imported {imported} Funkos (skipped {skipped})...")
 
         await db.commit()
-        logger.info(f"Funko import complete! {imported} new entries added, {skipped} skipped (already existed).")
+        logger.info(f"BE-007: Funko import complete! {imported} new entries added, {skipped} already existed.")
 
 
 # ============== FUNKO ENRICHMENT (Background Task) ==============
