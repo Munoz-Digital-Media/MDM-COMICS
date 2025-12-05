@@ -108,18 +108,26 @@ export default function AdminConsole({ onClose, token }) {
 
   // Select a Funko to create a product
   const selectFunko = (funko) => {
+    // Build description from enriched fields
+    const descParts = [];
+    if (funko.license) descParts.push(`License: ${funko.license}`);
+    if (funko.product_type) descParts.push(`Type: ${funko.product_type}`);
+    if (funko.box_number) descParts.push(`Box #${funko.box_number}`);
+    if (funko.category && funko.category !== funko.license) descParts.push(`Category: ${funko.category}`);
+    if (funko.series?.length) descParts.push(`Series: ${funko.series.map(s => s.name).join(", ")}`);
+
     setProductForm({
-      sku: "FUNKO-" + funko.id,
+      sku: funko.box_number ? `FUNKO-${funko.box_number}` : `FUNKO-${funko.id}`,
       name: funko.title,
-      description: funko.series?.map(s => s.name).join(", ") || "",
+      description: descParts.join("\n") || "",
       category: "funko",
-      subcategory: funko.series?.[0]?.name || "",
+      subcategory: funko.license || funko.series?.[0]?.name || "",
       price: "",
       original_price: "",
       stock: 1,
       image_url: funko.image_url || "",
-      issue_number: "",
-      publisher: "",
+      issue_number: funko.box_number || "",
+      publisher: funko.license || "",
       year: "",
       upc: "",
       featured: false,
@@ -676,9 +684,24 @@ export default function AdminConsole({ onClose, token }) {
                           </div>
                         </div>
                         <div className="p-3" onClick={() => selectFunko(funko)}>
-                          <h4 className="text-white font-bold text-sm line-clamp-2 mb-2">
+                          <h4 className="text-white font-bold text-sm line-clamp-2 mb-1">
                             {funko.title}
                           </h4>
+                          {/* Enriched fields */}
+                          <div className="text-xs text-zinc-500 space-y-0.5 mb-2">
+                            {funko.box_number && (
+                              <p><span className="text-purple-400">#{funko.box_number}</span></p>
+                            )}
+                            {funko.license && (
+                              <p>License: {funko.license}</p>
+                            )}
+                            {funko.product_type && (
+                              <p>Type: {funko.product_type}</p>
+                            )}
+                            {funko.category && funko.category !== funko.license && (
+                              <p>Category: {funko.category}</p>
+                            )}
+                          </div>
                           {funko.series && funko.series.length > 0 && (
                             <div className="flex flex-wrap gap-1">
                               {funko.series.slice(0, 2).map((s, i) => (

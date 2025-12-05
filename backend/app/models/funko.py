@@ -37,6 +37,13 @@ class Funko(Base):
     title = Column(String(500), nullable=False, index=True)
     image_url = Column(Text, nullable=True)
 
+    # Enriched fields from Funko.com
+    category = Column(String(255), nullable=True, index=True)  # e.g., "Star Trek", "Marvel"
+    license = Column(String(255), nullable=True, index=True)   # e.g., "Star Trek", "Disney"
+    product_type = Column(String(100), nullable=True, index=True)  # e.g., "Pop!", "Pop! & Buddy"
+    box_number = Column(String(50), nullable=True, index=True)  # e.g., "1755"
+    funko_url = Column(Text, nullable=True)  # URL to Funko.com product page
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
