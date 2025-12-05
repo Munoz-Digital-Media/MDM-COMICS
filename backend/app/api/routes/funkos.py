@@ -160,14 +160,28 @@ async def get_funko(
 
 @router.get("/stats/count")
 async def get_funko_count(db: AsyncSession = Depends(get_db)):
-    """Get total count of Funkos in database"""
+    """Get total count of Funkos in database and enrichment status"""
     result = await db.execute(select(func.count(Funko.id)))
     count = result.scalar() or 0
 
     series_result = await db.execute(select(func.count(FunkoSeriesName.id)))
     series_count = series_result.scalar() or 0
 
+    # Count enriched vs unenriched
+    enriched_result = await db.execute(
+        select(func.count(Funko.id)).where(Funko.category.isnot(None)).where(Funko.category != "")
+    )
+    enriched_count = enriched_result.scalar() or 0
+
+    unenriched_result = await db.execute(
+        select(func.count(Funko.id)).where(Funko.category.is_(None))
+    )
+    unenriched_count = unenriched_result.scalar() or 0
+
     return {
         "total_funkos": count,
-        "total_series": series_count
+        "total_series": series_count,
+        "enriched": enriched_count,
+        "unenriched": unenriched_count,
+        "enrichment_percent": round(enriched_count / count * 100, 1) if count > 0 else 0
     }
