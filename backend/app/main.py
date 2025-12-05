@@ -317,13 +317,14 @@ async def lifespan(app: FastAPI):
     # Import Funkos if database is empty
     await import_funkos_if_needed()
 
-    # Start background enrichment task (runs gradually, won't block startup)
-    _enrichment_task = asyncio.create_task(enrich_funkos_background(
-        batch_size=50,   # 50 Funkos per batch
-        delay=2.0,       # 2 seconds between requests (be nice to Funko.com)
-        max_batches=20   # Process up to 1000 Funkos per server restart
-    ))
-    logger.info("Background Funko enrichment task started")
+    # NOTE: Background enrichment disabled - Funko.com blocks Railway's IP ranges
+    # Enrichment must be done via client-side calls or a proxy service
+    # _enrichment_task = asyncio.create_task(enrich_funkos_background(
+    #     batch_size=50,   # 50 Funkos per batch
+    #     delay=2.0,       # 2 seconds between requests (be nice to Funko.com)
+    #     max_batches=20   # Process up to 1000 Funkos per server restart
+    # ))
+    logger.info("Background Funko enrichment DISABLED (Funko.com blocks cloud IPs)")
 
     yield
 
