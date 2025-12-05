@@ -47,3 +47,22 @@ coverage
 
 # Corporate solutions / proprietary implementations
 implementations/
+
+# Backend data files (generated/imported)
+backend/*.csv
+backend/*.json
+!backend/package.json
+!backend/funko_data.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+
+# Null file (Windows artifact)
+nul
