@@ -14,6 +14,20 @@ from app.models.comic_data import (
     MetronAPILog,
 )
 from app.models.funko import Funko, FunkoSeriesName
+from app.models.analytics import (
+    AnalyticsSession,
+    AnalyticsEvent,
+    SearchQuery,
+    ProductView,
+    CartSnapshot,
+    CartEvent,
+    SessionReplay,
+    SessionReplayChunk,
+    WebVital,
+    ErrorEvent,
+    CartAbandonmentQueue,
+)
+from app.models.coupon import Coupon, CouponCampaign, CouponUsage
 
 __all__ = [
     "User",
@@ -32,4 +46,20 @@ __all__ = [
     "MetronAPILog",
     "Funko",
     "FunkoSeriesName",
+    # Analytics models
+    "AnalyticsSession",
+    "AnalyticsEvent",
+    "SearchQuery",
+    "ProductView",
+    "CartSnapshot",
+    "CartEvent",
+    "SessionReplay",
+    "SessionReplayChunk",
+    "WebVital",
+    "ErrorEvent",
+    "CartAbandonmentQueue",
+    # Coupon models
+    "Coupon",
+    "CouponCampaign",
+    "CouponUsage",
 ]

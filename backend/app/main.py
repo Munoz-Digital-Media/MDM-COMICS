@@ -29,7 +29,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select, func, text
 
-from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos
+from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos, analytics, coupons
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -382,6 +382,8 @@ app.include_router(grading.router, prefix="/api/grading", tags=["AI Grading"])
 app.include_router(comics.router, prefix="/api", tags=["Comics Database"])
 app.include_router(checkout.router, prefix="/api", tags=["Checkout"])
 app.include_router(funkos.router, prefix="/api", tags=["Funko Database"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
+app.include_router(coupons.router, prefix="/api/coupons", tags=["Coupons"])
 
 
 @app.get("/", tags=["Health"])
