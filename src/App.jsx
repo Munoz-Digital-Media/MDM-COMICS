@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect } from "react";
-  import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Eye, EyeOff, Database, Shield } from "lucide-react";
+  import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Database, Shield } from "lucide-react";
   import { authAPI } from "./services/api";
   import ComicSearch from "./components/ComicSearch";
   import FunkoSearch from "./components/FunkoSearch";
   import AdminConsole from "./components/AdminConsole";
   import CheckoutForm, { OrderSuccess } from "./components/CheckoutForm";
   import ComingSoon from "./components/ComingSoon";
+  import AuthModal from "./components/AuthModal";
 
   // ============================================================================
   // BUILD INFO - Update these on each release
@@ -220,186 +221,10 @@ import React, { useState, useMemo, useEffect } from "react";
   );
 
   // ============================================================================
-  // AUTH MODAL COMPONENT
-  // ============================================================================
-  const AuthModal = ({ mode, setMode, onClose, onLogin, onSignup }) => {
-    const [name, setName] = useState("");
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [confirmPassword, setConfirmPassword] = useState("");
-    const [showPassword, setShowPassword] = useState(false);
-    const [errors, setErrors] = useState({});
-
-    const validateEmail = (email) => {
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    };
-
-    const handleSubmit = (e) => {
-      e.preventDefault();
-      const newErrors = {};
-
-      if (mode === "signup") {
-        if (!name.trim()) newErrors.name = "Name is required";
-        if (!validateEmail(email)) newErrors.email = "Valid email is required";
-        if (password.length < 6) newErrors.password = "Password must be at least 6 characters";
-        if (password !== confirmPassword) newErrors.confirmPassword = "Passwords don't match";
-
-        if (Object.keys(newErrors).length === 0) {
-          onSignup(name.trim(), email.trim(), password);
-        }
-      } else {
-        if (!email.trim()) newErrors.email = "Email is required";
-        if (!password) newErrors.password = "Password is required";
-
-        if (Object.keys(newErrors).length === 0) {
-          onLogin(email.trim(), password);
-        }
-      }
-
-      setErrors(newErrors);
-    };
-
-    const switchMode = () => {
-      setMode(mode === "login" ? "signup" : "login");
-      setErrors({});
-      setPassword("");
-      setConfirmPassword("");
-    };
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
-        {/* Overlay */}
-        <div
-          className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-          onClick={onClose}
-        />
-
-        {/* Modal */}
-        <div className="relative bg-zinc-900 rounded-2xl border border-zinc-800 w-full max-w-md mx-4 slide-in shadow-2xl">
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-zinc-800">
-            <h3 className="font-comic text-2xl text-white">
-              {mode === "login" ? "WELCOME BACK" : "JOIN THE CREW"}
-            </h3>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
-            >
-              <X className="w-5 h-5 text-zinc-400" />
-            </button>
-          </div>
-
-          {/* Form */}
-          <form className="p-6" onSubmit={handleSubmit}>
-            <div className="space-y-4">
-              {mode === "signup" && (
-                <div>
-                  <label className="block text-sm text-zinc-400 mb-1">Name</label>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Your name"
-                    className={`w-full px-4 py-3 bg-zinc-800 border rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500 transition-colors ${
-                      errors.name ? "border-red-500" : "border-zinc-700"
-                    }`}
-                  />
-                  {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className={`w-full px-4 py-3 bg-zinc-800 border rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500 transition-colors ${
-                    errors.email ? "border-red-500" : "border-zinc-700"
-                  }`}
-                />
-                {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">Password</label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className={`w-full px-4 py-3 pr-12 bg-zinc-800 border rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500 transition-colors ${
-                      errors.password ? "border-red-500" : "border-zinc-700"
-                    }`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
-                  >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  </button>
-                </div>
-                {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password}</p>}
-              </div>
-
-              {mode === "signup" && (
-                <div>
-                  <label className="block text-sm text-zinc-400 mb-1">Confirm Password</label>
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className={`w-full px-4 py-3 bg-zinc-800 border rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500 transition-colors ${
-                      errors.confirmPassword ? "border-red-500" : "border-zinc-700"
-                    }`}
-                  />
-                  {errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{errors.confirmPassword}</p>}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                className="w-full py-4 bg-orange-500 rounded-xl font-bold text-white hover:shadow-lg hover:shadow-orange-500/25 transition-all active:scale-[0.98]"
-              >
-                {mode === "login" ? "Sign In" : "Create Account"}
-              </button>
-            </div>
-
-            {/* Demo credentials hint for login */}
-            {mode === "login" && (
-              <div className="mt-4 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
-                <p className="text-xs text-zinc-500 text-center">
-                  <span className="text-orange-500">Demo:</span> demo@mdmcomics.com / demo123
-                </p>
-              </div>
-            )}
-
-            {/* Switch mode */}
-            <div className="mt-6 text-center">
-              <p className="text-zinc-500 text-sm">
-                {mode === "login" ? "Don't have an account?" : "Already have an account?"}{" "}
-                <button
-                  type="button"
-                  onClick={switchMode}
-                  className="text-orange-500 hover:text-orange-400 font-semibold transition-colors"
-                >
-                  {mode === "login" ? "Sign Up" : "Sign In"}
-                </button>
-              </p>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  };
-
-  // ============================================================================
   // MAIN APP COMPONENT
   // ============================================================================
+  // NOTE: AuthModal has been extracted to components/AuthModal.jsx to prevent
+  // form state resets on parent re-renders (FE-002 fix)
   export default function App() {
     // State management
     const [cart, setCart] = useState([]);
@@ -440,41 +265,46 @@ import React, { useState, useMemo, useEffect } from "react";
       setTimeout(() => setNotification(null), 3000);
     };
 
-    // Cart operations
+    // Cart operations - using functional updaters to prevent stale closure bugs
+    // Per constitution_ui.json §6: "Every action returns feedback state; critical flows persist"
     const addToCart = (product) => {
-      const existing = cart.find(item => item.id === product.id);
-      if (existing) {
-        if (existing.quantity < product.stock) {
-          setCart(cart.map(item =>
+      setCart(prevCart => {
+        const existing = prevCart.find(item => item.id === product.id);
+        if (existing) {
+          if (existing.quantity >= product.stock) {
+            // Can't add more - show notification but return unchanged cart
+            setTimeout(() => showNotification("Max stock reached", "error"), 0);
+            return prevCart;
+          }
+          setTimeout(() => showNotification(`Added another ${product.name} to cart`), 0);
+          return prevCart.map(item =>
             item.id === product.id
               ? { ...item, quantity: item.quantity + 1 }
               : item
-          ));
-          showNotification(`Added another ${product.name} to cart`);
-        } else {
-          showNotification("Max stock reached", "error");
+          );
         }
-      } else {
-        setCart([...cart, { ...product, quantity: 1 }]);
-        showNotification(`${product.name} added to cart`);
-      }
+        setTimeout(() => showNotification(`${product.name} added to cart`), 0);
+        return [...prevCart, { ...product, quantity: 1 }];
+      });
     };
 
     const updateQuantity = (productId, newQuantity) => {
-      if (newQuantity <= 0) {
-        removeFromCart(productId);
-        return;
-      }
-      const product = PRODUCTS.find(p => p.id === productId);
-      if (newQuantity > product.stock) return;
+      setCart(prevCart => {
+        if (newQuantity <= 0) {
+          setTimeout(() => showNotification("Item removed from cart"), 0);
+          return prevCart.filter(item => item.id !== productId);
+        }
+        const product = PRODUCTS.find(p => p.id === productId);
+        if (newQuantity > product.stock) return prevCart;
 
-      setCart(cart.map(item =>
-        item.id === productId ? { ...item, quantity: newQuantity } : item
-      ));
+        return prevCart.map(item =>
+          item.id === productId ? { ...item, quantity: newQuantity } : item
+        );
+      });
     };
 
     const removeFromCart = (productId) => {
-      setCart(cart.filter(item => item.id !== productId));
+      setCart(prevCart => prevCart.filter(item => item.id !== productId));
       showNotification("Item removed from cart");
     };
 

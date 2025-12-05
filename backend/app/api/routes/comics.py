@@ -196,6 +196,9 @@ async def search_by_image(
     """
     Search for comics by cover image using perceptual hashing.
     Returns potential matches ranked by similarity.
+
+    BE-003 OPTIMIZATION: Uses indexed cover_hash column instead of
+    scanning raw_data JSON. Only queries issues that HAVE a cover_hash.
     """
     # Validate file type
     if file.content_type not in ["image/jpeg", "image/png"]:
@@ -210,28 +213,24 @@ async def search_by_image(
         # Compute perceptual hash of uploaded image
         img = Image.open(io.BytesIO(content))
         uploaded_hash = imagehash.phash(img)
+        uploaded_hash_str = str(uploaded_hash)
 
-        # Query database for issues with cover_hash in raw_data
+        # BE-003 FIX: Query ONLY issues with cover_hash populated (uses index)
+        # This avoids full table scan of raw_data JSON
+        from sqlalchemy.orm import selectinload
+
         result = await db.execute(
             select(ComicIssue)
-            .where(ComicIssue.raw_data.isnot(None))
-            .limit(2000)
+            .options(selectinload(ComicIssue.series))
+            .where(ComicIssue.cover_hash.isnot(None))
         )
         issues = result.scalars().all()
 
         # Calculate hamming distance for each
         matches = []
         for issue in issues:
-            raw_data = issue.raw_data
-            if not raw_data:
-                continue
-
-            cover_hash = raw_data.get("cover_hash")
-            if not cover_hash:
-                continue
-
             try:
-                db_hash = imagehash.hex_to_hash(cover_hash)
+                db_hash = imagehash.hex_to_hash(issue.cover_hash)
                 distance = db_hash - uploaded_hash
 
                 # Lower distance = better match (0 = identical)
@@ -239,17 +238,15 @@ async def search_by_image(
                 if distance <= 15:
                     confidence = max(0, 1 - (distance / 15))
 
-                    # Get series name from raw_data or relationship
-                    series_name = ""
-                    if raw_data.get("series"):
-                        series_name = raw_data["series"].get("name", "")
+                    # Get series name from relationship (eager loaded)
+                    series_name = issue.series.name if issue.series else ""
 
                     matches.append({
                         "id": issue.metron_id,
                         "issue": f"{series_name} #{issue.number}" if series_name else f"Issue #{issue.number}",
                         "series": {"name": series_name},
                         "number": issue.number,
-                        "image": issue.image or raw_data.get("image"),
+                        "image": issue.image,
                         "cover_date": str(issue.cover_date) if issue.cover_date else None,
                         "confidence": round(confidence, 2),
                         "distance": distance

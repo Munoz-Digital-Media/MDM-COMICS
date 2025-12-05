@@ -1,7 +1,10 @@
 """
 AI Grading routes
+
+DISABLED: The AI grading feature is under development.
+All estimation endpoints return 503 until a real ML model is deployed.
+Returning random "AI" grades would be deceptive (FTC/constitution_ui.json violation).
 """
-import time
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -9,14 +12,27 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.models.grading import GradeRequest as GradeRequestModel
 from app.models.user import User
-from app.schemas.grading import GradeRequest, GradeResponse, GradeEstimate
+from app.schemas.grading import GradeRequest, GradeEstimate
 from app.api.deps import get_optional_user
-from app.ml.grade_estimator import GradeEstimatorService
 
 router = APIRouter()
 
-# Initialize ML service
-grade_service = GradeEstimatorService()
+# Feature flag - enable when real ML model is deployed
+GRADING_ENABLED = False
+
+
+def _check_grading_enabled():
+    """Gate all grading endpoints until real model exists."""
+    if not GRADING_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "grading_unavailable",
+                "message": "AI grading is currently under development. "
+                           "This feature will be available in a future release.",
+                "status": "coming_soon"
+            }
+        )
 
 
 @router.post("/estimate", response_model=GradeEstimate)
@@ -27,53 +43,10 @@ async def quick_estimate(
 ):
     """
     Quick grade estimate from image URL.
-    Returns estimated grade with confidence score.
+    DISABLED: Returns 503 until real ML model is deployed.
     """
-    start_time = time.time()
-    
-    try:
-        # Run ML estimation
-        result = await grade_service.estimate_grade(request.image_url)
-        
-        processing_time = int((time.time() - start_time) * 1000)
-        
-        # Log request (optional user tracking)
-        grade_request = GradeRequestModel(
-            user_id=user.id if user else None,
-            image_url=request.image_url,
-            additional_images=request.additional_images,
-            estimated_grade=result["grade"],
-            confidence=result["confidence"],
-            analysis=result["analysis"],
-            status="completed",
-            processing_time_ms=processing_time,
-            model_version=grade_service.model_version
-        )
-        db.add(grade_request)
-        await db.commit()
-        
-        return GradeEstimate(
-            grade=result["grade"],
-            confidence=result["confidence"],
-            grade_label=result["grade_label"],
-            factors=result["factors"]
-        )
-        
-    except Exception as e:
-        # Log failed request
-        grade_request = GradeRequestModel(
-            user_id=user.id if user else None,
-            image_url=request.image_url,
-            status="failed",
-            error_message=str(e)
-        )
-        db.add(grade_request)
-        await db.commit()
-        
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Grade estimation failed: {str(e)}"
-        )
+    _check_grading_enabled()
+    # Real implementation will go here when model is ready
 
 
 @router.post("/estimate/upload", response_model=GradeEstimate)
@@ -84,38 +57,10 @@ async def estimate_from_upload(
 ):
     """
     Grade estimate from uploaded image file.
-    Accepts JPEG, PNG images.
+    DISABLED: Returns 503 until real ML model is deployed.
     """
-    # Validate file type
-    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file type. Accepts JPEG, PNG, or WebP"
-        )
-    
-    start_time = time.time()
-    
-    try:
-        # Read file contents
-        contents = await file.read()
-        
-        # Run ML estimation
-        result = await grade_service.estimate_grade_from_bytes(contents)
-        
-        processing_time = int((time.time() - start_time) * 1000)
-        
-        return GradeEstimate(
-            grade=result["grade"],
-            confidence=result["confidence"],
-            grade_label=result["grade_label"],
-            factors=result["factors"]
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Grade estimation failed: {str(e)}"
-        )
+    _check_grading_enabled()
+    # Real implementation will go here when model is ready
 
 
 @router.get("/history")
