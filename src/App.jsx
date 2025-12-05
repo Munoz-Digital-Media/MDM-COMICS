@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
-  import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Database, Shield } from "lucide-react";
+  import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Database, Shield, Loader2 } from "lucide-react";
   import { authAPI } from "./services/api";
+  import { useProducts } from "./hooks/useProducts";
   import ComicSearch from "./components/ComicSearch";
   import FunkoSearch from "./components/FunkoSearch";
   import AdminConsole from "./components/AdminConsole";
@@ -21,124 +22,6 @@ import React, { useState, useMemo, useEffect } from "react";
   // Set to true to show "Coming Soon" page to visitors
   // Logged-in users bypass this and see the full site
   const UNDER_CONSTRUCTION = true;
-
-  // ============================================================================
-  // PRODUCT DATA - Replace with API calls when backend is ready
-  // ============================================================================
-  const PRODUCTS = [
-    {
-      id: "comic-001",
-      name: "Amazing Spider-Man #300",
-      category: "comics",
-      subcategory: "Marvel",
-      price: 299.99,
-      originalPrice: 349.99,
-      image: "https://placehold.co/400x500/1a1a2e/1a1a2e?text=+",
-      description: "First appearance of Venom. Near Mint condition.",
-      stock: 2,
-      featured: true,
-      rating: 4.9,
-      tags: ["key-issue", "first-appearance", "graded"]
-    },
-    {
-      id: "comic-002",
-      name: "Batman: The Killing Joke",
-      category: "comics",
-      subcategory: "DC",
-      price: 89.99,
-      image: "https://placehold.co/400x500/1a1a2e/1a1a2e?text=+",
-      description: "Classic Alan Moore story. First print.",
-      stock: 5,
-      featured: true,
-      rating: 4.8,
-      tags: ["classic", "alan-moore"]
-    },
-    {
-      id: "comic-003",
-      name: "X-Men #1 (1991)",
-      category: "comics",
-      subcategory: "Marvel",
-      price: 45.99,
-      image: "https://placehold.co/400x500/1a1a2e/1a1a2e?text=+",
-      description: "Jim Lee cover. Multiple variants available.",
-      stock: 12,
-      featured: false,
-      rating: 4.5,
-      tags: ["jim-lee", "variant"]
-    },
-    {
-      id: "funko-001",
-      name: "Funko POP! Spider-Man (Black Suit)",
-      category: "funko",
-      subcategory: "Marvel",
-      price: 14.99,
-      image: "https://placehold.co/400x500/27272a/27272a?text=+",
-      description: "Exclusive black suit variant. #79",
-      stock: 25,
-      featured: true,
-      rating: 4.7,
-      tags: ["exclusive", "marvel"]
-    },
-    {
-      id: "funko-002",
-      name: "Funko POP! Batman (GITD)",
-      category: "funko",
-      subcategory: "DC",
-      price: 24.99,
-      originalPrice: 29.99,
-      image: "https://placehold.co/400x500/27272a/27272a?text=+",
-      description: "Glow in the dark exclusive. Chase variant.",
-      stock: 3,
-      featured: true,
-      rating: 4.9,
-      tags: ["gitd", "chase", "exclusive"]
-    },
-    {
-      id: "funko-003",
-      name: "Funko POP! Deadpool (Chef)",
-      category: "funko",
-      subcategory: "Marvel",
-      price: 12.99,
-      image: "https://placehold.co/400x500/27272a/27272a?text=+",
-      description: "Deadpool in chef outfit. Standard edition.",
-      stock: 50,
-      featured: false,
-      rating: 4.3,
-      tags: ["deadpool", "standard"]
-    },
-    {
-      id: "comic-004",
-      name: "Watchmen TPB",
-      category: "comics",
-      subcategory: "DC",
-      price: 24.99,
-      image: "https://placehold.co/400x500/1a1a2e/1a1a2e?text=+",
-      description: "Complete collected edition. Alan Moore classic.",
-      stock: 8,
-      featured: false,
-      rating: 5.0,
-      tags: ["tpb", "alan-moore", "classic"]
-    },
-    {
-      id: "funko-004",
-      name: "Funko POP! Joker (Dark Knight)",
-      category: "funko",
-      subcategory: "DC",
-      price: 34.99,
-      image: "https://placehold.co/400x500/27272a/27272a?text=+",
-      description: "Heath Ledger tribute. Limited edition.",
-      stock: 7,
-      featured: true,
-      rating: 4.8,
-      tags: ["limited", "movies", "heath-ledger"]
-    }
-  ];
-
-  const CATEGORIES = [
-    { id: "all", name: "All Products", icon: "🏪" },
-    { id: "comics", name: "Comic Books", icon: "📚" },
-    { id: "funko", name: "Funko POPs", icon: "🎭" }
-  ];
 
   // ============================================================================
   // PRODUCT CARD COMPONENT
@@ -226,6 +109,9 @@ import React, { useState, useMemo, useEffect } from "react";
   // NOTE: AuthModal has been extracted to components/AuthModal.jsx to prevent
   // form state resets on parent re-renders (FE-002 fix)
   export default function App() {
+    // FE-004: Products from API instead of static array
+    const { products, loading: productsLoading, error: productsError } = useProducts();
+
     // State management
     const [cart, setCart] = useState([]);
     const [isCartOpen, setIsCartOpen] = useState(false);
@@ -294,8 +180,8 @@ import React, { useState, useMemo, useEffect } from "react";
           setTimeout(() => showNotification("Item removed from cart"), 0);
           return prevCart.filter(item => item.id !== productId);
         }
-        const product = PRODUCTS.find(p => p.id === productId);
-        if (newQuantity > product.stock) return prevCart;
+        const product = products.find(p => p.id === productId);
+        if (product && newQuantity > product.stock) return prevCart;
 
         return prevCart.map(item =>
           item.id === productId ? { ...item, quantity: newQuantity } : item
@@ -356,9 +242,9 @@ import React, { useState, useMemo, useEffect } from "react";
       showNotification("You've been logged out");
     };
 
-    // Filtered and sorted products
+    // Filtered and sorted products - FE-004: Now using products from API
     const filteredProducts = useMemo(() => {
-      let filtered = PRODUCTS;
+      let filtered = products;
 
       if (selectedCategory !== "all") {
         filtered = filtered.filter(p => p.category === selectedCategory);
@@ -367,10 +253,10 @@ import React, { useState, useMemo, useEffect } from "react";
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
         filtered = filtered.filter(p =>
-          p.name.toLowerCase().includes(query) ||
-          p.description.toLowerCase().includes(query) ||
-          p.tags.some(tag => tag.toLowerCase().includes(query)) ||
-          p.subcategory.toLowerCase().includes(query)
+          p.name?.toLowerCase().includes(query) ||
+          p.description?.toLowerCase().includes(query) ||
+          p.tags?.some(tag => tag.toLowerCase().includes(query)) ||
+          p.subcategory?.toLowerCase().includes(query)
         );
       }
 
@@ -382,7 +268,7 @@ import React, { useState, useMemo, useEffect } from "react";
           filtered = [...filtered].sort((a, b) => b.price - a.price);
           break;
         case "rating":
-          filtered = [...filtered].sort((a, b) => b.rating - a.rating);
+          filtered = [...filtered].sort((a, b) => (b.rating || 0) - (a.rating || 0));
           break;
         case "featured":
         default:
@@ -390,7 +276,7 @@ import React, { useState, useMemo, useEffect } from "react";
       }
 
       return filtered;
-    }, [selectedCategory, searchQuery, sortBy]);
+    }, [products, selectedCategory, searchQuery, sortBy]);
 
     // ============================================================================
     // RENDER
@@ -646,45 +532,64 @@ import React, { useState, useMemo, useEffect } from "react";
                 </p>
               </div>
 
+              {/* Loading State */}
+              {productsLoading && (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="w-12 h-12 text-orange-500 animate-spin mb-4" />
+                  <p className="text-zinc-400">Loading products...</p>
+                </div>
+              )}
+
+              {/* Error State */}
+              {productsError && !productsLoading && (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-8 text-center">
+                  <p className="text-red-400 text-sm">Unable to load products. Showing cached data.</p>
+                </div>
+              )}
+
               {/* Comics Section */}
-              <section className="mb-12">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-comic text-2xl text-white flex items-center gap-2">
-                    📚 COMIC BOOKS
-                  </h3>
-                  <button
-                    onClick={() => { setSelectedCategory("comics"); setCurrentView("category"); }}
-                    className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
-                  >
-                    See More →
-                  </button>
-                </div>
-                <div className="grid grid-cols-4 gap-3">
-                  {PRODUCTS.filter(p => p.category === "comics").slice(0, 4).map((product, index) => (
-                    <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
-                  ))}
-                </div>
-              </section>
+              {!productsLoading && (
+                <section className="mb-12">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-comic text-2xl text-white flex items-center gap-2">
+                      📚 COMIC BOOKS
+                    </h3>
+                    <button
+                      onClick={() => { setSelectedCategory("comics"); setCurrentView("category"); }}
+                      className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
+                    >
+                      See More →
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-3">
+                    {products.filter(p => p.category === "comics").slice(0, 4).map((product, index) => (
+                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {/* Funko POPs Section */}
-              <section className="mb-12">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-comic text-2xl text-white flex items-center gap-2">
-                    🎭 FUNKO POPS
-                  </h3>
-                  <button
-                    onClick={() => { setSelectedCategory("funko"); setCurrentView("category"); }}
-                    className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
-                  >
-                    See More →
-                  </button>
-                </div>
-                <div className="grid grid-cols-4 gap-3">
-                  {PRODUCTS.filter(p => p.category === "funko").slice(0, 4).map((product, index) => (
-                    <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
-                  ))}
-                </div>
-              </section>
+              {!productsLoading && (
+                <section className="mb-12">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-comic text-2xl text-white flex items-center gap-2">
+                      🎭 FUNKO POPS
+                    </h3>
+                    <button
+                      onClick={() => { setSelectedCategory("funko"); setCurrentView("category"); }}
+                      className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
+                    >
+                      See More →
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-3">
+                    {products.filter(p => p.category === "funko").slice(0, 4).map((product, index) => (
+                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                    ))}
+                  </div>
+                </section>
+              )}
 
             </section>
 
@@ -735,7 +640,7 @@ import React, { useState, useMemo, useEffect } from "react";
                   {selectedCategory === "comics" ? "📚 COMIC BOOKS" : "🎭 FUNKO POPS"}
                 </h2>
                 <p className="text-zinc-500 mt-2">
-                  {PRODUCTS.filter(p => p.category === selectedCategory).length} items
+                  {products.filter(p => p.category === selectedCategory).length} items
                 </p>
               </div>
 
@@ -758,7 +663,7 @@ import React, { useState, useMemo, useEffect } from "react";
 
               {/* Products Grid */}
               <div className="grid grid-cols-4 gap-3">
-                {PRODUCTS
+                {products
                   .filter(p => p.category === selectedCategory)
                   .sort((a, b) => {
                     switch (sortBy) {
