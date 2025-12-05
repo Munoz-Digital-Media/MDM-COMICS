@@ -2,13 +2,19 @@
 MDM Comics Backend
 FastAPI application entry point
 """
+import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from contextlib import asynccontextmanager
+from typing import Optional
+from urllib.parse import quote_plus
+
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 
 from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos
 from app.core.config import settings
@@ -23,6 +29,9 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Background enrichment task reference
+_enrichment_task: Optional[asyncio.Task] = None
 
 
 async def import_funkos_if_needed():
@@ -106,13 +115,170 @@ async def import_funkos_if_needed():
         logger.info(f"Funko import complete! {imported} new entries added, {skipped} skipped (already existed).")
 
 
+# ============== FUNKO ENRICHMENT (Background Task) ==============
+
+SCRAPER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+
+async def search_funko_url(client: httpx.AsyncClient, title: str) -> Optional[str]:
+    """Search Funko.com and return the best matching product URL."""
+    search_url = f"https://funko.com/search?q={quote_plus(title)}"
+    try:
+        response = await client.get(search_url, headers=SCRAPER_HEADERS, follow_redirects=True)
+        response.raise_for_status()
+
+        # Look for product URLs in response
+        # Pattern: /product-name/12345.html
+        matches = re.findall(r'href="(/[\w-]+/\d+\.html)"', response.text)
+        if matches:
+            return f"https://funko.com{matches[0]}"
+        return None
+    except Exception as e:
+        logger.debug(f"Search failed for '{title}': {e}")
+        return None
+
+
+async def scrape_funko_details(client: httpx.AsyncClient, url: str) -> dict:
+    """Scrape product details from a Funko.com product page."""
+    details = {"category": None, "license": None, "product_type": None, "box_number": None, "funko_url": url}
+
+    try:
+        response = await client.get(url, headers=SCRAPER_HEADERS, follow_redirects=True)
+        response.raise_for_status()
+        text = response.text
+
+        # Parse using regex (faster than BeautifulSoup for simple extraction)
+        # Look for patterns like <dt>Category:</dt><dd>...<a>Value</a>...</dd>
+        patterns = [
+            (r'<dt[^>]*>\s*Category[^<]*</dt>\s*<dd[^>]*>.*?(?:<a[^>]*>([^<]+)</a>|([^<]+))', 'category'),
+            (r'<dt[^>]*>\s*License[^<]*</dt>\s*<dd[^>]*>.*?(?:<a[^>]*>([^<]+)</a>|([^<]+))', 'license'),
+            (r'<dt[^>]*>\s*Product Type[^<]*</dt>\s*<dd[^>]*>.*?(?:<a[^>]*>([^<]+)</a>|([^<]+))', 'product_type'),
+            (r'<dt[^>]*>\s*Box Number[^<]*</dt>\s*<dd[^>]*>\s*(\d+)', 'box_number'),
+        ]
+
+        for pattern, field in patterns:
+            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            if match:
+                # Get the first non-None group
+                value = next((g for g in match.groups() if g), None)
+                if value:
+                    details[field] = value.strip()
+
+        return details
+    except Exception as e:
+        logger.debug(f"Failed to scrape {url}: {e}")
+        return details
+
+
+async def enrich_funkos_background(batch_size: int = 50, delay: float = 2.0, max_batches: int = 10):
+    """Background task to enrich Funko entries with data from Funko.com."""
+    logger.info("Starting background Funko enrichment...")
+
+    total_enriched = 0
+    total_failed = 0
+    batches_processed = 0
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        while batches_processed < max_batches:
+            async with AsyncSessionLocal() as db:
+                # Get Funkos that need enrichment (no category set)
+                result = await db.execute(
+                    select(Funko)
+                    .where(Funko.category.is_(None))
+                    .limit(batch_size)
+                )
+                funkos = result.scalars().all()
+
+                if not funkos:
+                    logger.info("No more Funkos to enrich!")
+                    break
+
+                logger.info(f"Enrichment batch {batches_processed + 1}: Processing {len(funkos)} Funkos...")
+
+                for funko in funkos:
+                    try:
+                        # Search for product URL
+                        product_url = await search_funko_url(client, funko.title)
+
+                        if product_url:
+                            # Scrape details
+                            details = await scrape_funko_details(client, product_url)
+
+                            if any([details["category"], details["license"], details["product_type"], details["box_number"]]):
+                                await db.execute(
+                                    update(Funko)
+                                    .where(Funko.id == funko.id)
+                                    .values(
+                                        category=details["category"],
+                                        license=details["license"],
+                                        product_type=details["product_type"],
+                                        box_number=details["box_number"],
+                                        funko_url=details["funko_url"],
+                                    )
+                                )
+                                total_enriched += 1
+                                logger.debug(f"Enriched: {funko.title} -> Box#{details['box_number']}, {details['license']}")
+                            else:
+                                # Mark as attempted (set empty string to avoid re-processing)
+                                await db.execute(
+                                    update(Funko)
+                                    .where(Funko.id == funko.id)
+                                    .values(category="")
+                                )
+                                total_failed += 1
+                        else:
+                            # No URL found, mark as attempted
+                            await db.execute(
+                                update(Funko)
+                                .where(Funko.id == funko.id)
+                                .values(category="")
+                            )
+                            total_failed += 1
+
+                        # Rate limiting
+                        await asyncio.sleep(delay)
+
+                    except Exception as e:
+                        logger.error(f"Error enriching {funko.title}: {e}")
+                        total_failed += 1
+
+                await db.commit()
+                batches_processed += 1
+                logger.info(f"Batch {batches_processed} complete. Total enriched: {total_enriched}, failed: {total_failed}")
+
+    logger.info(f"Background enrichment finished. Enriched: {total_enriched}, Failed: {total_failed}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database tables on startup."""
+    global _enrichment_task
+
     await init_db()
     # Import Funkos if database is empty
     await import_funkos_if_needed()
+
+    # Start background enrichment task (runs gradually, won't block startup)
+    _enrichment_task = asyncio.create_task(enrich_funkos_background(
+        batch_size=50,   # 50 Funkos per batch
+        delay=2.0,       # 2 seconds between requests (be nice to Funko.com)
+        max_batches=20   # Process up to 1000 Funkos per server restart
+    ))
+    logger.info("Background Funko enrichment task started")
+
     yield
+
+    # Cleanup on shutdown
+    if _enrichment_task and not _enrichment_task.done():
+        _enrichment_task.cancel()
+        try:
+            await _enrichment_task
+        except asyncio.CancelledError:
+            logger.info("Background enrichment task cancelled")
 
 
 app = FastAPI(
