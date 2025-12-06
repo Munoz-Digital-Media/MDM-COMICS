@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     STRIPE_PUBLISHABLE_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
 
+    # PriceCharting API
+    PRICECHARTING_API_TOKEN: str = ""
+
+    # Redis (for webhook idempotency, caching)
+    REDIS_URL: str = ""
+
     # Admin Security (P0-2: Separate from JWT SECRET_KEY)
     # If not set, admin promotion endpoint is disabled in production
     ADMIN_PROMOTION_SECRET: str = ""

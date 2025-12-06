@@ -1,7 +1,11 @@
 """
 Funko POP database models
+
+Updated for Admin Console Inventory System v1.3.0:
+- Added price columns for PriceCharting sync (BLOCK-002)
+- Added pricecharting_id for external linking
 """
-from sqlalchemy import Column, Integer, String, Text, DateTime, Table, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, Table, ForeignKey, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -43,6 +47,12 @@ class Funko(Base):
     product_type = Column(String(100), nullable=True, index=True)  # e.g., "Pop!", "Pop! & Buddy"
     box_number = Column(String(50), nullable=True, index=True)  # e.g., "1755"
     funko_url = Column(Text, nullable=True)  # URL to Funko.com product page
+
+    # BLOCK-002: PriceCharting integration
+    pricecharting_id = Column(Integer, nullable=True, index=True)
+    price_loose = Column(Numeric(12, 2), nullable=True)  # Out-of-box value
+    price_cib = Column(Numeric(12, 2), nullable=True)    # Complete in box
+    price_new = Column(Numeric(12, 2), nullable=True)    # Sealed/new
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
