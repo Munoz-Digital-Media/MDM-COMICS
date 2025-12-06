@@ -1,10 +1,13 @@
-import React, { useState, useMemo, useEffect } from "react";
-  import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Database, Shield, Loader2 } from "lucide-react";
+import React, { useState, useMemo, useEffect, lazy, Suspense } from "react";
+  import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Database, Shield, Loader2, QrCode } from "lucide-react";
   import { authAPI } from "./services/api";
   import { useProducts } from "./hooks/useProducts";
   import ComicSearch from "./components/ComicSearch";
   import FunkoSearch from "./components/FunkoSearch";
-  import AdminConsole from "./components/AdminConsole";
+  // Phase 3: Use new full-page AdminLayout instead of modal-based AdminConsole
+import AdminLayout from "./components/admin/AdminLayout";
+// Phase 4: Lazy load scanner to avoid bundle bloat
+const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
   import CheckoutForm, { OrderSuccess } from "./components/CheckoutForm";
   import ComingSoon from "./components/ComingSoon";
   import AuthModal from "./components/AuthModal";
@@ -128,6 +131,7 @@ import React, { useState, useMemo, useEffect } from "react";
     const [isComicSearchOpen, setIsComicSearchOpen] = useState(false);
     const [isFunkoSearchOpen, setIsFunkoSearchOpen] = useState(false);
     const [isAdminOpen, setIsAdminOpen] = useState(false);
+    const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [authMode, setAuthMode] = useState("login");
     const [authLoading, setAuthLoading] = useState(true);
 
@@ -494,6 +498,17 @@ import React, { useState, useMemo, useEffect } from "react";
                 >
                   <Package className="w-6 h-6 text-zinc-400 group-hover:text-purple-500 transition-colors" />
                 </button>
+
+                {/* Scanner Button - Only for admins */}
+                {user?.is_admin && (
+                  <button
+                    onClick={() => setIsScannerOpen(true)}
+                    className="relative p-3 bg-zinc-900 border border-orange-800 rounded-xl hover:border-orange-500 transition-colors group"
+                    title="Barcode Scanner"
+                  >
+                    <QrCode className="w-6 h-6 text-orange-400 group-hover:text-orange-500 transition-colors" />
+                  </button>
+                )}
 
                 {/* Admin Console Button - Only for admins */}
                 {user?.is_admin && (
@@ -923,12 +938,22 @@ import React, { useState, useMemo, useEffect } from "react";
           />
         )}
 
-        {/* Admin Console Modal */}
+        {/* Admin Console - Phase 3: Full-page layout */}
         {isAdminOpen && (
-          <AdminConsole
+          <AdminLayout
             onClose={() => setIsAdminOpen(false)}
-            token={user?.token}
           />
+        )}
+
+        {/* Mobile Scanner - Phase 4: PWA with offline support */}
+        {isScannerOpen && (
+          <Suspense fallback={
+            <div className="fixed inset-0 z-50 bg-zinc-950 flex items-center justify-center">
+              <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
+            </div>
+          }>
+            <ScannerApp onClose={() => setIsScannerOpen(false)} />
+          </Suspense>
         )}
 
         {/* Auth Modal */}

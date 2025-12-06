@@ -4,7 +4,8 @@
  * P1-5: Updated for cookie-based auth with CSRF protection
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+// HIGH-004 FIX: Changed default port from 8080 to 8000 (backend runs on 8000)
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 const CSRF_COOKIE_NAME = 'mdm_csrf_token';
 
 /**
@@ -66,6 +67,7 @@ async function fetchAPI(endpoint, options = {}) {
 }
 
 export const adminAPI = {
+  // ==================== PRODUCT MANAGEMENT ====================
   // P1-5: Token parameter kept for backwards compatibility but not needed
   createProduct: async (token, productData) => {
     const options = {
@@ -139,6 +141,114 @@ export const adminAPI = {
     }
 
     return response.json();
+  },
+
+  // ==================== ADMIN INVENTORY SYSTEM v1.3.0 ====================
+
+  // --- Admin Products ---
+  getAdminProducts: async (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.search) params.set('search', options.search);
+    if (options.category) params.set('category', options.category);
+    if (options.lowStock) params.set('low_stock', 'true');
+    if (options.includeDeleted) params.set('include_deleted', 'true');
+    if (options.sort) params.set('sort', options.sort);
+    params.set('limit', options.limit || 25);
+    params.set('offset', options.offset || 0);
+
+    return fetchAPI('/admin/products?' + params.toString());
+  },
+
+  adjustStock: async (productId, data) => {
+    return fetchAPI('/admin/products/' + productId + '/adjust-stock', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  getStockHistory: async (productId) => {
+    return fetchAPI('/admin/products/' + productId + '/stock-history');
+  },
+
+  restoreProduct: async (productId) => {
+    return fetchAPI('/admin/products/' + productId + '/restore', {
+      method: 'POST',
+    });
+  },
+
+  // --- Barcode Queue ---
+  submitBarcodes: async (barcodes) => {
+    return fetchAPI('/admin/barcode-queue', {
+      method: 'POST',
+      body: JSON.stringify({ barcodes }),
+    });
+  },
+
+  getBarcodeQueue: async (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.status) params.set('status', options.status);
+    params.set('limit', options.limit || 50);
+    params.set('offset', options.offset || 0);
+
+    return fetchAPI('/admin/barcode-queue?' + params.toString());
+  },
+
+  processQueueItem: async (queueId, action, productData = null) => {
+    return fetchAPI('/admin/barcode-queue/' + queueId + '/process', {
+      method: 'POST',
+      body: JSON.stringify({ action, product_data: productData }),
+    });
+  },
+
+  batchProcessQueue: async (ids, action, defaultStock = 1) => {
+    return fetchAPI('/admin/barcode-queue/batch-process', {
+      method: 'POST',
+      body: JSON.stringify({ ids, action, default_stock: defaultStock }),
+    });
+  },
+
+  // --- Orders ---
+  getOrders: async (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.status) params.set('status', options.status);
+    if (options.search) params.set('search', options.search);
+    if (options.dateFrom) params.set('date_from', options.dateFrom);
+    if (options.dateTo) params.set('date_to', options.dateTo);
+    params.set('limit', options.limit || 25);
+    params.set('offset', options.offset || 0);
+
+    return fetchAPI('/admin/orders?' + params.toString());
+  },
+
+  getOrder: async (orderId) => {
+    return fetchAPI('/admin/orders/' + orderId);
+  },
+
+  updateOrderStatus: async (orderId, status, trackingNumber = null) => {
+    const body = { status };
+    if (trackingNumber) body.tracking_number = trackingNumber;
+    return fetchAPI('/admin/orders/' + orderId + '/status', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+  },
+
+  // --- Reports ---
+  getInventorySummary: async () => {
+    return fetchAPI('/admin/reports/inventory-summary');
+  },
+
+  getLowStockItems: async (threshold = 5) => {
+    return fetchAPI('/admin/reports/low-stock?threshold=' + threshold);
+  },
+
+  getPriceChanges: async (days = 7, thresholdPct = 10) => {
+    return fetchAPI('/admin/reports/price-changes?days=' + days + '&threshold_pct=' + thresholdPct);
+  },
+
+  // --- Dashboard ---
+  getDashboard: async () => {
+    return fetchAPI('/admin/dashboard');
   },
 };
 
