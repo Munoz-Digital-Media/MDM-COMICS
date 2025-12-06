@@ -43,6 +43,9 @@ stripe==7.0.0
 # Rate Limiting (P1-3)
 slowapi==0.1.9
 
+# Redis (for webhook idempotency, caching)
+redis>=5.0.0
+
 # Auth
 bcrypt==4.0.1
 
