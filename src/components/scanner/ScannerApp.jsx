@@ -6,7 +6,7 @@
  */
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import {
-  QrCode, Wifi, WifiOff, CloudUpload, Check, X,
+  QrCode, Wifi, WifiOff, Upload, Check, X,
   List, Keyboard, ChevronDown, ChevronUp, Trash2, Loader2
 } from 'lucide-react';
 import CameraPermission from './CameraPermission';
@@ -264,7 +264,7 @@ export default function ScannerApp({ onClose }) {
                   {isSyncing ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <CloudUpload className="w-4 h-4" />
+                    <Upload className="w-4 h-4" />
                   )}
                   {isSyncing ? 'Syncing...' : 'Sync Now'}
                 </button>

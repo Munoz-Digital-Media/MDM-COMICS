@@ -5,7 +5,7 @@
  * NASTY-017 FIX: Dynamic import to avoid loading ~100KB for non-scanner pages.
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Camera, Pause, Play, Flashlight, FlashlightOff } from 'lucide-react';
+import { Camera, Pause, Play, Lightbulb, LightbulbOff } from 'lucide-react';
 
 export default function BarcodeScanner({ onScan, onError, paused = false }) {
   const containerRef = useRef(null);
@@ -201,9 +201,9 @@ export default function BarcodeScanner({ onScan, onError, paused = false }) {
             title={torchOn ? 'Turn off flashlight' : 'Turn on flashlight'}
           >
             {torchOn ? (
-              <FlashlightOff className="w-5 h-5 text-zinc-900" />
+              <LightbulbOff className="w-5 h-5 text-zinc-900" />
             ) : (
-              <Flashlight className="w-5 h-5 text-white" />
+              <Lightbulb className="w-5 h-5 text-white" />
             )}
           </button>
         )}
