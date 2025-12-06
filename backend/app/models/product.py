@@ -1,9 +1,16 @@
 """
 Product model
+
+Updated for Admin Console Inventory System v1.3.0:
+- Added UPC, ISBN, bin_id for barcode scanning
+- Added pricecharting_id for price sync linkage
+- Added deleted_at for soft delete (preserves order history)
+- Fixed timestamps to timezone-aware (NASTY-008)
 """
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, JSON
+from datetime import datetime, timezone
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, JSON, Index
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 
 from app.core.database import Base
 
@@ -15,47 +22,88 @@ class Product(Base):
     sku = Column(String, unique=True, index=True, nullable=False)
     name = Column(String, nullable=False, index=True)
     description = Column(Text)
-    
+
     # Categorization
     category = Column(String, nullable=False, index=True)  # comics, funko
     subcategory = Column(String, index=True)  # Marvel, DC, etc.
-    
+
     # Pricing
-    price = Column(Float, nullable=False)
-    original_price = Column(Float)  # For sales
-    cost = Column(Float)  # Our cost (for margin calc)
-    
+    price = Column(Float, nullable=False)  # Street value (from PriceCharting)
+    original_price = Column(Float)  # Our cost basis
+    cost = Column(Float)  # Deprecated - use original_price
+
     # Inventory
     stock = Column(Integer, default=0)
     low_stock_threshold = Column(Integer, default=5)
-    
+
+    # Barcode fields (Phase 1)
+    upc = Column(String(50), nullable=True, index=True)
+    isbn = Column(String(20), nullable=True, index=True)
+    bin_id = Column(String(50), nullable=True, index=True)  # Location: "BIN-A1", "SHELF-3-B"
+    last_stock_check = Column(DateTime(timezone=True), nullable=True)
+
+    # External integrations
+    pricecharting_id = Column(Integer, nullable=True, index=True)  # HIGH-006
+
+    # Soft delete (HIGH-002: preserves order FK references)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
     # Media
     image_url = Column(String)
     images = Column(JSON, default=list)  # Additional images
-    
+
     # Comic-specific fields
     issue_number = Column(String)
     publisher = Column(String)
     year = Column(Integer)
     artist = Column(String)
     writer = Column(String)
-    
+
     # Grading
     cgc_grade = Column(Float)  # Actual CGC grade if graded
     estimated_grade = Column(Float)  # AI estimated grade
     grade_confidence = Column(Float)  # AI confidence score
     is_graded = Column(Boolean, default=False)
-    
+
     # Metadata
     tags = Column(JSON, default=list)
     featured = Column(Boolean, default=False)
     rating = Column(Float, default=0.0)
     review_count = Column(Integer, default=0)
-    
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Timestamps - NASTY-008: Fixed to timezone-aware
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        server_default=func.now()
+    )
 
     # Relationships
     cart_items = relationship("CartItem", back_populates="product")
     order_items = relationship("OrderItem", back_populates="product")
+    stock_movements = relationship("StockMovement", back_populates="product")
+
+    # Indexes for barcode matching (PERF-003, PERF-004)
+    __table_args__ = (
+        Index("ix_products_upc_isbn", upc, isbn),
+        Index("ix_products_active", id, postgresql_where=(deleted_at.is_(None))),
+    )
+
+    @property
+    def is_deleted(self) -> bool:
+        """Check if product is soft-deleted"""
+        return self.deleted_at is not None
+
+    def soft_delete(self):
+        """Mark product as deleted without removing from database"""
+        self.deleted_at = datetime.now(timezone.utc)
+
+    def restore(self):
+        """Restore a soft-deleted product"""
+        self.deleted_at = None

@@ -28,6 +28,10 @@ from app.models.analytics import (
     CartAbandonmentQueue,
 )
 from app.models.coupon import Coupon, CouponCampaign, CouponUsage
+# Admin Console Inventory System v1.3.0
+from app.models.barcode_queue import BarcodeQueue
+from app.models.stock_movement import StockMovement
+from app.models.inventory_alert import InventoryAlert
 
 __all__ = [
     "User",
@@ -62,4 +66,8 @@ __all__ = [
     "Coupon",
     "CouponCampaign",
     "CouponUsage",
+    # Admin Console Inventory System v1.3.0
+    "BarcodeQueue",
+    "StockMovement",
+    "InventoryAlert",
 ]

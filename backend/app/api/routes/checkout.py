@@ -25,6 +25,7 @@ from sqlalchemy import select, delete, update
 from app.core.config import settings
 from app.core.database import get_db, AsyncSessionLocal
 from app.core.rate_limit import limiter
+from app.core.redis_client import is_webhook_processed, mark_webhook_processed
 from app.api.routes.auth import get_current_user
 from app.models import User, Product, Order, OrderItem, StockReservation
 from app.models.stock_reservation import RESERVATION_TTL_MINUTES
@@ -36,8 +37,9 @@ router = APIRouter(prefix="/checkout", tags=["checkout"])
 # Initialize Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-# P1-4: Track processed webhook events for idempotency
-_processed_webhook_events: set = set()
+# BLOCK-004: Fallback in-memory set when Redis unavailable
+# Will be used only if Redis connection fails
+_processed_webhook_events_fallback: set = set()
 
 
 class CheckoutItem(BaseModel):
@@ -380,16 +382,17 @@ async def get_stripe_config():
 async def stripe_webhook(request: Request):
     """
     P1-4: Stripe webhook handler with signature verification.
+    BLOCK-004: Updated to use Redis for cross-instance idempotency.
 
     SECURITY:
     1. Verifies webhook signature using STRIPE_WEBHOOK_SECRET
-    2. Idempotent - stores processed event IDs to prevent duplicates
+    2. Idempotent - stores processed event IDs in Redis to prevent duplicates
     3. Only processes payment_intent.succeeded events
 
     This replaces client-trust model where frontend confirms payment.
     Now Stripe tells us directly when payment succeeds.
     """
-    global _processed_webhook_events
+    global _processed_webhook_events_fallback
 
     # P1-4: Verify webhook secret is configured
     if not settings.STRIPE_WEBHOOK_SECRET:
@@ -416,10 +419,17 @@ async def stripe_webhook(request: Request):
         logger.warning(f"Stripe webhook signature verification failed: {e}")
         raise HTTPException(status_code=400, detail="Invalid signature")
 
-    # P1-4: Idempotency check - skip if we've already processed this event
+    # BLOCK-004: Idempotency check using Redis (with in-memory fallback)
     event_id = event.get("id")
-    if event_id in _processed_webhook_events:
-        logger.info(f"Stripe webhook event {event_id} already processed, skipping")
+
+    # Try Redis first for cross-instance coordination
+    if await is_webhook_processed(event_id):
+        logger.info(f"Stripe webhook event {event_id} already processed (Redis), skipping")
+        return {"status": "already_processed"}
+
+    # Fallback: check in-memory set if Redis unavailable
+    if event_id in _processed_webhook_events_fallback:
+        logger.info(f"Stripe webhook event {event_id} already processed (fallback), skipping")
         return {"status": "already_processed"}
 
     # Handle the event
@@ -435,13 +445,20 @@ async def stripe_webhook(request: Request):
     else:
         logger.info(f"Unhandled webhook event type: {event_type}")
 
-    # Mark as processed (in-memory for now, could use Redis/DB for persistence)
-    _processed_webhook_events.add(event_id)
+    # BLOCK-004: Mark as processed in Redis (with 24hr TTL)
+    redis_marked = await mark_webhook_processed(event_id)
 
-    # Cleanup old event IDs to prevent memory growth (keep last 10000)
-    if len(_processed_webhook_events) > 10000:
-        # Convert to list, sort, keep recent half
-        _processed_webhook_events = set(list(_processed_webhook_events)[-5000:])
+    # Always add to fallback set for single-instance safety
+    _processed_webhook_events_fallback.add(event_id)
+
+    # Cleanup fallback set to prevent memory growth (keep last 10000)
+    if len(_processed_webhook_events_fallback) > 10000:
+        _processed_webhook_events_fallback = set(list(_processed_webhook_events_fallback)[-5000:])
+
+    if redis_marked:
+        logger.debug(f"Webhook {event_id} marked processed in Redis")
+    else:
+        logger.warning(f"Webhook {event_id} marked in fallback only (Redis unavailable)")
 
     return {"status": "success"}
 

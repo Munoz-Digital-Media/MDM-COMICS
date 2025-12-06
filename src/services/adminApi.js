@@ -9,11 +9,16 @@ const CSRF_COOKIE_NAME = 'mdm_csrf_token';
 
 /**
  * Get CSRF token from cookie
+ * HIGH-005: Fixed split to handle '=' in cookie value
  */
 function getCsrfToken() {
   const cookies = document.cookie.split(';');
   for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
+    const trimmed = cookie.trim();
+    const eqIndex = trimmed.indexOf('=');
+    if (eqIndex === -1) continue;
+    const name = trimmed.substring(0, eqIndex);
+    const value = trimmed.substring(eqIndex + 1);
     if (name === CSRF_COOKIE_NAME) {
       return decodeURIComponent(value);
     }

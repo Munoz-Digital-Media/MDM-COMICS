@@ -36,9 +36,13 @@ elif DATABASE_URL.startswith("postgresql://"):
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-# PriceCharting API
-PC_API_TOKEN = "278b25045864fcddf72f8a93e7f9b73733cad6ce"
+# PriceCharting API - BLOCK-001: Token must be set via environment variable
+# IMPORTANT: The old hardcoded token has been rotated. Get new token from PriceCharting dashboard.
+PC_API_TOKEN = os.getenv("PRICECHARTING_API_TOKEN", "")
 PC_BASE_URL = "https://www.pricecharting.com/api/product"
+
+if not PC_API_TOKEN:
+    print("WARNING: PRICECHARTING_API_TOKEN not set. Price sync will fail.")
 
 
 async def ensure_changelog_table():

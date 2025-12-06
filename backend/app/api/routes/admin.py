@@ -1,0 +1,676 @@
+"""
+Admin API Routes for Inventory Management
+
+Per constitution_cyberSec.json Section 3:
+- All admin endpoints require is_admin=True
+- CSRF protection on mutations
+- Input validation
+"""
+import logging
+from datetime import datetime, timezone
+from typing import List, Optional
+from fastapi import APIRouter, HTTPException, Depends, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, text, and_, or_
+from sqlalchemy.orm import selectinload
+
+from app.core.database import get_db
+from app.api.deps import get_current_admin
+from app.models import User, Product, BarcodeQueue, StockMovement, InventoryAlert
+from app.services.barcode_matcher import match_barcode, process_barcode_queue_item
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+# ----- Pydantic Schemas -----
+
+class BarcodeInput(BaseModel):
+    barcode: str = Field(..., min_length=8, max_length=50)
+    barcode_type: str = Field(default="UPC", pattern="^(UPC|ISBN|EAN)$")
+    scanned_at: Optional[datetime] = None
+
+
+class BarcodeQueueRequest(BaseModel):
+    barcodes: List[BarcodeInput]
+
+
+class QueueProcessRequest(BaseModel):
+    action: str = Field(..., pattern="^(create_product|add_to_existing|skip)$")
+    product_data: Optional[dict] = None
+
+
+class BatchProcessRequest(BaseModel):
+    ids: List[int]
+    action: str = Field(..., pattern="^(create_products|add_all|skip_all)$")
+    default_stock: int = Field(default=1, ge=1)
+
+
+class StockAdjustmentRequest(BaseModel):
+    quantity: int  # positive for increase, negative for decrease
+    movement_type: str = Field(default="adjustment", pattern="^(adjustment|damaged|returned|transfer)$")
+    reason: str = Field(..., min_length=3, max_length=255)
+
+
+class ProductUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+    original_price: Optional[float] = None
+    stock: Optional[int] = None
+    bin_id: Optional[str] = None
+    upc: Optional[str] = None
+    isbn: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+
+
+# ----- Barcode Queue Endpoints -----
+
+@router.post("/barcode-queue")
+async def add_to_barcode_queue(
+    request: BarcodeQueueRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Add barcodes to the scan queue (mobile scanner uses this).
+
+    Immediately attempts to match each barcode against existing products.
+    If match found, can optionally auto-increment stock.
+    """
+    queued = 0
+    queue_ids = []
+    results = []
+
+    for barcode_input in request.barcodes:
+        # Attempt to match the barcode
+        match_result = await match_barcode(
+            db=db,
+            barcode=barcode_input.barcode,
+            barcode_type=barcode_input.barcode_type,
+            user_id=current_user.id,
+            auto_increment_stock=False  # Don't auto-increment on queue add
+        )
+
+        # Create queue entry
+        queue_item = BarcodeQueue(
+            barcode=barcode_input.barcode,
+            barcode_type=barcode_input.barcode_type,
+            user_id=current_user.id,
+            scanned_at=barcode_input.scanned_at or datetime.now(timezone.utc),
+            status="matched" if match_result.matched else "pending",
+            matched_product_id=match_result.product_id,
+            matched_comic_id=match_result.comic_id,
+            matched_funko_id=match_result.funko_id,
+            match_source=match_result.match_type,
+            match_confidence=match_result.confidence
+        )
+        db.add(queue_item)
+        await db.flush()
+
+        queue_ids.append(queue_item.id)
+        queued += 1
+
+        results.append({
+            "queue_id": queue_item.id,
+            "barcode": barcode_input.barcode,
+            "matched": match_result.matched,
+            "match_type": match_result.match_type,
+            "confidence": match_result.confidence,
+            "message": match_result.message
+        })
+
+    await db.commit()
+
+    return {
+        "queued": queued,
+        "queue_ids": queue_ids,
+        "results": results
+    }
+
+
+@router.get("/barcode-queue")
+async def list_barcode_queue(
+    status: Optional[str] = Query(None, pattern="^(pending|matched|processing|processed|failed|skipped)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """List queued barcodes with optional status filter."""
+    query = select(BarcodeQueue).order_by(BarcodeQueue.scanned_at.desc())
+
+    if status:
+        query = query.where(BarcodeQueue.status == status)
+
+    # Get total count
+    count_query = select(func.count(BarcodeQueue.id))
+    if status:
+        count_query = count_query.where(BarcodeQueue.status == status)
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # Get status counts
+    status_counts = await db.execute(text("""
+        SELECT status, COUNT(*) FROM barcode_queue GROUP BY status
+    """))
+    counts = {row[0]: row[1] for row in status_counts.fetchall()}
+
+    # Get items with pagination
+    query = query.offset(offset).limit(limit)
+    result = await db.execute(query)
+    items = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "barcode": item.barcode,
+                "barcode_type": item.barcode_type,
+                "status": item.status,
+                "matched_product_id": item.matched_product_id,
+                "matched_comic_id": item.matched_comic_id,
+                "match_source": item.match_source,
+                "match_confidence": item.match_confidence,
+                "scanned_at": item.scanned_at.isoformat() if item.scanned_at else None,
+                "processed_at": item.processed_at.isoformat() if item.processed_at else None,
+            }
+            for item in items
+        ],
+        "total": total,
+        "pending": counts.get("pending", 0),
+        "matched": counts.get("matched", 0),
+        "processed": counts.get("processed", 0)
+    }
+
+
+@router.post("/barcode-queue/{queue_id}/process")
+async def process_queue_item(
+    queue_id: int,
+    request: QueueProcessRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Process a single queued barcode item."""
+    result = await db.execute(
+        select(BarcodeQueue).where(BarcodeQueue.id == queue_id)
+    )
+    queue_item = result.scalar_one_or_none()
+
+    if not queue_item:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+
+    if queue_item.status in ("processed", "skipped"):
+        raise HTTPException(status_code=400, detail=f"Item already {queue_item.status}")
+
+    process_result = await process_barcode_queue_item(
+        db=db,
+        queue_item=queue_item,
+        action=request.action,
+        product_data=request.product_data,
+        user_id=current_user.id
+    )
+
+    return process_result
+
+
+@router.post("/barcode-queue/batch-process")
+async def batch_process_queue(
+    request: BatchProcessRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Process multiple queue items at once."""
+    results = []
+    success = 0
+    errors = 0
+
+    for queue_id in request.ids:
+        result = await db.execute(
+            select(BarcodeQueue).where(BarcodeQueue.id == queue_id)
+        )
+        queue_item = result.scalar_one_or_none()
+
+        if not queue_item or queue_item.status in ("processed", "skipped"):
+            errors += 1
+            continue
+
+        # Determine action based on request
+        if request.action == "add_all" and queue_item.matched_product_id:
+            action = "add_to_existing"
+            product_data = None
+        elif request.action == "skip_all":
+            action = "skip"
+            product_data = None
+        else:
+            errors += 1
+            continue
+
+        try:
+            process_result = await process_barcode_queue_item(
+                db=db,
+                queue_item=queue_item,
+                action=action,
+                product_data=product_data,
+                user_id=current_user.id
+            )
+            results.append(process_result)
+            success += 1
+        except Exception as e:
+            logger.error(f"Error processing queue item {queue_id}: {e}")
+            errors += 1
+
+    return {
+        "processed": success,
+        "errors": errors,
+        "results": results
+    }
+
+
+# ----- Product Management -----
+
+@router.get("/products")
+async def list_products(
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    low_stock: bool = False,
+    include_deleted: bool = False,
+    sort: str = Query("-updated_at", pattern="^-?(name|price|stock|updated_at|created_at)$"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Enhanced product listing with inventory data."""
+    query = select(Product)
+
+    # Exclude soft-deleted unless requested
+    if not include_deleted:
+        query = query.where(Product.deleted_at.is_(None))
+
+    # Search
+    if search:
+        search_term = f"%{search}%"
+        query = query.where(
+            or_(
+                Product.name.ilike(search_term),
+                Product.sku.ilike(search_term),
+                Product.upc.ilike(search_term),
+                Product.isbn.ilike(search_term)
+            )
+        )
+
+    # Category filter
+    if category:
+        query = query.where(Product.category == category)
+
+    # Low stock filter
+    if low_stock:
+        query = query.where(Product.stock <= Product.low_stock_threshold)
+
+    # Sorting
+    sort_desc = sort.startswith("-")
+    sort_field = sort.lstrip("-")
+    sort_col = getattr(Product, sort_field)
+    query = query.order_by(sort_col.desc() if sort_desc else sort_col)
+
+    # Get total count
+    count_query = select(func.count(Product.id))
+    if not include_deleted:
+        count_query = count_query.where(Product.deleted_at.is_(None))
+    if search:
+        count_query = count_query.where(
+            or_(
+                Product.name.ilike(search_term),
+                Product.sku.ilike(search_term),
+                Product.upc.ilike(search_term)
+            )
+        )
+    if category:
+        count_query = count_query.where(Product.category == category)
+    if low_stock:
+        count_query = count_query.where(Product.stock <= Product.low_stock_threshold)
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # Get summary stats
+    stats_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COALESCE(SUM(stock * price), 0) as total_value,
+            COUNT(*) FILTER (WHERE stock <= low_stock_threshold) as low_stock_count
+        FROM products
+        WHERE deleted_at IS NULL
+    """))
+    stats = stats_result.fetchone()
+
+    # Get items with pagination
+    query = query.offset(offset).limit(limit)
+    result = await db.execute(query)
+    products = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": p.id,
+                "sku": p.sku,
+                "name": p.name,
+                "category": p.category,
+                "price": p.price,
+                "original_price": p.original_price,
+                "stock": p.stock,
+                "low_stock_threshold": p.low_stock_threshold,
+                "upc": p.upc,
+                "isbn": p.isbn,
+                "bin_id": p.bin_id,
+                "image_url": p.image_url,
+                "is_low_stock": p.stock <= p.low_stock_threshold,
+                "is_deleted": p.deleted_at is not None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in products
+        ],
+        "total": total,
+        "total_value": float(stats[1]) if stats else 0,
+        "low_stock_count": stats[2] if stats else 0
+    }
+
+
+@router.patch("/products/{product_id}")
+async def update_product(
+    product_id: int,
+    request: ProductUpdateRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update product details."""
+    result = await db.execute(
+        select(Product).where(Product.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot update deleted product")
+
+    # Update fields
+    update_data = request.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(product, field, value)
+
+    product.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return {"status": "updated", "product_id": product_id}
+
+
+@router.delete("/products/{product_id}")
+async def delete_product(
+    product_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Soft delete a product."""
+    result = await db.execute(
+        select(Product).where(Product.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Product already deleted")
+
+    product.soft_delete()
+    await db.commit()
+
+    logger.info(f"Product {product_id} soft-deleted by user {current_user.id}")
+
+    return {"status": "deleted", "product_id": product_id}
+
+
+@router.post("/products/{product_id}/restore")
+async def restore_product(
+    product_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Restore a soft-deleted product."""
+    result = await db.execute(
+        select(Product).where(Product.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if not product.deleted_at:
+        raise HTTPException(status_code=400, detail="Product is not deleted")
+
+    product.restore()
+    await db.commit()
+
+    logger.info(f"Product {product_id} restored by user {current_user.id}")
+
+    return {"status": "restored", "product_id": product_id}
+
+
+@router.post("/products/{product_id}/adjust-stock")
+async def adjust_product_stock(
+    product_id: int,
+    request: StockAdjustmentRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Adjust stock with audit trail."""
+    result = await db.execute(
+        select(Product).where(Product.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot adjust stock of deleted product")
+
+    previous_stock = product.stock
+    new_stock = previous_stock + request.quantity
+
+    if new_stock < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot reduce stock below 0 (current: {previous_stock}, adjustment: {request.quantity})"
+        )
+
+    # Update stock
+    product.stock = new_stock
+    product.updated_at = datetime.now(timezone.utc)
+
+    # Log movement
+    movement = StockMovement(
+        product_id=product_id,
+        movement_type=request.movement_type,
+        quantity=request.quantity,
+        previous_stock=previous_stock,
+        new_stock=new_stock,
+        reason=request.reason,
+        reference_type="manual",
+        user_id=current_user.id
+    )
+    db.add(movement)
+
+    await db.commit()
+
+    logger.info(
+        f"Stock adjusted for product {product_id}: {previous_stock} -> {new_stock} "
+        f"({request.movement_type}: {request.quantity:+d}) by user {current_user.id}"
+    )
+
+    return {
+        "status": "adjusted",
+        "product_id": product_id,
+        "previous_stock": previous_stock,
+        "new_stock": new_stock,
+        "adjustment": request.quantity
+    }
+
+
+@router.get("/products/{product_id}/stock-history")
+async def get_stock_history(
+    product_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get stock movement history for a product."""
+    result = await db.execute(
+        select(StockMovement)
+        .where(StockMovement.product_id == product_id)
+        .order_by(StockMovement.created_at.desc())
+        .limit(limit)
+    )
+    movements = result.scalars().all()
+
+    return {
+        "movements": [
+            {
+                "id": m.id,
+                "movement_type": m.movement_type,
+                "quantity": m.quantity,
+                "previous_stock": m.previous_stock,
+                "new_stock": m.new_stock,
+                "reason": m.reason,
+                "reference_type": m.reference_type,
+                "reference_id": m.reference_id,
+                "user_id": m.user_id,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in movements
+        ]
+    }
+
+
+# ----- Reports -----
+
+@router.get("/reports/inventory-summary")
+async def get_inventory_summary(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get inventory summary with value calculations."""
+    result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_products,
+            COALESCE(SUM(stock), 0) as total_stock_units,
+            COALESCE(SUM(stock * price), 0) as total_retail_value,
+            COALESCE(SUM(stock * COALESCE(original_price, price * 0.5)), 0) as total_cost_value,
+            COUNT(*) FILTER (WHERE stock <= low_stock_threshold) as low_stock_count,
+            COUNT(*) FILTER (WHERE stock = 0) as out_of_stock_count
+        FROM products
+        WHERE deleted_at IS NULL
+    """))
+    row = result.fetchone()
+
+    # Category breakdown
+    category_result = await db.execute(text("""
+        SELECT
+            category,
+            COUNT(*) as count,
+            COALESCE(SUM(stock), 0) as stock,
+            COALESCE(SUM(stock * price), 0) as value
+        FROM products
+        WHERE deleted_at IS NULL
+        GROUP BY category
+        ORDER BY value DESC
+    """))
+
+    by_category = {
+        r[0]: {"count": r[1], "stock": r[2], "value": float(r[3])}
+        for r in category_result.fetchall()
+    }
+
+    return {
+        "total_products": row[0],
+        "total_stock_units": row[1],
+        "total_retail_value": float(row[2]),
+        "total_cost_value": float(row[3]),
+        "potential_margin": float(row[2]) - float(row[3]),
+        "low_stock_count": row[4],
+        "out_of_stock_count": row[5],
+        "by_category": by_category
+    }
+
+
+@router.get("/reports/low-stock")
+async def get_low_stock_report(
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get products below their low stock threshold."""
+    result = await db.execute(
+        select(Product)
+        .where(Product.deleted_at.is_(None))
+        .where(Product.stock <= Product.low_stock_threshold)
+        .order_by(Product.stock)
+        .limit(limit)
+    )
+    products = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "product_id": p.id,
+                "sku": p.sku,
+                "name": p.name,
+                "category": p.category,
+                "current_stock": p.stock,
+                "threshold": p.low_stock_threshold,
+                "price": p.price,
+                "bin_id": p.bin_id,
+            }
+            for p in products
+        ]
+    }
+
+
+@router.get("/reports/price-changes")
+async def get_price_changes(
+    days: int = Query(7, ge=1, le=90),
+    threshold_pct: float = Query(10.0, ge=0),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get significant price changes from price_changelog."""
+    result = await db.execute(text("""
+        SELECT
+            entity_type, entity_name, field_name,
+            old_value, new_value, change_pct, changed_at
+        FROM price_changelog
+        WHERE changed_at > NOW() - INTERVAL :days DAY
+          AND ABS(change_pct) >= :threshold
+        ORDER BY ABS(change_pct) DESC
+        LIMIT 100
+    """), {"days": days, "threshold": threshold_pct})
+
+    return {
+        "changes": [
+            {
+                "entity_type": r[0],
+                "entity_name": r[1],
+                "field": r[2],
+                "old_value": float(r[3]) if r[3] else 0,
+                "new_value": float(r[4]) if r[4] else 0,
+                "change_pct": float(r[5]) if r[5] else 0,
+                "changed_at": r[6].isoformat() if r[6] else None,
+            }
+            for r in result.fetchall()
+        ]
+    }
