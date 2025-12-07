@@ -60,6 +60,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
 
+        # Skip security headers for CORS preflight requests
+        # These are handled by CORSMiddleware and shouldn't have additional headers
+        if request.method == "OPTIONS":
+            return response
+
         # Determine if this is a docs path
         path = request.url.path
         is_docs_path = path in ("/docs", "/redoc", "/openapi.json")
