@@ -423,7 +423,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                   <h1 className="font-comic text-3xl text-orange-500">
                     MDM COMICS
                   </h1>
-                  <p className="text-xs text-zinc-500 -mt-1">Comics • Collectibles • Intelligence</p>
+                  <p className="text-xs text-zinc-500 -mt-1">Comics • Collectibles • Supplies</p>
                 </div>
               </div>
 
