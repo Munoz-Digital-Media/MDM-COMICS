@@ -127,7 +127,7 @@ export default function ComingSoon({ onLogin }) {
             COMING SOON
           </h2>
           <p className="text-zinc-500 text-base max-w-md mx-auto">
-            Slabs for the serious. Back issues for the curious. Funkos for everyone.
+            Slabs for the serious. Back issues for the curious. Funkos for everyone!
           </p>
         </div>
 

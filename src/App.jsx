@@ -567,7 +567,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                   SHOP THE <span className="text-orange-500">RACK!</span>
                 </h2>
                 <p className="text-zinc-400 text-lg max-w-2xl mx-auto">
-                  Slabs for the serious. Back issues for the curious. Funkos for everyone.
+                  Slabs for the serious. Back issues for the curious. Funkos for everyone!
                 </p>
               </div>
 
