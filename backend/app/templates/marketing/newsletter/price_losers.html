@@ -1,0 +1,19 @@
+<div class="section price-losers">
+  <h2>Buying Opportunities</h2>
+  <p>These items have dropped in price - great time to add to your collection:</p>
+
+  {% for item in items %}
+  <div class="price-mover">
+    {% if item.image_url %}
+    <img src="{{ item.image_url }}" alt="{{ item.name }}" style="max-width: 100px; height: auto;">
+    {% endif %}
+    <div class="details">
+      <h3>{{ item.name }}</h3>
+      <p class="price-change negative">
+        ${{ "%.2f"|format(item.price_old) }} &rarr; ${{ "%.2f"|format(item.price_new) }}
+        <span class="percent">({{ "%.1f"|format(item.change_percent) }}%)</span>
+      </p>
+    </div>
+  </div>
+  {% endfor %}
+</div>

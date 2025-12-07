@@ -41,6 +41,18 @@ from app.models.shipment import (
     ShipmentStatus,
     TrackingEvent,
 )
+# User Management System v1.0.0
+from app.models.role import Role, SYSTEM_ROLES
+from app.models.user_role import UserRole
+from app.models.user_session import UserSession
+from app.models.user_audit_log import UserAuditLog, AuditAction
+from app.models.password_reset import PasswordResetToken
+from app.models.email_verification import EmailVerificationToken
+from app.models.dsar_request import DSARRequest, DSARType, DSARStatus
+# Outreach System v1.5.0
+from app.models.newsletter import NewsletterSubscriber, EmailEvent, SubscriberStatus
+from app.models.content_queue import ContentQueueItem, ContentStatus
+from app.models.price_changelog import PriceChangelog
 
 __all__ = [
     "User",
@@ -91,4 +103,23 @@ __all__ = [
     "ShipmentRate",
     "ShipmentStatus",
     "TrackingEvent",
+    # User Management System v1.0.0
+    "Role",
+    "SYSTEM_ROLES",
+    "UserRole",
+    "UserSession",
+    "UserAuditLog",
+    "AuditAction",
+    "PasswordResetToken",
+    "EmailVerificationToken",
+    "DSARRequest",
+    "DSARType",
+    "DSARStatus",
+    # Outreach System v1.5.0
+    "NewsletterSubscriber",
+    "EmailEvent",
+    "SubscriberStatus",
+    "ContentQueueItem",
+    "ContentStatus",
+    "PriceChangelog",
 ]

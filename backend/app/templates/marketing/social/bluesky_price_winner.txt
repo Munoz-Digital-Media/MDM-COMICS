@@ -1,0 +1,5 @@
+{{ mover.name }} is up {{ "%.1f"|format(mover.change_percent) }}% this week!
+
+${{ "%.2f"|format(mover.price_old) }} -> ${{ "%.2f"|format(mover.price_new) }}
+
+{% if mover.entity_type == "funko" %}#funko #funkopop {% elif mover.entity_type == "comic" %}#comics #comicbooks {% endif %}#collectibles #mdmcomics
