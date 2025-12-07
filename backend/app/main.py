@@ -30,6 +30,7 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select, func, text
 
 from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos, analytics, coupons, admin
+from app.api.routes import shipping
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -386,6 +387,8 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"]
 app.include_router(coupons.router, prefix="/api/coupons", tags=["Coupons"])
 # Admin Console Inventory System v1.3.0
 app.include_router(admin.router, prefix="/api", tags=["Admin"])
+# UPS Shipping Integration v1.28.0
+app.include_router(shipping.router, prefix="/api", tags=["Shipping"])
 
 
 @app.get("/", tags=["Health"])
