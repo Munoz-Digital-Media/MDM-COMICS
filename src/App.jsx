@@ -11,6 +11,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
   import CheckoutForm, { OrderSuccess } from "./components/CheckoutForm";
   import ComingSoon from "./components/ComingSoon";
   import AuthModal from "./components/AuthModal";
+import AboutContact from "./components/AboutContact";
 
   // ============================================================================
   // BUILD INFO - Update these on each release
@@ -133,6 +134,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
     const [isFunkoSearchOpen, setIsFunkoSearchOpen] = useState(false);
     const [isAdminOpen, setIsAdminOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
+    const [isAboutContactOpen, setIsAboutContactOpen] = useState(false);
     const [authMode, setAuthMode] = useState("login");
     const [authLoading, setAuthLoading] = useState(true);
 
@@ -1027,13 +1029,18 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
           />
         )}
 
+        {/* About & Contact Modal - IMPL-001 */}
+        {isAboutContactOpen && (
+          <AboutContact onClose={() => setIsAboutContactOpen(false)} />
+        )}
+
         {/* Footer */}
         <footer className="bg-zinc-900 border-t border-zinc-800">
           <div className="max-w-7xl mx-auto px-4 py-8">
             <div className="flex flex-col items-center gap-4">
               <div className="flex gap-6 text-zinc-500 text-sm">
-                <a href="#" className="hover:text-orange-500 transition-colors">About</a>
-                <a href="#" className="hover:text-orange-500 transition-colors">Contact</a>
+                <button onClick={() => setIsAboutContactOpen(true)} className="hover:text-orange-500 transition-colors">About</button>
+                <button onClick={() => setIsAboutContactOpen(true)} className="hover:text-orange-500 transition-colors">Contact</button>
                 <a href="#" className="hover:text-orange-500 transition-colors">Shipping</a>
                 <a href="#" className="hover:text-orange-500 transition-colors">Returns</a>
                 <a href="#" className="hover:text-orange-500 transition-colors">FAQ</a>
