@@ -89,10 +89,6 @@ class Settings(BaseSettings):
     # Redis (for webhook idempotency, caching)
     REDIS_URL: str = ""
 
-    # Admin Security (P0-2: Separate from JWT SECRET_KEY)
-    # If not set, admin promotion endpoint is disabled in production
-    ADMIN_PROMOTION_SECRET: str = ""
-
     # Database Pool Configuration (P2-7)
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10

@@ -1,8 +1,7 @@
 """
 User routes
 
-P0-2: Admin promotion now uses separate ADMIN_PROMOTION_SECRET
-      to prevent JWT secret leakage from enabling admin escalation.
+Admin promotion uses SECRET_KEY for authentication.
 """
 import hashlib
 import logging
@@ -67,25 +66,12 @@ async def promote_to_admin(
     """
     Promote a user to admin status.
 
-    P0-2 SECURITY FIX: Now requires separate ADMIN_PROMOTION_SECRET instead
-    of reusing JWT SECRET_KEY. This prevents admin escalation if JWT secret
-    is compromised. Endpoint is disabled if ADMIN_PROMOTION_SECRET is not set.
+    Requires SECRET_KEY in the X-Admin-Secret header.
     """
     client_ip = req.client.host if req.client else "unknown"
 
-    # P0-2: Check if admin promotion is configured
-    if not settings.ADMIN_PROMOTION_SECRET:
-        logger.warning(
-            f"Admin promotion attempt blocked: ADMIN_PROMOTION_SECRET not configured. "
-            f"IP={client_ip}, target_email_hash={_hash_for_log(request.email)}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin promotion is not configured on this server"
-        )
-
-    # P0-2: Use dedicated admin secret, not JWT secret
-    if x_admin_secret != settings.ADMIN_PROMOTION_SECRET:
+    # Validate against SECRET_KEY
+    if x_admin_secret != settings.SECRET_KEY:
         logger.warning(
             f"Admin promotion attempt with invalid secret. "
             f"IP={client_ip}, target_email_hash={_hash_for_log(request.email)}"
