@@ -121,6 +121,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
     const [selectedCategory, setSelectedCategory] = useState("all");
     const [sortBy, setSortBy] = useState("featured");
     const [currentView, setCurrentView] = useState("shop");
+    const [itemsPerPage, setItemsPerPage] = useState(32);
     const [notification, setNotification] = useState(null);
     const [completedOrder, setCompletedOrder] = useState(null);
 
@@ -587,22 +588,70 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                 </div>
               )}
 
-              {/* Comics Section */}
+              {/* Items per page selector */}
+              {!productsLoading && (
+                <div className="flex justify-end mb-6">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-zinc-500">Show:</span>
+                    <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+                      {[32, 64, 96].map((count) => (
+                        <button
+                          key={count}
+                          onClick={() => setItemsPerPage(count)}
+                          className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                            itemsPerPage === count
+                              ? 'bg-orange-500 text-white'
+                              : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                          }`}
+                        >
+                          {count}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Bagged & Boarded Books Section */}
               {!productsLoading && (
                 <section className="mb-12">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-comic text-2xl text-white flex items-center gap-2">
-                      📚 COMIC BOOKS
+                      📚 BAGGED & BOARDED BOOKS
                     </h3>
-                    <button
-                      onClick={() => { setSelectedCategory("comics"); setCurrentView("category"); }}
+                    <a
+                      href="/shop/bagged-boarded"
+                      onClick={(e) => { e.preventDefault(); setSelectedCategory("bagged-boarded"); setCurrentView("category"); }}
                       className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
                     >
                       See More →
-                    </button>
+                    </a>
                   </div>
-                  <div className="grid grid-cols-4 gap-3">
-                    {products.filter(p => p.category === "comics").slice(0, 4).map((product, index) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {products.filter(p => p.category === "bagged-boarded" || p.category === "comics").slice(0, 5).map((product, index) => (
+                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Graded Books Section */}
+              {!productsLoading && (
+                <section className="mb-12">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-comic text-2xl text-white flex items-center gap-2">
+                      🏆 GRADED BOOKS
+                    </h3>
+                    <a
+                      href="/shop/graded"
+                      onClick={(e) => { e.preventDefault(); setSelectedCategory("graded"); setCurrentView("category"); }}
+                      className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
+                    >
+                      See More →
+                    </a>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {products.filter(p => p.category === "graded").slice(0, 5).map((product, index) => (
                       <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
                     ))}
                   </div>
@@ -616,15 +665,39 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                     <h3 className="font-comic text-2xl text-white flex items-center gap-2">
                       🎭 FUNKO POPS
                     </h3>
-                    <button
-                      onClick={() => { setSelectedCategory("funko"); setCurrentView("category"); }}
+                    <a
+                      href="/shop/funko"
+                      onClick={(e) => { e.preventDefault(); setSelectedCategory("funko"); setCurrentView("category"); }}
                       className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
                     >
                       See More →
-                    </button>
+                    </a>
                   </div>
-                  <div className="grid grid-cols-4 gap-3">
-                    {products.filter(p => p.category === "funko").slice(0, 4).map((product, index) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {products.filter(p => p.category === "funko").slice(0, 5).map((product, index) => (
+                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Supplies Section */}
+              {!productsLoading && (
+                <section className="mb-12">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-comic text-2xl text-white flex items-center gap-2">
+                      📦 SUPPLIES
+                    </h3>
+                    <a
+                      href="/shop/supplies"
+                      onClick={(e) => { e.preventDefault(); setSelectedCategory("supplies"); setCurrentView("category"); }}
+                      className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
+                    >
+                      See More →
+                    </a>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {products.filter(p => p.category === "supplies").slice(0, 5).map((product, index) => (
                       <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
                     ))}
                   </div>
@@ -677,15 +750,41 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                   ← Back to Home
                 </button>
                 <h2 className="font-comic text-4xl text-white">
-                  {selectedCategory === "comics" ? "📚 COMIC BOOKS" : "🎭 FUNKO POPS"}
+                  {selectedCategory === "bagged-boarded" && "📚 BAGGED & BOARDED BOOKS"}
+                  {selectedCategory === "graded" && "🏆 GRADED BOOKS"}
+                  {selectedCategory === "funko" && "🎭 FUNKO POPS"}
+                  {selectedCategory === "supplies" && "📦 SUPPLIES"}
+                  {selectedCategory === "comics" && "📚 COMIC BOOKS"}
                 </h2>
                 <p className="text-zinc-500 mt-2">
-                  {products.filter(p => p.category === selectedCategory).length} items
+                  {products.filter(p =>
+                    selectedCategory === "bagged-boarded"
+                      ? (p.category === "bagged-boarded" || p.category === "comics")
+                      : p.category === selectedCategory
+                  ).length} items
                 </p>
               </div>
 
-              {/* Sort */}
-              <div className="flex justify-end mb-6">
+              {/* Sort & Items Per Page */}
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-zinc-500">Show:</span>
+                  <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+                    {[32, 64, 96].map((count) => (
+                      <button
+                        key={count}
+                        onClick={() => setItemsPerPage(count)}
+                        className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                          itemsPerPage === count
+                            ? 'bg-orange-500 text-white'
+                            : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                        }`}
+                      >
+                        {count}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="relative">
                   <select
                     value={sortBy}
@@ -701,18 +800,23 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                 </div>
               </div>
 
-              {/* Products Grid */}
-              <div className="grid grid-cols-4 gap-3">
+              {/* Products Grid - 5 columns */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                 {products
-                  .filter(p => p.category === selectedCategory)
+                  .filter(p =>
+                    selectedCategory === "bagged-boarded"
+                      ? (p.category === "bagged-boarded" || p.category === "comics")
+                      : p.category === selectedCategory
+                  )
                   .sort((a, b) => {
                     switch (sortBy) {
                       case "price-low": return a.price - b.price;
                       case "price-high": return b.price - a.price;
-                      case "rating": return b.rating - a.rating;
+                      case "rating": return (b.rating || 0) - (a.rating || 0);
                       default: return (b.featured ? 1 : 0) - (a.featured ? 1 : 0);
                     }
                   })
+                  .slice(0, itemsPerPage)
                   .map((product, index) => (
                     <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
                   ))
