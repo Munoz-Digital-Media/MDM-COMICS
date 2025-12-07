@@ -388,6 +388,14 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
             background: radial-gradient(ellipse at top, rgba(249, 115, 22, 0.12) 0%, transparent 50%),
                         radial-gradient(ellipse at bottom right, rgba(249, 115, 22, 0.06) 0%, transparent 40%);
           }
+
+          .see-more-link {
+            transition: all 0.3s ease;
+          }
+          .see-more-link:hover {
+            text-shadow: 0 0 12px rgba(249, 115, 22, 0.6), 0 0 24px rgba(249, 115, 22, 0.4);
+            transform: translateX(4px);
+          }
         `}</style>
 
         {/* Notification Toast */}
@@ -567,7 +575,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                     <a
                       href="/shop/bagged-boarded"
                       onClick={(e) => { e.preventDefault(); setSelectedCategory("bagged-boarded"); setCurrentView("category"); }}
-                      className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
+                      className="see-more-link text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1"
                     >
                       See More →
                     </a>
@@ -590,7 +598,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                     <a
                       href="/shop/graded"
                       onClick={(e) => { e.preventDefault(); setSelectedCategory("graded"); setCurrentView("category"); }}
-                      className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
+                      className="see-more-link text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1"
                     >
                       See More →
                     </a>
@@ -613,7 +621,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                     <a
                       href="/shop/funko"
                       onClick={(e) => { e.preventDefault(); setSelectedCategory("funko"); setCurrentView("category"); }}
-                      className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
+                      className="see-more-link text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1"
                     >
                       See More →
                     </a>
@@ -636,7 +644,7 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                     <a
                       href="/shop/supplies"
                       onClick={(e) => { e.preventDefault(); setSelectedCategory("supplies"); setCurrentView("category"); }}
-                      className="text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1 transition-colors"
+                      className="see-more-link text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1"
                     >
                       See More →
                     </a>
