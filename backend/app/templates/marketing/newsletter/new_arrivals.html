@@ -1,0 +1,21 @@
+<div class="section new-arrivals">
+  <h2>New Arrivals</h2>
+  <p>Fresh additions to our inventory this week:</p>
+
+  <div class="arrivals-grid">
+    {% for item in items %}
+    <div class="arrival-item">
+      {% if item.image_url %}
+      <img src="{{ item.image_url }}" alt="{{ item.name }}" style="max-width: 120px; height: auto;">
+      {% endif %}
+      <h4>{{ item.name }}</h4>
+      {% if item.price %}
+      <p class="price">${{ "%.2f"|format(item.price) }}</p>
+      {% endif %}
+      {% if item.category %}
+      <span class="category">{{ item.category }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>

@@ -31,6 +31,10 @@ from sqlalchemy import select, func, text
 
 from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos, analytics, coupons, admin, contact
 from app.api.routes import shipping
+# User Management System v1.0.0
+from app.api.routes import admin_users, admin_roles, admin_dsar
+# Outreach System v1.5.0
+from app.api.routes import newsletter, webhooks
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -245,6 +249,112 @@ async def migrate_shipping_tables():
         pass
 
 
+async def migrate_outreach_tables():
+    """
+    Outreach System v1.5.0: Create outreach tables on startup.
+    This is an idempotent migration - safe to run on every startup.
+    """
+    try:
+        async with engine.begin() as conn:
+            # newsletter_subscribers
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+                    id SERIAL PRIMARY KEY,
+                    email VARCHAR(255) NOT NULL,
+                    email_hash VARCHAR(64) NOT NULL UNIQUE,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    content_types TEXT[] DEFAULT ARRAY['newsletter'],
+                    confirmation_token VARCHAR(64),
+                    unsubscribe_token VARCHAR(64) NOT NULL,
+                    confirmed_at TIMESTAMP WITH TIME ZONE,
+                    unsubscribed_at TIMESTAMP WITH TIME ZONE,
+                    unsubscribe_reason TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_newsletter_subscribers_email_hash
+                ON newsletter_subscribers(email_hash)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_newsletter_subscribers_status
+                ON newsletter_subscribers(status)
+            """))
+
+            # email_events
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS email_events (
+                    id SERIAL PRIMARY KEY,
+                    subscriber_id INTEGER REFERENCES newsletter_subscribers(id) ON DELETE SET NULL,
+                    event_type VARCHAR(50) NOT NULL,
+                    message_id VARCHAR(255),
+                    email_hash VARCHAR(64),
+                    campaign_id VARCHAR(100),
+                    metadata JSONB DEFAULT '{}',
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_email_events_subscriber_id
+                ON email_events(subscriber_id)
+            """))
+
+            # content_queue
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS content_queue (
+                    id SERIAL PRIMARY KEY,
+                    content_type VARCHAR(50) NOT NULL,
+                    platform VARCHAR(50) NOT NULL DEFAULT 'bluesky',
+                    source_type VARCHAR(50),
+                    source_id INTEGER,
+                    content TEXT,
+                    image_url TEXT,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending_review',
+                    scheduled_for TIMESTAMP WITH TIME ZONE,
+                    posted_at TIMESTAMP WITH TIME ZONE,
+                    post_url TEXT,
+                    approved_by INTEGER,
+                    approved_at TIMESTAMP WITH TIME ZONE,
+                    rejected_reason TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    error_message TEXT,
+                    ai_generated BOOLEAN DEFAULT FALSE,
+                    idempotency_key VARCHAR(100) UNIQUE,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_content_queue_status
+                ON content_queue(status)
+            """))
+
+            # price_changelog
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS price_changelog (
+                    id SERIAL PRIMARY KEY,
+                    entity_type VARCHAR(50) NOT NULL,
+                    entity_id INTEGER NOT NULL,
+                    entity_name VARCHAR(255),
+                    field_name VARCHAR(50) NOT NULL,
+                    old_value NUMERIC(10, 2),
+                    new_value NUMERIC(10, 2),
+                    changed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    source VARCHAR(50) DEFAULT 'sync'
+                )
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_price_changelog_entity
+                ON price_changelog(entity_type, entity_id)
+            """))
+
+        logger.info("Outreach tables migration complete")
+    except Exception as e:
+        logger.error(f"Outreach tables migration failed: {e}")
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -261,6 +371,8 @@ async def lifespan(app: FastAPI):
     await migrate_funko_columns()
     # UPS Shipping Integration v1.28.0: Create shipping tables
     await migrate_shipping_tables()
+    # Outreach System v1.5.0: Create outreach tables
+    await migrate_outreach_tables()
     # Import Funkos if database is empty
     await import_funkos_if_needed()
 
@@ -408,6 +520,13 @@ app.include_router(admin.router, prefix="/api", tags=["Admin"])
 app.include_router(shipping.router, prefix="/api", tags=["Shipping"])
 # IMPL-001: Contact Form
 app.include_router(contact.router, prefix="/api", tags=["Contact"])
+# User Management System v1.0.0
+app.include_router(admin_users.router, prefix="/api/admin/users", tags=["Admin - Users"])
+app.include_router(admin_roles.router, prefix="/api/admin/roles", tags=["Admin - Roles"])
+app.include_router(admin_dsar.router, prefix="/api/admin/dsar", tags=["Admin - DSAR/Compliance"])
+# Outreach System v1.5.0
+app.include_router(newsletter.router, prefix="/api", tags=["Newsletter"])
+app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
 
 
 @app.get("/", tags=["Health"])

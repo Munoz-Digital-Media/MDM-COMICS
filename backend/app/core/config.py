@@ -132,6 +132,75 @@ class Settings(BaseSettings):
     PAGERDUTY_ROUTING_KEY: str = ""
     PAGERDUTY_ENABLED: bool = False
 
+    # User Management System v1.0.0
+    # PII Encryption (Fernet key - generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    PII_ENCRYPTION_KEY: str = ""
+    PII_PEPPER: str = ""  # If empty, derived from SECRET_KEY
+
+    # Account Lockout (constitution_cyberSec.json §8)
+    ACCOUNT_LOCKOUT_MAX_ATTEMPTS: int = 5
+    ACCOUNT_LOCKOUT_DURATION_MINUTES: int = 15
+    ACCOUNT_LOCKOUT_PROGRESSIVE: bool = True
+    ACCOUNT_LOCKOUT_MAX_MINUTES: int = 1440  # 24 hours
+
+    # Session Management
+    SESSION_MAX_CONCURRENT: int = 5  # Max active sessions per user
+    SESSION_IDLE_TIMEOUT_MINUTES: int = 60
+    SESSION_ABSOLUTE_TIMEOUT_HOURS: int = 24
+
+    # Password Policy (NIST 800-63B)
+    PASSWORD_MIN_LENGTH: int = 12
+    PASSWORD_REQUIRE_UPPERCASE: bool = True
+    PASSWORD_REQUIRE_LOWERCASE: bool = True
+    PASSWORD_REQUIRE_DIGIT: bool = True
+    PASSWORD_REQUIRE_SPECIAL: bool = True
+    PASSWORD_HISTORY_COUNT: int = 5
+
+    # Email Settings (for verification, password reset)
+    EMAIL_FROM: str = "noreply@mdmcomics.com"
+    EMAIL_SMTP_HOST: str = ""
+    EMAIL_SMTP_PORT: int = 587
+    EMAIL_SMTP_USER: str = ""
+    EMAIL_SMTP_PASSWORD: str = ""
+    EMAIL_VERIFICATION_TOKEN_HOURS: int = 24
+    PASSWORD_RESET_TOKEN_MINUTES: int = 30
+
+    # DSAR (GDPR/CCPA Compliance)
+    DSAR_PROCESSING_DAYS: int = 30
+    DSAR_DATA_RETENTION_DAYS: int = 7  # Keep exported data files for 7 days
+
+    # ===== OUTREACH SYSTEM v1.5.0 =====
+
+    # Application URL (for unsubscribe links, email templates)
+    APP_URL: str = "https://mdmcomics.com"
+
+    # Email (SendGrid)
+    SENDGRID_API_KEY: str = ""
+    SENDGRID_FROM_EMAIL: str = "hello@mdmcomics.com"
+    SENDGRID_FROM_NAME: str = "MDM Comics"
+    SENDGRID_NEWSLETTER_TEMPLATE_ID: str = ""
+    SENDGRID_TRANSACTIONAL_TEMPLATE_ID: str = ""
+    SENDGRID_WEBHOOK_SIGNING_KEY: str = ""
+
+    # Social (Bluesky)
+    BLUESKY_HANDLE: str = ""
+    BLUESKY_APP_PASSWORD: str = ""
+
+    # AI (OpenAI)
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4-turbo-preview"
+
+    # Job Queue (ARQ) - uses main REDIS_URL if not set
+    ARQ_REDIS_URL: str = ""
+
+    # Marketing Feature Flags (all default to False for safety)
+    MARKETING_NEWSLETTER_ENABLED: bool = False
+    MARKETING_SOCIAL_ENABLED: bool = False
+    MARKETING_AI_ENHANCEMENT_ENABLED: bool = False
+
+    # Template directory
+    MARKETING_TEMPLATE_DIR: str = "app/templates/marketing"
+
     @model_validator(mode="after")
     def validate_production_config(self):
         """Runtime validation to catch insecure production configurations."""

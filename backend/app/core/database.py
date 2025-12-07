@@ -59,6 +59,36 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def get_db_session():
+    """
+    Context manager for database sessions outside FastAPI request context.
+
+    Use this in:
+    - Background jobs (ARQ workers)
+    - Webhook handlers
+    - CLI scripts
+    - Service-to-service calls
+
+    Usage:
+        async with get_db_session() as db:
+            result = await db.execute(...)
+            await db.commit()
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
 async def init_db():
     """Initialize database tables - creates tables if they don't exist (preserves data)"""
     import logging

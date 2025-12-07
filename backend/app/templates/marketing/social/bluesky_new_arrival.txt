@@ -1,0 +1,5 @@
+Just In: {{ arrival.name }}{% if arrival.price %} - ${{ "%.2f"|format(arrival.price) }}{% endif %}
+
+Shop now at mdmcomics.com
+
+{% if arrival.category %}#{{ arrival.category|replace(" ", "") }} {% endif %}#newarrivals #mdmcomics

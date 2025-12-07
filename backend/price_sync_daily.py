@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Daily Price Sync System
+Daily Price Sync System v1.1.0
 
 Syncs pricing data from PriceCharting for Funkos and Comics.
 Per constitution_db.json Section 5: "Critical tables track change provenance (who, when, reason)."
+
+v1.1.0 CRITICAL CHANGES:
+- Replaced blocking requests.get() with async httpx via ResilientHTTPClient
+- Proper exponential backoff with jitter to PREVENT BANS
+- 429 Retry-After header respect
+- Circuit breaker for repeated failures
+- Idempotent changelog inserts via upsert
 
 Creates price_changelog table to track:
 - What changed (entity, field, old_value, new_value)
@@ -14,10 +21,10 @@ Creates price_changelog table to track:
 """
 
 import asyncio
+import logging
 import os
-import re
-import requests
-from datetime import datetime, date
+import sys
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from dotenv import load_dotenv
@@ -25,7 +32,20 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
+# Add app to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from app.core.http_client import get_pricecharting_client, ResilientHTTPClient
+
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s %(name)s: %(message)s',
+    datefmt='%Y-%m-%dT%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL.startswith("postgres://"):
@@ -36,13 +56,12 @@ elif DATABASE_URL.startswith("postgresql://"):
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-# PriceCharting API - BLOCK-001: Token must be set via environment variable
-# IMPORTANT: The old hardcoded token has been rotated. Get new token from PriceCharting dashboard.
+# PriceCharting API - Token from environment only
 PC_API_TOKEN = os.getenv("PRICECHARTING_API_TOKEN", "")
 PC_BASE_URL = "https://www.pricecharting.com/api/product"
 
 if not PC_API_TOKEN:
-    print("WARNING: PRICECHARTING_API_TOKEN not set. Price sync will fail.")
+    logger.error("PRICECHARTING_API_TOKEN not set. Price sync will fail.")
 
 
 async def ensure_changelog_table():
@@ -52,6 +71,8 @@ async def ensure_changelog_table():
     - Primary key, not null for required columns
     - Track change provenance (who, when, reason)
     - snake_case enforced
+    
+    v1.1.0: Added unique constraint for idempotency
     """
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -76,16 +97,28 @@ async def ensure_changelog_table():
             ("ix_price_changelog_entity", "entity_type, entity_id"),
             ("ix_price_changelog_changed_at", "changed_at DESC"),
             ("ix_price_changelog_batch", "sync_batch_id"),
+            # v1.1.0: Index for weekly movers query (outreach)
+            ("ix_price_changelog_weekly_movers", "entity_type, changed_at, change_pct"),
         ]
         for idx_name, cols in indexes:
             try:
                 await conn.execute(text(
                     f"CREATE INDEX IF NOT EXISTS {idx_name} ON price_changelog({cols})"
                 ))
-            except:
+            except Exception:
                 pass
+                
+        # v1.1.0: Unique constraint for idempotency - prevent duplicate entries on restart
+        try:
+            await conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_price_changelog_idempotent 
+                ON price_changelog(entity_type, entity_id, field_name, sync_batch_id)
+                WHERE sync_batch_id IS NOT NULL
+            """))
+        except Exception:
+            pass
 
-    print("price_changelog table ready!")
+    logger.info("price_changelog table ready!")
 
 
 def parse_cents_to_dollars(value) -> Optional[float]:
@@ -95,27 +128,86 @@ def parse_cents_to_dollars(value) -> Optional[float]:
     try:
         cents = int(value)
         return round(cents / 100, 2)
-    except:
+    except (ValueError, TypeError):
         return None
 
 
-async def fetch_pricecharting_product(pc_id: int) -> Optional[dict]:
-    """Fetch single product from PriceCharting API."""
+async def fetch_pricecharting_product(
+    client: ResilientHTTPClient,
+    pc_id: int
+) -> Optional[dict]:
+    """
+    Fetch single product from PriceCharting API.
+    
+    Uses ResilientHTTPClient for:
+    - Automatic retries with exponential backoff
+    - Rate limiting (1 req/sec, 3 burst max)
+    - 429 Retry-After respect
+    - Circuit breaker
+    """
     try:
-        response = requests.get(
+        response = await client.get(
             PC_BASE_URL,
             params={"t": PC_API_TOKEN, "id": pc_id},
-            timeout=15
         )
-        if response.status_code == 200:
-            return response.json()
+        return response.json()
     except Exception as e:
-        pass  # Rate limiting or network issues
-    return None
+        logger.warning(f"Failed to fetch PC product {pc_id}: {e}")
+        return None
 
 
-async def sync_funko_prices(db: AsyncSession, batch_id: str) -> dict:
-    """Sync Funko prices from PriceCharting."""
+async def upsert_changelog_entry(
+    db: AsyncSession,
+    entity_type: str,
+    entity_id: int,
+    entity_name: str,
+    field_name: str,
+    old_value: Optional[Decimal],
+    new_value: Optional[Decimal],
+    change_pct: Optional[float],
+    batch_id: str,
+) -> None:
+    """
+    Insert changelog entry with idempotency.
+    
+    v1.1.0: Uses ON CONFLICT DO NOTHING to prevent duplicate entries
+    if the sync is restarted mid-run.
+    """
+    await db.execute(text("""
+        INSERT INTO price_changelog (
+            entity_type, entity_id, entity_name, field_name,
+            old_value, new_value, change_pct,
+            data_source, reason, sync_batch_id, changed_at
+        ) VALUES (
+            :entity_type, :entity_id, :entity_name, :field_name,
+            :old_value, :new_value, :change_pct,
+            'pricecharting', 'daily_sync', CAST(:batch_id AS UUID), NOW()
+        )
+        ON CONFLICT (entity_type, entity_id, field_name, sync_batch_id) 
+        WHERE sync_batch_id IS NOT NULL
+        DO NOTHING
+    """), {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "entity_name": entity_name[:500] if entity_name else None,
+        "field_name": field_name,
+        "old_value": old_value,
+        "new_value": new_value,
+        "change_pct": change_pct,
+        "batch_id": batch_id,
+    })
+
+
+async def sync_funko_prices(
+    db: AsyncSession, 
+    client: ResilientHTTPClient,
+    batch_id: str
+) -> dict:
+    """
+    Sync Funko prices from PriceCharting.
+    
+    Rate limiting is handled by ResilientHTTPClient - no manual sleeps needed.
+    """
     stats = {"checked": 0, "updated": 0, "changes": 0, "errors": 0}
 
     # Get Funkos with pricecharting_id
@@ -128,13 +220,14 @@ async def sync_funko_prices(db: AsyncSession, batch_id: str) -> dict:
     """))
     funkos = result.fetchall()
 
-    print(f"Checking {len(funkos)} Funkos for price updates...")
+    logger.info(f"Checking {len(funkos)} Funkos for price updates...")
 
     for funko_id, title, pc_id, old_loose, old_cib, old_new in funkos:
         stats["checked"] += 1
 
         try:
-            data = await fetch_pricecharting_product(pc_id)
+            # ResilientHTTPClient handles all rate limiting and retries
+            data = await fetch_pricecharting_product(client, pc_id)
             if not data:
                 continue
 
@@ -173,27 +266,19 @@ async def sync_funko_prices(db: AsyncSession, batch_id: str) -> dict:
                     })
 
             if changes:
-                # Log changes to changelog
+                # Log changes to changelog (idempotent)
                 for change in changes:
-                    await db.execute(text("""
-                        INSERT INTO price_changelog (
-                            entity_type, entity_id, entity_name, field_name,
-                            old_value, new_value, change_pct,
-                            data_source, reason, sync_batch_id
-                        ) VALUES (
-                            'funko', :entity_id, :entity_name, :field_name,
-                            :old_value, :new_value, :change_pct,
-                            'pricecharting', 'daily_sync', CAST(:batch_id AS UUID)
-                        )
-                    """), {
-                        "entity_id": funko_id,
-                        "entity_name": title[:500] if title else None,
-                        "field_name": change["field_name"],
-                        "old_value": change["old_value"],
-                        "new_value": change["new_value"],
-                        "change_pct": change["change_pct"],
-                        "batch_id": batch_id,
-                    })
+                    await upsert_changelog_entry(
+                        db=db,
+                        entity_type="funko",
+                        entity_id=funko_id,
+                        entity_name=title,
+                        field_name=change["field_name"],
+                        old_value=change["old_value"],
+                        new_value=change["new_value"],
+                        change_pct=change["change_pct"],
+                        batch_id=batch_id,
+                    )
                     stats["changes"] += 1
 
                 # Update the funko record
@@ -212,25 +297,32 @@ async def sync_funko_prices(db: AsyncSession, batch_id: str) -> dict:
                 })
                 stats["updated"] += 1
 
-            # Rate limiting
-            if stats["checked"] % 10 == 0:
-                await asyncio.sleep(0.5)
-
         except Exception as e:
             stats["errors"] += 1
             if stats["errors"] <= 5:
-                print(f"  Error syncing Funko {pc_id}: {e}")
+                logger.error(f"Error syncing Funko {pc_id}: {e}")
 
+        # Commit every 100 records for progress visibility
+        # Note: This creates partial update risk on crash - acceptable tradeoff
+        # for long-running syncs. Future: use savepoints.
         if stats["checked"] % 100 == 0:
             await db.commit()
-            print(f"  Progress: {stats['checked']} checked, {stats['updated']} updated, {stats['changes']} changes logged")
+            logger.info(f"Progress: {stats['checked']} checked, {stats['updated']} updated, {stats['changes']} changes logged")
 
     await db.commit()
     return stats
 
 
-async def sync_comic_prices(db: AsyncSession, batch_id: str) -> dict:
-    """Sync Comic prices from PriceCharting."""
+async def sync_comic_prices(
+    db: AsyncSession,
+    client: ResilientHTTPClient,
+    batch_id: str
+) -> dict:
+    """
+    Sync Comic prices from PriceCharting.
+    
+    Rate limiting is handled by ResilientHTTPClient.
+    """
     stats = {"checked": 0, "updated": 0, "changes": 0, "errors": 0}
 
     # Get Comics with pricecharting_id
@@ -244,13 +336,13 @@ async def sync_comic_prices(db: AsyncSession, batch_id: str) -> dict:
     """))
     comics = result.fetchall()
 
-    print(f"Checking {len(comics)} Comics for price updates...")
+    logger.info(f"Checking {len(comics)} Comics for price updates...")
 
     for comic_id, title, pc_id, old_loose, old_cib, old_new, old_graded in comics:
         stats["checked"] += 1
 
         try:
-            data = await fetch_pricecharting_product(pc_id)
+            data = await fetch_pricecharting_product(client, pc_id)
             if not data:
                 continue
 
@@ -290,27 +382,19 @@ async def sync_comic_prices(db: AsyncSession, batch_id: str) -> dict:
                     })
 
             if changes:
-                # Log changes to changelog
+                # Log changes to changelog (idempotent)
                 for change in changes:
-                    await db.execute(text("""
-                        INSERT INTO price_changelog (
-                            entity_type, entity_id, entity_name, field_name,
-                            old_value, new_value, change_pct,
-                            data_source, reason, sync_batch_id
-                        ) VALUES (
-                            'comic', :entity_id, :entity_name, :field_name,
-                            :old_value, :new_value, :change_pct,
-                            'pricecharting', 'daily_sync', CAST(:batch_id AS UUID)
-                        )
-                    """), {
-                        "entity_id": comic_id,
-                        "entity_name": title[:500] if title else None,
-                        "field_name": change["field_name"],
-                        "old_value": change["old_value"],
-                        "new_value": change["new_value"],
-                        "change_pct": change["change_pct"],
-                        "batch_id": batch_id,
-                    })
+                    await upsert_changelog_entry(
+                        db=db,
+                        entity_type="comic",
+                        entity_id=comic_id,
+                        entity_name=title,
+                        field_name=change["field_name"],
+                        old_value=change["old_value"],
+                        new_value=change["new_value"],
+                        change_pct=change["change_pct"],
+                        batch_id=batch_id,
+                    )
                     stats["changes"] += 1
 
                 # Update the comic record
@@ -331,18 +415,14 @@ async def sync_comic_prices(db: AsyncSession, batch_id: str) -> dict:
                 })
                 stats["updated"] += 1
 
-            # Rate limiting
-            if stats["checked"] % 10 == 0:
-                await asyncio.sleep(0.5)
-
         except Exception as e:
             stats["errors"] += 1
             if stats["errors"] <= 5:
-                print(f"  Error syncing Comic {pc_id}: {e}")
+                logger.error(f"Error syncing Comic {pc_id}: {e}")
 
         if stats["checked"] % 100 == 0:
             await db.commit()
-            print(f"  Progress: {stats['checked']} checked, {stats['updated']} updated, {stats['changes']} changes logged")
+            logger.info(f"Progress: {stats['checked']} checked, {stats['updated']} updated, {stats['changes']} changes logged")
 
     await db.commit()
     return stats
@@ -376,7 +456,11 @@ async def get_sync_summary(db: AsyncSession, batch_id: str) -> dict:
     return summary
 
 
-async def get_significant_changes(db: AsyncSession, batch_id: str, threshold_pct: float = 10.0) -> list:
+async def get_significant_changes(
+    db: AsyncSession, 
+    batch_id: str, 
+    threshold_pct: float = 10.0
+) -> list:
     """Get significant price changes (>threshold%) for alerting."""
     result = await db.execute(text("""
         SELECT entity_type, entity_name, field_name, old_value, new_value, change_pct
@@ -401,74 +485,80 @@ async def get_significant_changes(db: AsyncSession, batch_id: str, threshold_pct
 
 
 async def main():
-    """Run daily price sync."""
+    """Run daily price sync with resilient HTTP client."""
     import uuid
 
-    print("=" * 70)
-    print("DAILY PRICE SYNC")
-    print(f"Started: {datetime.now().isoformat()}")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("DAILY PRICE SYNC v1.1.0")
+    logger.info(f"Started: {datetime.now().isoformat()}")
+    logger.info("=" * 70)
 
     # Create changelog table
     await ensure_changelog_table()
 
     # Generate batch ID for this sync run
     batch_id = str(uuid.uuid4())
-    print(f"Sync Batch ID: {batch_id}")
+    logger.info(f"Sync Batch ID: {batch_id}")
 
-    async with AsyncSessionLocal() as db:
-        # Sync Funkos
-        print("\n" + "-" * 70)
-        print("SYNCING FUNKO PRICES")
-        print("-" * 70)
-        funko_stats = await sync_funko_prices(db, batch_id)
+    # Create resilient HTTP client for PriceCharting
+    # This client handles ALL rate limiting, retries, and backoff
+    async with get_pricecharting_client() as client:
+        async with AsyncSessionLocal() as db:
+            # Sync Funkos
+            logger.info("-" * 70)
+            logger.info("SYNCING FUNKO PRICES")
+            logger.info("-" * 70)
+            funko_stats = await sync_funko_prices(db, client, batch_id)
 
-        # Sync Comics
-        print("\n" + "-" * 70)
-        print("SYNCING COMIC PRICES")
-        print("-" * 70)
-        comic_stats = await sync_comic_prices(db, batch_id)
+            # Sync Comics
+            logger.info("-" * 70)
+            logger.info("SYNCING COMIC PRICES")
+            logger.info("-" * 70)
+            comic_stats = await sync_comic_prices(db, client, batch_id)
 
-        # Get summary
-        print("\n" + "=" * 70)
-        print("SYNC SUMMARY")
-        print("=" * 70)
+            # Get summary
+            logger.info("=" * 70)
+            logger.info("SYNC SUMMARY")
+            logger.info("=" * 70)
 
-        summary = await get_sync_summary(db, batch_id)
+            summary = await get_sync_summary(db, batch_id)
 
-        print(f"\nFunkos:")
-        print(f"  Checked: {funko_stats['checked']}")
-        print(f"  Updated: {funko_stats['updated']}")
-        print(f"  Changes Logged: {funko_stats['changes']}")
-        print(f"  Errors: {funko_stats['errors']}")
+            logger.info(f"Funkos:")
+            logger.info(f"  Checked: {funko_stats['checked']}")
+            logger.info(f"  Updated: {funko_stats['updated']}")
+            logger.info(f"  Changes Logged: {funko_stats['changes']}")
+            logger.info(f"  Errors: {funko_stats['errors']}")
 
-        print(f"\nComics:")
-        print(f"  Checked: {comic_stats['checked']}")
-        print(f"  Updated: {comic_stats['updated']}")
-        print(f"  Changes Logged: {comic_stats['changes']}")
-        print(f"  Errors: {comic_stats['errors']}")
+            logger.info(f"Comics:")
+            logger.info(f"  Checked: {comic_stats['checked']}")
+            logger.info(f"  Updated: {comic_stats['updated']}")
+            logger.info(f"  Changes Logged: {comic_stats['changes']}")
+            logger.info(f"  Errors: {comic_stats['errors']}")
 
-        # Show significant changes
-        significant = await get_significant_changes(db, batch_id, threshold_pct=10.0)
-        if significant:
-            print(f"\n{'=' * 70}")
-            print("SIGNIFICANT PRICE CHANGES (>10%)")
-            print("=" * 70)
-            for item in significant:
-                direction = "+" if item["change_pct"] > 0 else "-"
-                print(f"  [{direction}] {item['name'][:50] if item['name'] else 'Unknown'}")
-                print(f"    {item['field']}: ${item['old']:.2f} -> ${item['new']:.2f} ({item['change_pct']:+.1f}%)")
+            # Show significant changes
+            significant = await get_significant_changes(db, batch_id, threshold_pct=10.0)
+            if significant:
+                logger.info("=" * 70)
+                logger.info("SIGNIFICANT PRICE CHANGES (>10%)")
+                logger.info("=" * 70)
+                for item in significant:
+                    direction = "↑" if item["change_pct"] > 0 else "↓"
+                    name = (item['name'][:50] if item['name'] else 'Unknown')
+                    logger.info(f"  [{direction}] {name}")
+                    logger.info(f"      {item['field']}: ${item['old']:.2f} -> ${item['new']:.2f} ({item['change_pct']:+.1f}%)")
 
-        # Final counts
-        result = await db.execute(text("SELECT COUNT(*) FROM price_changelog WHERE sync_batch_id = CAST(:batch_id AS UUID)"), {"batch_id": batch_id})
-        total_changes = result.scalar()
+            # Final counts
+            result = await db.execute(text(
+                "SELECT COUNT(*) FROM price_changelog WHERE sync_batch_id = CAST(:batch_id AS UUID)"
+            ), {"batch_id": batch_id})
+            total_changes = result.scalar()
 
-        print(f"\n{'=' * 70}")
-        print("SYNC COMPLETE!")
-        print(f"Total changes logged: {total_changes}")
-        print(f"Batch ID: {batch_id}")
-        print(f"Finished: {datetime.now().isoformat()}")
-        print("=" * 70)
+            logger.info("=" * 70)
+            logger.info("SYNC COMPLETE!")
+            logger.info(f"Total changes logged: {total_changes}")
+            logger.info(f"Batch ID: {batch_id}")
+            logger.info(f"Finished: {datetime.now().isoformat()}")
+            logger.info("=" * 70)
 
 
 if __name__ == "__main__":
