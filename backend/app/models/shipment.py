@@ -47,7 +47,7 @@ class ShipmentRate(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # Quote identification
-    quote_id = Column(String(50), unique=True, nullable=False, index=True)  # UUID for client reference
+    quote_id = Column(String(50), unique=True, nullable=False)  # UUID for client reference (index in __table_args__)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)  # If associated with order
 
     # Carrier
@@ -141,7 +141,7 @@ class Shipment(Base):
     service_name = Column(String(100), nullable=False)
 
     # Tracking
-    tracking_number = Column(String(100), unique=True, nullable=True, index=True)
+    tracking_number = Column(String(100), unique=True, nullable=True)  # index in __table_args__
     tracking_url = Column(String(500), nullable=True)
 
     # Addresses
