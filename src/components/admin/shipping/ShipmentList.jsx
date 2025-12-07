@@ -9,7 +9,7 @@ import {
   Loader2, ExternalLink, Printer, Ban
 } from 'lucide-react';
 import { shippingAPI } from '../../../services/api';
-import { TrackingDisplay } from '../../shipping/TrackingDisplay';
+import TrackingDisplay from '../../shipping/TrackingDisplay';
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
