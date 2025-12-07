@@ -230,6 +230,21 @@ async def migrate_funko_columns():
     logger.info("Funko columns migration complete")
 
 
+async def migrate_shipping_tables():
+    """
+    UPS Shipping Integration v1.28.0: Create shipping tables on startup.
+    This is an idempotent migration - safe to run on every startup.
+    """
+    try:
+        from app.migrations.shipping_tables import migrate_shipping_tables as run_migration
+        await run_migration(engine)
+        logger.info("Shipping tables migration complete")
+    except Exception as e:
+        logger.error(f"Shipping tables migration failed: {e}")
+        # Don't block startup - tables may already exist or DB issue
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -244,6 +259,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     # Migrate funko columns (add new enrichment fields)
     await migrate_funko_columns()
+    # UPS Shipping Integration v1.28.0: Create shipping tables
+    await migrate_shipping_tables()
     # Import Funkos if database is empty
     await import_funkos_if_needed()
 
