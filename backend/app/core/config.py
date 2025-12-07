@@ -117,6 +117,25 @@ class Settings(BaseSettings):
     # Feature Flags (P3-12)
     UNDER_CONSTRUCTION: bool = True
 
+    # UPS Shipping Integration v1.28.0
+    UPS_CLIENT_ID: str = ""
+    UPS_CLIENT_SECRET: str = ""
+    UPS_ACCOUNT_NUMBER: str = ""
+    UPS_USE_SANDBOX: bool = False
+    SHIPPING_TRACKING_SYNC_ENABLED: bool = True
+    SHIPPING_TRACKING_SYNC_INTERVAL_SECONDS: int = 300
+    SHIPPING_RATE_QUOTE_TTL_MINUTES: int = 30
+    SHIPPING_ORIGIN_NAME: str = "MDM Comics"
+    SHIPPING_ORIGIN_ADDRESS: str = ""
+    SHIPPING_ORIGIN_CITY: str = ""
+    SHIPPING_ORIGIN_STATE: str = ""
+    SHIPPING_ORIGIN_ZIP: str = ""
+    SHIPPING_ORIGIN_PHONE: str = ""
+
+    # Alerting (PagerDuty)
+    PAGERDUTY_ROUTING_KEY: str = ""
+    PAGERDUTY_ENABLED: bool = False
+
     @model_validator(mode="after")
     def validate_production_config(self):
         """Runtime validation to catch insecure production configurations."""

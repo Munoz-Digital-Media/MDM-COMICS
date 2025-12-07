@@ -365,6 +365,103 @@ export const funkosAPI = {
   },
 };
 
+/**
+ * Shipping API
+ * UPS Shipping Integration v1.28.0
+ */
+export const shippingAPI = {
+  // Address management
+  createAddress: async (addressData) => {
+    return fetchAPI('/shipping/addresses', {
+      method: 'POST',
+      body: JSON.stringify(addressData),
+    });
+  },
+
+  getAddresses: async (type = null) => {
+    const params = type ? `?address_type=${type}` : '';
+    return fetchAPI(`/shipping/addresses${params}`);
+  },
+
+  getAddress: async (addressId) => {
+    return fetchAPI(`/shipping/addresses/${addressId}`);
+  },
+
+  validateAddress: async (addressId) => {
+    return fetchAPI(`/shipping/addresses/${addressId}/validate`, {
+      method: 'POST',
+    });
+  },
+
+  deleteAddress: async (addressId) => {
+    return fetchAPI(`/shipping/addresses/${addressId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Rate quoting
+  getRates: async (destinationAddressId, orderId = null, packages = null) => {
+    const body = {
+      destination_address_id: destinationAddressId,
+    };
+    if (orderId) body.order_id = orderId;
+    if (packages) body.packages = packages;
+
+    return fetchAPI('/shipping/rates', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  selectRate: async (quoteId) => {
+    return fetchAPI('/shipping/rates/select', {
+      method: 'POST',
+      body: JSON.stringify({ quote_id: quoteId }),
+    });
+  },
+
+  // Shipment management
+  createShipment: async (shipmentData) => {
+    return fetchAPI('/shipping/shipments', {
+      method: 'POST',
+      body: JSON.stringify(shipmentData),
+    });
+  },
+
+  getShipments: async (orderId = null, status = null, page = 1, pageSize = 20) => {
+    const params = new URLSearchParams();
+    if (orderId) params.append('order_id', orderId);
+    if (status) params.append('status', status);
+    params.append('page', page);
+    params.append('page_size', pageSize);
+
+    return fetchAPI(`/shipping/shipments?${params.toString()}`);
+  },
+
+  getShipment: async (shipmentId) => {
+    return fetchAPI(`/shipping/shipments/${shipmentId}`);
+  },
+
+  getLabel: async (shipmentId) => {
+    return fetchAPI(`/shipping/shipments/${shipmentId}/label`);
+  },
+
+  getTracking: async (shipmentId, refresh = false) => {
+    return fetchAPI(`/shipping/shipments/${shipmentId}/tracking?refresh=${refresh}`);
+  },
+
+  voidShipment: async (shipmentId) => {
+    return fetchAPI(`/shipping/shipments/${shipmentId}/void`, {
+      method: 'POST',
+    });
+  },
+
+  // Public tracking
+  trackByNumber: async (trackingNumber) => {
+    return fetchAPI(`/shipping/track/${trackingNumber}`);
+  },
+};
+
 export default {
   comics: comicsAPI,
   products: productsAPI,
@@ -373,4 +470,5 @@ export default {
   checkout: checkoutAPI,
   health: healthAPI,
   funkos: funkosAPI,
+  shipping: shippingAPI,
 };

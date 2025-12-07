@@ -1,5 +1,10 @@
 """
 Order models
+
+Updated for UPS Shipping Integration v1.28.0:
+- Added normalized_address_id FK for normalized addresses
+- Added shipments relationship
+- Added shipment_rates relationship
 """
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Text, JSON
@@ -13,29 +18,32 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
+
     # Order details
     order_number = Column(String, unique=True, index=True, nullable=False)
     status = Column(String, default="pending")  # pending, paid, shipped, delivered, cancelled
-    
+
     # Pricing
     subtotal = Column(Float, nullable=False)
     shipping_cost = Column(Float, default=0.0)
     tax = Column(Float, default=0.0)
     total = Column(Float, nullable=False)
-    
-    # Shipping
+
+    # Shipping (legacy JSON field retained for backward compatibility)
     shipping_address = Column(JSON)
     shipping_method = Column(String)
     tracking_number = Column(String)
-    
+
+    # UPS Shipping Integration v1.28.0: Normalized address reference
+    normalized_address_id = Column(Integer, ForeignKey("addresses.id"), nullable=True)
+
     # Payment
     payment_method = Column(String)
     payment_id = Column(String)  # Stripe/PayPal transaction ID
-    
+
     # Notes
     notes = Column(Text)
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -46,6 +54,10 @@ class Order(Base):
     # Relationships
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order")
+    # UPS Shipping Integration v1.28.0
+    normalized_address = relationship("Address", back_populates="orders", foreign_keys=[normalized_address_id])
+    shipments = relationship("Shipment", back_populates="order")
+    shipment_rates = relationship("ShipmentRate", back_populates="order")
 
 
 class OrderItem(Base):

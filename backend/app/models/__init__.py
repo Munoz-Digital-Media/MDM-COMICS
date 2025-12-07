@@ -32,6 +32,15 @@ from app.models.coupon import Coupon, CouponCampaign, CouponUsage
 from app.models.barcode_queue import BarcodeQueue
 from app.models.stock_movement import StockMovement
 from app.models.inventory_alert import InventoryAlert
+# UPS Shipping Integration v1.28.0
+from app.models.address import Address, AddressType, AddressValidationStatus
+from app.models.carrier import Carrier, CarrierCode, UPS_SERVICE_CODES, UPS_PACKAGE_TYPES
+from app.models.shipment import (
+    Shipment,
+    ShipmentRate,
+    ShipmentStatus,
+    TrackingEvent,
+)
 
 __all__ = [
     "User",
@@ -70,4 +79,16 @@ __all__ = [
     "BarcodeQueue",
     "StockMovement",
     "InventoryAlert",
+    # UPS Shipping Integration v1.28.0
+    "Address",
+    "AddressType",
+    "AddressValidationStatus",
+    "Carrier",
+    "CarrierCode",
+    "UPS_SERVICE_CODES",
+    "UPS_PACKAGE_TYPES",
+    "Shipment",
+    "ShipmentRate",
+    "ShipmentStatus",
+    "TrackingEvent",
 ]
