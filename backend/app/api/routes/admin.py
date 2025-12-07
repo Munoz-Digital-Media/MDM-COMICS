@@ -674,3 +674,295 @@ async def get_price_changes(
             for r in result.fetchall()
         ]
     }
+
+
+# ----- User Management -----
+
+class UserCreateRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
+    name: str = Field(..., min_length=1, max_length=100)
+    is_admin: bool = False
+    is_active: bool = True
+
+
+class UserUpdateRequest(BaseModel):
+    email: Optional[str] = Field(None, min_length=3, max_length=255)
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    password: Optional[str] = Field(None, min_length=8, max_length=128)
+    is_admin: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+
+@router.get("/users")
+async def list_users(
+    search: Optional[str] = None,
+    is_admin: Optional[bool] = None,
+    is_active: Optional[bool] = None,
+    sort: str = Query("-created_at", pattern="^-?(name|email|created_at|is_admin)$"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all users with filtering and search."""
+    from app.core.security import get_password_hash
+    query = select(User)
+
+    # Search by email or name
+    if search:
+        search_term = f"%{search}%"
+        query = query.where(
+            or_(
+                User.email.ilike(search_term),
+                User.name.ilike(search_term)
+            )
+        )
+
+    # Filter by admin status
+    if is_admin is not None:
+        query = query.where(User.is_admin == is_admin)
+
+    # Filter by active status
+    if is_active is not None:
+        query = query.where(User.is_active == is_active)
+
+    # Sorting
+    sort_desc = sort.startswith("-")
+    sort_field = sort.lstrip("-")
+    sort_col = getattr(User, sort_field)
+    query = query.order_by(sort_col.desc() if sort_desc else sort_col)
+
+    # Get total count
+    count_query = select(func.count(User.id))
+    if search:
+        count_query = count_query.where(
+            or_(
+                User.email.ilike(search_term),
+                User.name.ilike(search_term)
+            )
+        )
+    if is_admin is not None:
+        count_query = count_query.where(User.is_admin == is_admin)
+    if is_active is not None:
+        count_query = count_query.where(User.is_active == is_active)
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # Get users with pagination
+    query = query.offset(offset).limit(limit)
+    result = await db.execute(query)
+    users = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": u.id,
+                "email": u.email,
+                "name": u.name,
+                "is_admin": u.is_admin,
+                "is_active": u.is_active,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "updated_at": u.updated_at.isoformat() if u.updated_at else None,
+            }
+            for u in users
+        ],
+        "total": total
+    }
+
+
+@router.get("/users/{user_id}")
+async def get_user(
+    user_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a single user by ID."""
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "is_admin": user.is_admin,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+    }
+
+
+@router.post("/users", status_code=201)
+async def create_user(
+    request: UserCreateRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new user (admin only)."""
+    from app.core.security import get_password_hash
+
+    # Check if email already exists
+    existing = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Create user
+    user = User(
+        email=request.email,
+        hashed_password=get_password_hash(request.password),
+        name=request.name,
+        is_admin=request.is_admin,
+        is_active=request.is_active,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    logger.info(f"User {user.id} created by admin {current_user.id}")
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "is_admin": user.is_admin,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+
+
+@router.patch("/users/{user_id}")
+async def update_user(
+    user_id: int,
+    request: UserUpdateRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update a user (admin only)."""
+    from app.core.security import get_password_hash
+
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent admin from demoting themselves
+    if user_id == current_user.id and request.is_admin is False:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot remove your own admin status"
+        )
+
+    # Prevent deactivating yourself
+    if user_id == current_user.id and request.is_active is False:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot deactivate your own account"
+        )
+
+    # Check email uniqueness if changing
+    if request.email and request.email != user.email:
+        existing = await db.execute(
+            select(User).where(User.email == request.email)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Update fields
+    update_data = request.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        if field == "password":
+            user.hashed_password = get_password_hash(value)
+        else:
+            setattr(user, field, value)
+
+    user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"User {user_id} updated by admin {current_user.id}: {list(update_data.keys())}")
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "is_admin": user.is_admin,
+        "is_active": user.is_active,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+    }
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a user (admin only). This deactivates the account."""
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete your own account"
+        )
+
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Soft delete by deactivating
+    user.is_active = False
+    user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"User {user_id} deleted (deactivated) by admin {current_user.id}")
+
+    return {"status": "deleted", "user_id": user_id}
+
+
+@router.post("/users/{user_id}/toggle-admin")
+async def toggle_user_admin(
+    user_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Toggle admin status for a user."""
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot change your own admin status"
+        )
+
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_admin = not user.is_admin
+    user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    action = "promoted to" if user.is_admin else "demoted from"
+    logger.info(f"User {user_id} {action} admin by {current_user.id}")
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "is_admin": user.is_admin,
+        "message": f"User {action} admin"
+    }
