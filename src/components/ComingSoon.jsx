@@ -127,8 +127,7 @@ export default function ComingSoon({ onLogin }) {
             COMING SOON
           </h2>
           <p className="text-zinc-500 text-base max-w-md mx-auto">
-            We're building something extraordinary. AI-powered comic grading,
-            premium collectibles, and a new way to experience your collection.
+            Slabs for the serious. Back issues for the curious. Funkos for everyone.
           </p>
         </div>
 
