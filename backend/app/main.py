@@ -29,7 +29,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select, func, text
 
-from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos, analytics, coupons, admin
+from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos, analytics, coupons, admin, contact
 from app.api.routes import shipping
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
@@ -406,6 +406,8 @@ app.include_router(coupons.router, prefix="/api/coupons", tags=["Coupons"])
 app.include_router(admin.router, prefix="/api", tags=["Admin"])
 # UPS Shipping Integration v1.28.0
 app.include_router(shipping.router, prefix="/api", tags=["Shipping"])
+# IMPL-001: Contact Form
+app.include_router(contact.router, prefix="/api", tags=["Contact"])
 
 
 @app.get("/", tags=["Health"])

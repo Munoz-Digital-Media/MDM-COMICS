@@ -366,6 +366,24 @@ export const funkosAPI = {
 };
 
 /**
+ * Contact API
+ * IMPL-001: About & Contact Page
+ */
+export const contactAPI = {
+  /**
+   * Submit contact form
+   * @param {Object} formData - { name, email, subject, message }
+   * @returns {Promise<{ message: string, reference_id: string }>}
+   */
+  submit: async (formData) => {
+    return fetchAPI('/contact', {
+      method: 'POST',
+      body: JSON.stringify(formData),
+    });
+  },
+};
+
+/**
  * Shipping API
  * UPS Shipping Integration v1.28.0
  */
@@ -470,5 +488,6 @@ export default {
   checkout: checkoutAPI,
   health: healthAPI,
   funkos: funkosAPI,
+  contact: contactAPI,
   shipping: shippingAPI,
 };

@@ -27,6 +27,17 @@ class EmailProvider(Protocol):
         """Send cart abandonment recovery email."""
         ...
 
+    async def send_contact_notification(
+        self,
+        name: str,
+        email: str,
+        subject: str,
+        message: str,
+        reference_id: str,
+    ) -> bool:
+        """Send contact form notification to admin."""
+        ...
+
 
 class MockEmailProvider:
     """Mock provider for development/testing."""
@@ -47,6 +58,24 @@ class MockEmailProvider:
             f"  Items: {len(cart_items)}\n"
             f"  Value: ${cart_value:.2f}\n"
             f"{coupon_msg}"
+        )
+        return True
+
+    async def send_contact_notification(
+        self,
+        name: str,
+        email: str,
+        subject: str,
+        message: str,
+        reference_id: str,
+    ) -> bool:
+        """Mock contact notification - logs instead of sending email."""
+        logger.info(
+            f"[MOCK EMAIL] Contact form notification\n"
+            f"  Reference: {reference_id}\n"
+            f"  From: {name} <{email}>\n"
+            f"  Subject: {subject}\n"
+            f"  Message preview: {message[:100]}..."
         )
         return True
 
@@ -79,6 +108,32 @@ class EmailService:
             return success
         except Exception as e:
             logger.error(f"Failed to send recovery email: {e}")
+            return False
+
+    async def send_contact_notification(
+        self,
+        name: str,
+        email: str,
+        subject: str,
+        message: str,
+        reference_id: str,
+    ) -> bool:
+        """
+        Send contact form notification to admin.
+
+        IMPL-001: Contact form notification wrapper.
+        """
+        try:
+            success = await self.provider.send_contact_notification(
+                name=name,
+                email=email,
+                subject=subject,
+                message=message,
+                reference_id=reference_id,
+            )
+            return success
+        except Exception as e:
+            logger.error(f"Failed to send contact notification: {e}")
             return False
 
 
