@@ -84,8 +84,11 @@ export function useProducts() {
     try {
       const data = await productsAPI.getAll();
 
+      // API returns { products: [], total, page, per_page }
+      const productsList = Array.isArray(data) ? data : (data.products || []);
+
       // Transform backend data to match frontend expectations
-      const transformed = data.map(product => ({
+      const transformed = productsList.map(product => ({
         id: product.id,
         name: product.name,
         category: product.category || 'comics',
