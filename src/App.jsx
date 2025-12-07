@@ -564,12 +564,10 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
             <section className="max-w-7xl mx-auto px-4 py-12">
               <div className="text-center mb-12 fade-up" style={{ animationDelay: "0.1s" }}>
                 <h2 className="font-comic text-5xl md:text-7xl mb-4 text-white">
-                  EVERY BOOK. <span className="text-orange-500">ANALYZED.</span>
+                  THE <span className="text-orange-500">COLLECTION.</span>
                 </h2>
                 <p className="text-zinc-400 text-lg max-w-2xl mx-auto">
-                  AI-powered CGC grade estimates on every ungraded book.
-                  <br />
-                  Premium comics and collectibles—zero guesswork.
+                  Slabs for the serious. Back issues for the curious. Funkos for everyone.
                 </p>
               </div>
 
