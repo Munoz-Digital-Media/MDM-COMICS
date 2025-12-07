@@ -46,7 +46,8 @@ class UserAuditLog(Base):
     ip_hash = Column(String(64), nullable=True)
 
     # Flexible metadata (no PII)
-    metadata = Column(JSON, default=dict)
+    # Note: Named 'event_metadata' to avoid conflict with SQLAlchemy's reserved 'metadata' attribute
+    event_metadata = Column(JSON, default=dict)
 
     # Hash chain for immutability verification
     prev_hash = Column(String(128), nullable=True)
