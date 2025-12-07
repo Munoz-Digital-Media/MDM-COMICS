@@ -312,14 +312,15 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
     if (underConstruction && !user) {
       return (
         <ComingSoon
-          onLogin={async (token) => {
-            setAuthToken(token);
+          onLogin={async () => {
+            // P1-5: Cookie-based auth - cookies are set automatically by login response
+            // Just need to fetch user data to confirm login worked
             try {
-              const userData = await authAPI.me(token);
-              setUser({ ...userData, token });
-            } catch {
-              localStorage.removeItem('mdm_token');
-              setAuthToken(null);
+              const userData = await authAPI.me();
+              setUser(userData);
+            } catch (error) {
+              console.error('Login verification failed:', error);
+              // Cookie may have failed to set - user needs to try again
             }
           }}
         />
