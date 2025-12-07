@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, ShoppingCart, BarChart3,
-  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck, Camera
+  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck, Camera, Users
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
@@ -14,6 +14,7 @@ import OrderList from './orders/OrderList';
 import InventorySummary from './reports/InventorySummary';
 import ShipmentList from './shipping/ShipmentList';
 import ScannerApp from '../scanner/ScannerApp';
+import UserList from './users/UserList';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { id: 'queue', label: 'Scan Queue', icon: QrCode },
   { id: 'orders', label: 'Orders', icon: ShoppingCart },
   { id: 'shipping', label: 'Shipping', icon: Truck },
+  { id: 'users', label: 'Users', icon: Users },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
 ];
 
@@ -49,6 +51,8 @@ export default function AdminLayout({ onClose }) {
         return <OrderList />;
       case 'shipping':
         return <ShipmentList />;
+      case 'users':
+        return <UserList />;
       case 'reports':
         return <InventorySummary />;
       default:

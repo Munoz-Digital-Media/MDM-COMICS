@@ -250,6 +250,50 @@ export const adminAPI = {
   getDashboard: async () => {
     return fetchAPI('/admin/dashboard');
   },
+
+  // ==================== USER MANAGEMENT ====================
+
+  getUsers: async (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.search) params.set('search', options.search);
+    if (options.isAdmin !== undefined) params.set('is_admin', options.isAdmin);
+    if (options.isActive !== undefined) params.set('is_active', options.isActive);
+    if (options.sort) params.set('sort', options.sort);
+    params.set('limit', options.limit || 25);
+    params.set('offset', options.offset || 0);
+
+    return fetchAPI('/admin/users?' + params.toString());
+  },
+
+  getUser: async (userId) => {
+    return fetchAPI('/admin/users/' + userId);
+  },
+
+  createUser: async (userData) => {
+    return fetchAPI('/admin/users', {
+      method: 'POST',
+      body: JSON.stringify(userData),
+    });
+  },
+
+  updateUser: async (userId, updateData) => {
+    return fetchAPI('/admin/users/' + userId, {
+      method: 'PATCH',
+      body: JSON.stringify(updateData),
+    });
+  },
+
+  deleteUser: async (userId) => {
+    return fetchAPI('/admin/users/' + userId, {
+      method: 'DELETE',
+    });
+  },
+
+  toggleUserAdmin: async (userId) => {
+    return fetchAPI('/admin/users/' + userId + '/toggle-admin', {
+      method: 'POST',
+    });
+  },
 };
 
 export default adminAPI;
