@@ -118,7 +118,7 @@ export default function ComingSoon({ onLogin }) {
 
         {/* Tagline */}
         <p className="text-zinc-400 text-lg md:text-xl mb-2">
-          Comics • Collectibles • Intelligence
+          Comics • Collectibles • Supplies
         </p>
 
         {/* Coming Soon */}
