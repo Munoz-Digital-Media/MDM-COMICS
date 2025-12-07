@@ -15,7 +15,9 @@ import scannerDB, { queueBarcode, getQueueStats, getAllBarcodes, syncQueue, dete
 // Lazy load the scanner to avoid bundle bloat
 const BarcodeScanner = lazy(() => import('./BarcodeScanner'));
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// API_BASE includes /api suffix - match pattern from api.js
+const API_BASE = import.meta.env.VITE_API_URL ||
+  (window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api');
 
 export default function ScannerApp({ onClose }) {
   const [cameraReady, setCameraReady] = useState(false);
@@ -138,7 +140,7 @@ export default function ScannerApp({ onClose }) {
 
     setIsSyncing(true);
     try {
-      const result = await syncQueue(`${API_URL}/api/admin/barcode-queue`);
+      const result = await syncQueue(`${API_BASE}/admin/barcode-queue`);
 
       if (result.synced > 0) {
         showNotification(`Synced ${result.synced} barcodes`);

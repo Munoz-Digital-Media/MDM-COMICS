@@ -156,9 +156,11 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
     }, []);
 
     // P3-12: Fetch config from API on mount
+    // Note: VITE_API_URL already includes /api suffix (e.g., https://api.mdmcomics.com/api)
     useEffect(() => {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      fetch(`${API_URL}/api/config`)
+      const API_BASE = import.meta.env.VITE_API_URL ||
+        (window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api');
+      fetch(`${API_BASE}/config`)
         .then(res => res.json())
         .then(config => {
           setUnderConstruction(config.under_construction ?? true);
