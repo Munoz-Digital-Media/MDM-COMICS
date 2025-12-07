@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, ShoppingCart, BarChart3,
-  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck
+  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck, Camera
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
@@ -13,10 +13,12 @@ import ScanQueue from './queue/ScanQueue';
 import OrderList from './orders/OrderList';
 import InventorySummary from './reports/InventorySummary';
 import ShipmentList from './shipping/ShipmentList';
+import ScannerApp from '../scanner/ScannerApp';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'products', label: 'Products', icon: Package },
+  { id: 'scanner', label: 'Scanner', icon: Camera },
   { id: 'queue', label: 'Scan Queue', icon: QrCode },
   { id: 'orders', label: 'Orders', icon: ShoppingCart },
   { id: 'shipping', label: 'Shipping', icon: Truck },
@@ -39,6 +41,8 @@ export default function AdminLayout({ onClose }) {
         return <AdminDashboard onNavigate={setActiveSection} />;
       case 'products':
         return <ProductList />;
+      case 'scanner':
+        return <ScannerApp onClose={() => setActiveSection('dashboard')} embedded />;
       case 'queue':
         return <ScanQueue />;
       case 'orders':

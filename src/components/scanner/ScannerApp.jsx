@@ -19,7 +19,7 @@ const BarcodeScanner = lazy(() => import('./BarcodeScanner'));
 const API_BASE = import.meta.env.VITE_API_URL ||
   (window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api');
 
-export default function ScannerApp({ onClose }) {
+export default function ScannerApp({ onClose, embedded = false }) {
   const [cameraReady, setCameraReady] = useState(false);
   const [lastScan, setLastScan] = useState(null);
   const [queueStats, setQueueStats] = useState({ total: 0, pending: 0, synced: 0 });
@@ -178,38 +178,52 @@ export default function ScannerApp({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col">
-      {/* Header */}
-      <header className="bg-zinc-900 border-b border-zinc-800 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center">
-            <QrCode className="w-5 h-5 text-orange-400" />
+    <div className={embedded ? 'h-full flex flex-col bg-zinc-950' : 'fixed inset-0 z-50 bg-zinc-950 flex flex-col'}>
+      {/* Header - only show when not embedded (admin layout has its own header) */}
+      {!embedded && (
+        <header className="bg-zinc-900 border-b border-zinc-800 px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center">
+              <QrCode className="w-5 h-5 text-orange-400" />
+            </div>
+            <span className="font-bold text-white">MDM Scanner</span>
           </div>
-          <span className="font-bold text-white">MDM Scanner</span>
-        </div>
 
-        <div className="flex items-center gap-2">
-          {/* Online indicator */}
+          <div className="flex items-center gap-2">
+            {/* Online indicator */}
+            <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
+              isOnline ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+            }`}>
+              {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+              {isOnline ? 'Online' : 'Offline'}
+            </div>
+
+            {/* Close button */}
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-zinc-800 rounded-lg"
+            >
+              <X className="w-5 h-5 text-zinc-400" />
+            </button>
+          </div>
+        </header>
+      )}
+
+      {/* Online status bar when embedded */}
+      {embedded && (
+        <div className="px-4 py-2 flex justify-end">
           <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
             isOnline ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
           }`}>
             {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
             {isOnline ? 'Online' : 'Offline'}
           </div>
-
-          {/* Close button */}
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-zinc-800 rounded-lg"
-          >
-            <X className="w-5 h-5 text-zinc-400" />
-          </button>
         </div>
-      </header>
+      )}
 
       {/* Notification */}
       {notification && (
-        <div className={`absolute top-16 left-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg ${
+        <div className={`absolute ${embedded ? 'top-12' : 'top-16'} left-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg ${
           notification.type === 'error' ? 'bg-red-500' : 'bg-green-500'
         } text-white font-medium flex items-center gap-2`}>
           {notification.type === 'error' ? (
