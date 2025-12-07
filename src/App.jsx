@@ -485,24 +485,6 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                   </button>
                 )}
 
-                {/* Comic Database Search Button */}
-                <button
-                  onClick={() => setIsComicSearchOpen(true)}
-                  className="relative p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-orange-500 transition-colors group"
-                  title="Search Comic Database"
-                >
-                  <Database className="w-6 h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
-                </button>
-
-                {/* Funko Database Search Button */}
-                <button
-                  onClick={() => setIsFunkoSearchOpen(true)}
-                  className="relative p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-purple-500 transition-colors group"
-                  title="Search Funko Database"
-                >
-                  <Package className="w-6 h-6 text-zinc-400 group-hover:text-purple-500 transition-colors" />
-                </button>
-
                 {/* Scanner Button - Only for admins */}
                 {user?.is_admin && (
                   <button
