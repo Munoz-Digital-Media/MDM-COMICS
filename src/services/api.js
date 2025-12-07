@@ -10,7 +10,7 @@
 
 // Use production API in production, localhost for dev
 const API_BASE = import.meta.env.VITE_API_URL ||
-  (window.location.hostname === 'localhost' ? 'http://localhost:8080/api' : 'https://api.mdmcomics.com/api');
+  (window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api');
 
 // CSRF token cookie name
 const CSRF_COOKIE_NAME = 'mdm_csrf_token';
