@@ -485,17 +485,6 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                   </button>
                 )}
 
-                {/* Scanner Button - Only for admins */}
-                {user?.is_admin && (
-                  <button
-                    onClick={() => setIsScannerOpen(true)}
-                    className="relative p-3 bg-zinc-900 border border-orange-800 rounded-xl hover:border-orange-500 transition-colors group"
-                    title="Barcode Scanner"
-                  >
-                    <QrCode className="w-6 h-6 text-orange-400 group-hover:text-orange-500 transition-colors" />
-                  </button>
-                )}
-
                 {/* Admin Console Button - Only for admins */}
                 {user?.is_admin && (
                   <button
