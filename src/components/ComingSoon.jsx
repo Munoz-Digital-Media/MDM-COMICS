@@ -5,11 +5,10 @@ import { authAPI } from '../services/api';
 /**
  * ComingSoon page with login capability
  *
- * FE-001 FIX: Previously there was concern about user lockout.
- * This component now:
- * 1. Checks for existing token on mount (auto-login if valid)
- * 2. Has visible "Sign In" link below social icons
- * 3. Shows login form when clicked
+ * P1-5: Updated for cookie-based auth
+ * - Cookies are set automatically by login response
+ * - No more localStorage token storage
+ * - authAPI.me() uses cookies automatically
  */
 export default function ComingSoon({ onLogin }) {
   const [showLogin, setShowLogin] = useState(false);
@@ -19,20 +18,16 @@ export default function ComingSoon({ onLogin }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // FE-001: Auto-check for existing token on mount
+  // P1-5: Check if user already has valid session cookie on mount
   useEffect(() => {
-    const existingToken = localStorage.getItem('mdm_token');
-    if (existingToken) {
-      // Verify token is still valid
-      authAPI.me(existingToken)
-        .then(() => {
-          onLogin(existingToken);
-        })
-        .catch(() => {
-          // Token invalid, remove it
-          localStorage.removeItem('mdm_token');
-        });
-    }
+    authAPI.me()
+      .then(() => {
+        // Valid session exists, trigger login callback
+        onLogin();
+      })
+      .catch(() => {
+        // No valid session - stay on coming soon page
+      });
   }, [onLogin]);
 
   const handleSubmit = async (e) => {
@@ -41,11 +36,10 @@ export default function ComingSoon({ onLogin }) {
     setLoading(true);
 
     try {
-      const result = await authAPI.login(email, password);
-      if (result.access_token) {
-        localStorage.setItem('mdm_token', result.access_token);
-        onLogin(result.access_token);
-      }
+      await authAPI.login(email, password);
+      // P1-5: Cookies are set automatically by the login response
+      // Just call onLogin to trigger user data fetch in parent
+      onLogin();
     } catch (err) {
       setError('Invalid credentials');
     } finally {
