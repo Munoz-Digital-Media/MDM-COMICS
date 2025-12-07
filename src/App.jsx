@@ -586,30 +586,6 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
                 </div>
               )}
 
-              {/* Items per page selector */}
-              {!productsLoading && (
-                <div className="flex justify-end mb-6">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-zinc-500">Show:</span>
-                    <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-                      {[32, 64, 96].map((count) => (
-                        <button
-                          key={count}
-                          onClick={() => setItemsPerPage(count)}
-                          className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                            itemsPerPage === count
-                              ? 'bg-orange-500 text-white'
-                              : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
-                          }`}
-                        >
-                          {count}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* Bagged & Boarded Books Section */}
               {!productsLoading && (
                 <section className="mb-12">
