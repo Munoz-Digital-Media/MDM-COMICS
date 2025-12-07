@@ -888,6 +888,7 @@ async def update_user(
 
     user.updated_at = datetime.now(timezone.utc)
     await db.commit()
+    await db.refresh(user)
 
     logger.info(f"User {user_id} updated by admin {current_user.id}: {list(update_data.keys())}")
 
@@ -956,6 +957,7 @@ async def toggle_user_admin(
     user.is_admin = not user.is_admin
     user.updated_at = datetime.now(timezone.utc)
     await db.commit()
+    await db.refresh(user)
 
     action = "promoted to" if user.is_admin else "demoted from"
     logger.info(f"User {user_id} {action} admin by {current_user.id}")
