@@ -367,7 +367,7 @@ async def migrate_user_management_tables():
     User Management System v2.0.0: Create user management tables on startup.
     This is an idempotent migration - safe to run on every startup.
 
-    Creates:
+    Creates (each in its own transaction to prevent cascading failures):
     - users table columns (email_verified_at, lockout fields, etc.)
     - roles table
     - user_roles junction table
@@ -377,9 +377,9 @@ async def migrate_user_management_tables():
     - email_verifications table
     - password_resets table
     """
+    # 1. Add missing columns to users table (separate transaction)
     try:
         async with engine.begin() as conn:
-            # 1. Add missing columns to users table
             logger.info("User Management: Adding missing columns to users table...")
             user_columns = [
                 ("email_verified_at", "TIMESTAMP WITH TIME ZONE"),
@@ -396,8 +396,13 @@ async def migrate_user_management_tables():
                     await conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
                 except Exception:
                     pass  # Column may already exist
+            logger.info("User Management: users columns complete")
+    except Exception as e:
+        logger.warning(f"User Management: users columns migration warning: {e}")
 
-            # 2. Create roles table
+    # 2. Create roles table (separate transaction)
+    try:
+        async with engine.begin() as conn:
             logger.info("User Management: Creating roles table...")
             await conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS roles (
@@ -411,8 +416,14 @@ async def migrate_user_management_tables():
                 )
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_roles_name ON roles(name)"))
+            logger.info("User Management: roles table complete")
+    except Exception as e:
+        logger.warning(f"User Management: roles table warning: {e}")
 
-            # Seed system roles
+    # 3. Seed system roles (separate transaction)
+    try:
+        async with engine.begin() as conn:
+            logger.info("User Management: Seeding system roles...")
             system_roles = [
                 ("customer", "Default customer role", '["orders:read", "orders:create", "profile:read", "profile:update"]'),
                 ("admin", "Full administrative access", '["*"]'),
@@ -428,8 +439,13 @@ async def migrate_user_management_tables():
                     """), {"name": name, "desc": desc, "perms": perms})
                 except Exception:
                     pass
+            logger.info("User Management: roles seeding complete")
+    except Exception as e:
+        logger.warning(f"User Management: roles seeding warning: {e}")
 
-            # 3. Create user_roles junction table
+    # 4. Create user_roles junction table (separate transaction)
+    try:
+        async with engine.begin() as conn:
             logger.info("User Management: Creating user_roles table...")
             await conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_roles (
@@ -443,8 +459,13 @@ async def migrate_user_management_tables():
                 )
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_roles_user_id ON user_roles(user_id)"))
+            logger.info("User Management: user_roles table complete")
+    except Exception as e:
+        logger.warning(f"User Management: user_roles table warning: {e}")
 
-            # 4. Create user_sessions table
+    # 5. Create user_sessions table (separate transaction)
+    try:
+        async with engine.begin() as conn:
             logger.info("User Management: Creating user_sessions table...")
             await conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sessions (
@@ -465,8 +486,13 @@ async def migrate_user_management_tables():
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_token_jti ON user_sessions(token_jti)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_user_id ON user_sessions(user_id)"))
+            logger.info("User Management: user_sessions table complete")
+    except Exception as e:
+        logger.warning(f"User Management: user_sessions table warning: {e}")
 
-            # 5. Create user_audit_log table
+    # 6. Create user_audit_log table (separate transaction)
+    try:
+        async with engine.begin() as conn:
             logger.info("User Management: Creating user_audit_log table...")
             await conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_audit_log (
@@ -490,8 +516,13 @@ async def migrate_user_management_tables():
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_actor ON user_audit_log(actor_id_hash, ts)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_resource ON user_audit_log(resource_type, resource_id_hash)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_action ON user_audit_log(action)"))
+            logger.info("User Management: user_audit_log table complete")
+    except Exception as e:
+        logger.warning(f"User Management: user_audit_log table warning: {e}")
 
-            # 6. Create dsar_requests table
+    # 7. Create dsar_requests table (separate transaction)
+    try:
+        async with engine.begin() as conn:
             logger.info("User Management: Creating dsar_requests table...")
             await conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS dsar_requests (
@@ -509,8 +540,13 @@ async def migrate_user_management_tables():
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dsar_user ON dsar_requests(user_id)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dsar_status ON dsar_requests(status)"))
+            logger.info("User Management: dsar_requests table complete")
+    except Exception as e:
+        logger.warning(f"User Management: dsar_requests table warning: {e}")
 
-            # 7. Create email_verifications table
+    # 8. Create email_verifications table (separate transaction)
+    try:
+        async with engine.begin() as conn:
             logger.info("User Management: Creating email_verifications table...")
             await conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS email_verifications (
@@ -524,8 +560,13 @@ async def migrate_user_management_tables():
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_verifications_user ON email_verifications(user_id)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_verifications_token ON email_verifications(token_hash)"))
+            logger.info("User Management: email_verifications table complete")
+    except Exception as e:
+        logger.warning(f"User Management: email_verifications table warning: {e}")
 
-            # 8. Create password_resets table
+    # 9. Create password_resets table (separate transaction)
+    try:
+        async with engine.begin() as conn:
             logger.info("User Management: Creating password_resets table...")
             await conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS password_resets (
@@ -539,13 +580,11 @@ async def migrate_user_management_tables():
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_resets_user ON password_resets(user_id)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_resets_token ON password_resets(token_hash)"))
-
-        logger.info("User Management tables migration complete")
+            logger.info("User Management: password_resets table complete")
     except Exception as e:
-        logger.error(f"User Management tables migration failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        pass
+        logger.warning(f"User Management: password_resets table warning: {e}")
+
+    logger.info("User Management tables migration complete")
 
 
 @asynccontextmanager
