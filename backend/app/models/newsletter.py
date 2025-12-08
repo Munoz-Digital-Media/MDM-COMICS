@@ -3,6 +3,7 @@ Newsletter Models
 
 v1.5.0: Outreach System - Newsletter subscription and email event tracking
 """
+import enum
 import secrets
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Index, Text
@@ -10,6 +11,15 @@ from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.core.database import Base
 from app.core.utils import utcnow
+
+
+class SubscriberStatus(str, enum.Enum):
+    """Newsletter subscriber status values."""
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    UNSUBSCRIBED = "unsubscribed"
+    BOUNCED = "bounced"
+    COMPLAINED = "complained"
 
 
 def generate_secure_token():
