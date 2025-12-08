@@ -189,29 +189,8 @@ async def migrate_shipping_tables(engine):
 
     logger.info("Shipping tables DDL migration complete!")
 
-    # Transaction 2: Insert seed data (DML) - separate transaction to prevent DDL rollback on failure
-    try:
-        async with engine.begin() as conn:
-            # ==================== Insert default UPS carrier if not exists ====================
-            result = await conn.execute(text("""
-                SELECT id FROM carriers WHERE code = 'UPS'
-            """))
-            if result.fetchone() is None:
-                await conn.execute(text("""
-                    INSERT INTO carriers (code, name, display_name, is_active, service_levels, default_package_type)
-                    VALUES (
-                        'UPS',
-                        'United Parcel Service',
-                        'UPS',
-                        FALSE,
-                        '["03", "02", "01", "13", "14"]',
-                        '02'
-                    )
-                """))
-                logger.info("Created default UPS carrier record (inactive - configure credentials)")
-    except Exception as e:
-        # DML failures shouldn't block startup - carrier may already exist with different schema
-        logger.warning(f"Could not seed UPS carrier (may already exist or schema mismatch): {e}")
+    # NOTE: Carrier seeding removed - schema evolved and INSERT keeps failing on NOT NULL constraints.
+    # The carrier record already exists in production. New carriers should be added via admin interface.
 
     logger.info("Shipping tables migration complete!")
 
