@@ -66,7 +66,7 @@ except Exception as e:
     pipeline_scheduler = None
     PIPELINE_SCHEDULER_AVAILABLE = False
 from app.core.config import settings
-from app.core.database import init_db, AsyncSessionLocal, engine
+from app.core.database import AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.core.error_handler import ErrorSanitizationMiddleware
 from app.core.security_headers import SecurityHeadersMiddleware
