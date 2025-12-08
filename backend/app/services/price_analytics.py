@@ -141,6 +141,99 @@ class PriceAnalyticsService:
             notable=[],  # TODO: Implement notable movers
         )
 
+    async def get_daily_movers(
+        self,
+        entity_type: str = "all",
+        limit: int = 5,
+    ) -> PriceMoversReport:
+        """
+        Get top winners and losers for today (24 hours).
+
+        Used for daily social media posts (4:30 PM EST schedule).
+        """
+        now = utcnow()
+        day_ago = now - timedelta(days=1)
+
+        # Build entity filter
+        entity_filter = ""
+        if entity_type != "all":
+            entity_filter = "AND entity_type = :entity_type"
+
+        # Query for net changes per entity (last 24 hours)
+        query = f"""
+            WITH entity_changes AS (
+                SELECT
+                    entity_type,
+                    entity_id,
+                    entity_name,
+                    field_name,
+                    FIRST_VALUE(old_value) OVER (
+                        PARTITION BY entity_type, entity_id, field_name
+                        ORDER BY changed_at ASC
+                    ) as first_old,
+                    LAST_VALUE(new_value) OVER (
+                        PARTITION BY entity_type, entity_id, field_name
+                        ORDER BY changed_at ASC
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    ) as last_new
+                FROM price_changelog
+                WHERE changed_at >= :day_ago
+                {entity_filter}
+            ),
+            net_changes AS (
+                SELECT DISTINCT
+                    entity_type,
+                    entity_id,
+                    entity_name,
+                    MAX(first_old) as price_old,
+                    MAX(last_new) as price_new,
+                    MAX(last_new) - MAX(first_old) as change_dollars,
+                    CASE
+                        WHEN MAX(first_old) > 0
+                        THEN ((MAX(last_new) - MAX(first_old)) / MAX(first_old)) * 100
+                        ELSE 0
+                    END as change_percent
+                FROM entity_changes
+                WHERE first_old IS NOT NULL AND last_new IS NOT NULL
+                GROUP BY entity_type, entity_id, entity_name
+            )
+            SELECT * FROM net_changes
+            WHERE ABS(change_percent) > 0.5
+            ORDER BY change_percent {{order}}
+            LIMIT :limit
+        """
+
+        params = {"day_ago": day_ago, "limit": limit}
+        if entity_type != "all":
+            params["entity_type"] = entity_type
+
+        # Get winners
+        winners_query = query.format(order="DESC")
+        winners_result = await self.db.execute(text(winners_query), params)
+
+        winners = []
+        for row in winners_result.fetchall():
+            if row.change_percent and row.change_percent > 0:
+                winners.append(await self._row_to_price_mover(row))
+
+        # Get losers
+        losers_query = query.format(order="ASC")
+        losers_result = await self.db.execute(text(losers_query), params)
+
+        losers = []
+        for row in losers_result.fetchall():
+            if row.change_percent and row.change_percent < 0:
+                losers.append(await self._row_to_price_mover(row))
+
+        return PriceMoversReport(
+            generated_at=now,
+            period_start=day_ago,
+            period_end=now,
+            winners=winners,
+            losers=losers,
+            notable=[],
+        )
+
     async def _row_to_price_mover(self, row) -> PriceMover:
         """Convert DB row to PriceMover with image lookup."""
         image_url = await self._get_entity_image(row.entity_type, row.entity_id)

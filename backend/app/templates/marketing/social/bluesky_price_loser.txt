@@ -1,0 +1,8 @@
+📉 Market Watch: {{ mover.name }}
+
+Down {{ mover.change_percent|abs|round(1) }}% this week
+${{ mover.price_old|round(2) }} → ${{ mover.price_new|round(2) }}
+
+Could be a buying opportunity?
+
+#marketwatch #{% if mover.entity_type == 'comic' %}comics{% else %}funkopop{% endif %} #collectibles

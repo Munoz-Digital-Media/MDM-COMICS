@@ -1,0 +1,13 @@
+🆕 New Arrival Alert!
+
+{{ arrival.name }}{% if arrival.price %}
+
+💰 Price: ${{ arrival.price|round(2) }}{% endif %}
+
+{% if arrival.category %}Category: {{ arrival.category }}{% endif %}
+
+Available now at mdmcomics.com
+
+📦 We ship nationwide with secure packaging for all collectibles.
+
+#newarrival #comics #funkopop #collectibles #mdmcomics

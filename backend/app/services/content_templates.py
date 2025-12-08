@@ -7,9 +7,16 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Late import to avoid circular dependency
+def _get_branding_context():
+    from app.services.site_settings import get_branding_context
+    return get_branding_context
 
 # Try to import Jinja2, but gracefully handle if not installed
 try:
@@ -87,6 +94,39 @@ class ContentTemplateService:
         except Exception as e:
             logger.error(f"Newsletter section render failed: {e}")
             return f"<!-- Section {section} failed to render -->"
+
+    async def render_rack_report(
+        self,
+        report_data: Dict[str, Any],
+        db: Optional[AsyncSession] = None,
+    ) -> str:
+        """
+        Render the full Rack Factor newsletter HTML.
+
+        Fetches branding URLs from database if db session provided.
+        """
+        if not self.templates_available:
+            return "<!-- Rack Report template not available -->"
+
+        try:
+            template = self.env.get_template('newsletter/rack_report.html')
+
+            # Get branding context from database
+            branding = {}
+            if db:
+                try:
+                    get_branding = _get_branding_context()
+                    branding = await get_branding(db)
+                except Exception as e:
+                    logger.warning(f"Could not load branding from DB: {e}")
+
+            # Merge branding with report data
+            context = {**branding, **report_data}
+
+            return template.render(**context)
+        except Exception as e:
+            logger.error(f"Rack Report render failed: {e}")
+            return f"<!-- Rack Report failed to render: {e} -->"
 
     def _fallback_price_mover(self, mover: Any) -> str:
         """Static fallback when template fails."""

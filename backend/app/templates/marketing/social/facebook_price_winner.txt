@@ -1,0 +1,13 @@
+{{ '🔥' if mover.change_percent > 20 else '📈' }} {{ mover.name }} is making moves!
+
+This week's performance:
+⬆️ Up {{ mover.change_percent|round(1) }}%
+💰 ${{ mover.price_old|round(2) }} → ${{ mover.price_new|round(2) }}
+
+{% if mover.context %}{{ mover.context }}
+
+{% endif %}The collectibles market is always evolving. Stay informed with The Rack Report - our free weekly newsletter.
+
+🔗 Subscribe at mdmcomics.com/newsletter
+
+#comics #funkopop #collectibles #investing #mdmcomics

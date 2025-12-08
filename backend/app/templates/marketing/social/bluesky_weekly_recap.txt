@@ -1,0 +1,11 @@
+📊 This Week at MDM Comics
+
+Collection Value: ${{ portfolio.total_value|round(2)|format_currency }}{% if portfolio.weekly_change %}
+Weekly Change: {{ '📈' if portfolio.weekly_change.change_percent > 0 else '📉' }} {{ portfolio.weekly_change.change_percent|round(1) }}%{% endif %}
+📈 Winners: {{ total_price_increases }} items up
+📉 Losers: {{ total_price_decreases }} items down{% if hottest %}
+🔥 Hottest: {{ hottest.name }} (+{{ hottest.change_percent|round(1) }}%){% endif %}
+
+Full report in our newsletter! 📧
+
+#weeklyrecap #collectibles #mdmcomics

@@ -2,6 +2,7 @@
 Content Queue Model
 
 v1.5.0: Outreach System - Content generation and approval workflow
+v1.5.1: Phase 1 - Added Facebook platform support
 """
 import enum
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, Index
@@ -39,7 +40,7 @@ class ContentQueueItem(Base):
 
     # Content type and platform
     content_type = Column(String(50), nullable=False)  # price_winner, price_loser, new_arrival, weekly_recap
-    platform = Column(String(50), nullable=False)  # bluesky, newsletter, tiktok
+    platform = Column(String(50), nullable=False)  # bluesky, facebook, instagram, newsletter, tiktok
 
     # Content versions
     original_content = Column(Text, nullable=False)
