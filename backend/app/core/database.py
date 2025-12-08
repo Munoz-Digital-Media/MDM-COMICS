@@ -87,24 +87,3 @@ async def get_db_session():
             raise
         finally:
             await session.close()
-
-
-async def init_db():
-    """Initialize database tables - creates tables if they don't exist (preserves data)"""
-    import logging
-    logger = logging.getLogger(__name__)
-
-    async with engine.begin() as conn:
-        try:
-            # Only create tables that don't exist - never drop existing data
-            # checkfirst=True prevents errors when tables already exist
-            await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
-            logger.info("Database tables initialized successfully")
-        except Exception as e:
-            # Handle duplicate index/constraint errors gracefully
-            error_msg = str(e).lower()
-            if "already exists" in error_msg or "duplicate" in error_msg:
-                logger.warning(f"Database objects already exist (safe to ignore): {e}")
-            else:
-                logger.error(f"Database initialization error: {e}")
-                raise

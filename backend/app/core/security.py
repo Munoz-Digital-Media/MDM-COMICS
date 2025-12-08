@@ -4,6 +4,7 @@ Security utilities - password hashing, JWT tokens
 P2-6: Uses timezone-aware datetime (datetime.now(timezone.utc)) instead of deprecated utcnow()
 P2-8: Added JTI (JWT ID) for token revocation support
 """
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -14,20 +15,22 @@ from jose import JWTError, jwt
 from app.core.config import settings
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"),
-        hashed_password.encode("utf-8")
+async def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against its hash asynchronously."""
+    return await asyncio.to_thread(
+        bcrypt.checkpw, plain_password.encode("utf-8"), hashed_password.encode("utf-8")
     )
 
 
-def get_password_hash(password: str) -> str:
-    """Generate password hash"""
-    return bcrypt.hashpw(
-        password.encode("utf-8"),
-        bcrypt.gensalt()
-    ).decode("utf-8")
+def _get_password_hash_sync(password: str) -> bytes:
+    """Helper for running blocking hash function in a thread."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+
+
+async def get_password_hash(password: str) -> str:
+    """Generate password hash asynchronously to avoid blocking the event loop."""
+    hashed_password_bytes = await asyncio.to_thread(_get_password_hash_sync, password)
+    return hashed_password_bytes.decode("utf-8")
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
