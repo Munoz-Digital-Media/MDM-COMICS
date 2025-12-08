@@ -35,7 +35,7 @@ class UserSession(Base):
     ip_address_hash = Column(String(64), nullable=True)
 
     # Human-readable device info (derived from user agent, not PII)
-    device_type = Column(String(50), nullable=True)  # "Chrome on Windows", "Safari on iPhone"
+    device_type = Column(String(150), nullable=True)  # Full user-agent for session identification
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
