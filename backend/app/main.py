@@ -58,9 +58,11 @@ except ImportError as e:
 try:
     from app.jobs.pipeline_scheduler import pipeline_scheduler
     PIPELINE_SCHEDULER_AVAILABLE = True
-except ImportError as e:
-    logger = logging.getLogger(__name__)
-    logger.warning(f"Could not import pipeline_scheduler: {e}")
+    print("[IMPORT] pipeline_scheduler imported successfully")
+except Exception as e:
+    import traceback
+    print(f"[IMPORT] Failed to import pipeline_scheduler: {e}")
+    print(traceback.format_exc())
     pipeline_scheduler = None
     PIPELINE_SCHEDULER_AVAILABLE = False
 from app.core.config import settings
@@ -851,10 +853,13 @@ async def lifespan(app: FastAPI):
         logger.info("Stock cleanup scheduler DISABLED via config")
 
     # v1.6.0: Start pipeline scheduler for automated data acquisition
+    print(f"[STARTUP] Pipeline scheduler available: {PIPELINE_SCHEDULER_AVAILABLE}, enabled: {settings.PIPELINE_SCHEDULER_ENABLED}")
     if PIPELINE_SCHEDULER_AVAILABLE and settings.PIPELINE_SCHEDULER_ENABLED:
         await pipeline_scheduler.start()
+        print("[STARTUP] Pipeline scheduler STARTED - jobs will run automatically")
         logger.info("Pipeline scheduler ENABLED - jobs will run automatically")
     else:
+        print(f"[STARTUP] Pipeline scheduler DISABLED (available={PIPELINE_SCHEDULER_AVAILABLE}, enabled={settings.PIPELINE_SCHEDULER_ENABLED})")
         logger.info("Pipeline scheduler DISABLED via config or import failed")
 
     yield
