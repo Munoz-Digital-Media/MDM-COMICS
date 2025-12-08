@@ -3,8 +3,7 @@ Session Service
 
 Per constitution_cyberSec.json §4: Session management with concurrent limits.
 """
-import secrets
-import hashlib
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
@@ -12,7 +11,6 @@ from sqlalchemy import select, and_, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user_session import UserSession
-from app.models.user_audit_log import AuditAction
 from app.core.pii import pii_handler
 from app.core.config import settings
 
@@ -35,16 +33,6 @@ class SessionService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-
-    @staticmethod
-    def generate_session_token() -> str:
-        """Generate a secure session token."""
-        return secrets.token_urlsafe(32)
-
-    @staticmethod
-    def hash_token(token: str) -> str:
-        """Hash session token for storage."""
-        return hashlib.sha256(token.encode()).hexdigest()
 
     async def create_session(
         self,
@@ -71,7 +59,6 @@ class SessionService:
         await self._enforce_session_limit(user_id)
 
         # Generate session token (JWT ID)
-        import uuid
         token_jti = str(uuid.uuid4())
 
         # Hash PII
@@ -152,24 +139,22 @@ class SessionService:
 
         return len(old_session_ids)
 
-    async def validate_session(self, token: str) -> Optional[UserSession]:
+    async def validate_session(self, token_jti: str) -> Optional[UserSession]:
         """
-        Validate a session token and update activity.
+        Validate a session by its JWT ID and update activity.
 
         Args:
-            token: Raw session token
+            token_jti: JWT ID (jti claim from token)
 
         Returns:
             Session if valid, None otherwise
         """
-        token_hash = self.hash_token(token)
-
         result = await self.db.execute(
             select(UserSession)
             .where(
                 and_(
-                    UserSession.session_token_hash == token_hash,
-                    UserSession.is_active == True,
+                    UserSession.token_jti == token_jti,
+                    UserSession.revoked_at.is_(None),
                     UserSession.expires_at > datetime.now(timezone.utc),
                 )
             )
@@ -183,14 +168,12 @@ class SessionService:
         idle_cutoff = datetime.now(timezone.utc) - timedelta(minutes=self.IDLE_TIMEOUT_MINUTES)
         if session.last_activity_at < idle_cutoff:
             # Session expired due to idle
-            session.is_active = False
-            session.revoked_at = datetime.now(timezone.utc)
-            session.revoke_reason = "idle_timeout"
+            session.revoke("idle_timeout")
             await self.db.flush()
             return None
 
         # Update last activity
-        session.last_activity_at = datetime.now(timezone.utc)
+        session.update_activity()
         await self.db.flush()
 
         return session
@@ -198,7 +181,6 @@ class SessionService:
     async def revoke_session(
         self,
         session_id: int,
-        revoked_by_id: Optional[int] = None,
         reason: str = "user_logout",
     ) -> bool:
         """
@@ -206,7 +188,6 @@ class SessionService:
 
         Args:
             session_id: Session ID to revoke
-            revoked_by_id: ID of user revoking (admin or self)
             reason: Reason for revocation
 
         Returns:
@@ -221,11 +202,7 @@ class SessionService:
         if not session:
             return False
 
-        session.is_active = False
-        session.revoked_at = datetime.now(timezone.utc)
-        session.revoked_by_id = revoked_by_id
-        session.revoke_reason = reason
-
+        session.revoke(reason)
         await self.db.flush()
         return True
 
@@ -233,7 +210,6 @@ class SessionService:
         self,
         user_id: int,
         except_session_id: Optional[int] = None,
-        revoked_by_id: Optional[int] = None,
         reason: str = "revoke_all",
     ) -> int:
         """
@@ -242,7 +218,6 @@ class SessionService:
         Args:
             user_id: User whose sessions to revoke
             except_session_id: Session to keep active (current session)
-            revoked_by_id: ID of user revoking
             reason: Reason for revocation
 
         Returns:
@@ -250,7 +225,8 @@ class SessionService:
         """
         conditions = [
             UserSession.user_id == user_id,
-            UserSession.is_active == True,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > datetime.now(timezone.utc),
         ]
 
         if except_session_id:
@@ -263,10 +239,7 @@ class SessionService:
         sessions = result.scalars().all()
 
         for session in sessions:
-            session.is_active = False
-            session.revoked_at = datetime.now(timezone.utc)
-            session.revoked_by_id = revoked_by_id
-            session.revoke_reason = reason
+            session.revoke(reason)
 
         await self.db.flush()
         return len(sessions)
@@ -292,7 +265,7 @@ class SessionService:
 
         if active_only:
             conditions.extend([
-                UserSession.is_active == True,
+                UserSession.revoked_at.is_(None),
                 UserSession.expires_at > datetime.now(timezone.utc),
             ])
 
@@ -312,7 +285,7 @@ class SessionService:
             .where(
                 and_(
                     UserSession.user_id == user_id,
-                    UserSession.is_active == True,
+                    UserSession.revoked_at.is_(None),
                     UserSession.expires_at > datetime.now(timezone.utc),
                 )
             )
@@ -321,7 +294,7 @@ class SessionService:
 
     async def cleanup_expired_sessions(self) -> int:
         """
-        Mark expired sessions as inactive.
+        Mark expired sessions as revoked.
 
         Should be run periodically via scheduler.
 
@@ -332,7 +305,7 @@ class SessionService:
             select(UserSession)
             .where(
                 and_(
-                    UserSession.is_active == True,
+                    UserSession.revoked_at.is_(None),
                     UserSession.expires_at <= datetime.now(timezone.utc),
                 )
             )
@@ -340,9 +313,7 @@ class SessionService:
         expired = result.scalars().all()
 
         for session in expired:
-            session.is_active = False
-            session.revoked_at = datetime.now(timezone.utc)
-            session.revoke_reason = "expired"
+            session.revoke("expired")
 
         await self.db.flush()
         return len(expired)
@@ -368,8 +339,8 @@ class SessionService:
         """
         return {
             "id": session.id,
-            "device_info": session.device_info or "Unknown device",
-            "is_active": session.is_active,
+            "device_type": session.device_type or "Unknown device",
+            "is_active": session.is_active,  # Uses the property
             "is_current": session.id == current_session_id if current_session_id else False,
             "created_at": session.created_at.isoformat(),
             "last_activity_at": session.last_activity_at.isoformat(),
