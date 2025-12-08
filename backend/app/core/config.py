@@ -201,6 +201,13 @@ class Settings(BaseSettings):
     # Template directory
     MARKETING_TEMPLATE_DIR: str = "app/templates/marketing"
 
+    # ===== DATA ACQUISITION PIPELINE v1.6.0 =====
+    # Pipeline Scheduler (automated data enrichment)
+    PIPELINE_SCHEDULER_ENABLED: bool = True  # Enable/disable all pipeline jobs
+    PIPELINE_COMIC_ENRICHMENT_INTERVAL_MINUTES: int = 30
+    PIPELINE_FUNKO_PRICE_CHECK_INTERVAL_MINUTES: int = 60
+    PIPELINE_DLQ_RETRY_INTERVAL_MINUTES: int = 15
+
     @model_validator(mode="after")
     def validate_production_config(self):
         """Runtime validation to catch insecure production configurations."""

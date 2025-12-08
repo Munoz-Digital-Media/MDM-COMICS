@@ -53,6 +53,16 @@ except ImportError as e:
     logger.warning(f"Could not import data_health routes: {e}")
     data_health = None
     DATA_HEALTH_ROUTES_AVAILABLE = False
+
+# Pipeline Scheduler v1.6.0 - automated data acquisition jobs
+try:
+    from app.jobs.pipeline_scheduler import pipeline_scheduler
+    PIPELINE_SCHEDULER_AVAILABLE = True
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Could not import pipeline_scheduler: {e}")
+    pipeline_scheduler = None
+    PIPELINE_SCHEDULER_AVAILABLE = False
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -840,6 +850,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Stock cleanup scheduler DISABLED via config")
 
+    # v1.6.0: Start pipeline scheduler for automated data acquisition
+    if PIPELINE_SCHEDULER_AVAILABLE and settings.PIPELINE_SCHEDULER_ENABLED:
+        await pipeline_scheduler.start()
+        logger.info("Pipeline scheduler ENABLED - jobs will run automatically")
+    else:
+        logger.info("Pipeline scheduler DISABLED via config or import failed")
+
     yield
 
     # Cleanup on shutdown
@@ -849,6 +866,11 @@ async def lifespan(app: FastAPI):
             await _stock_cleanup_task
         except asyncio.CancelledError:
             logger.info("Stock cleanup scheduler cancelled")
+
+    # v1.6.0: Stop pipeline scheduler
+    if PIPELINE_SCHEDULER_AVAILABLE and pipeline_scheduler:
+        await pipeline_scheduler.stop()
+        logger.info("Pipeline scheduler stopped")
 
     # P2-11: Close HTTP clients to prevent connection leaks
     await metron_service.close()

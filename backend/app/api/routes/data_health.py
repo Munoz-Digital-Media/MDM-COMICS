@@ -579,3 +579,24 @@ async def run_adapter_health_checks(
         "healthy_count": sum(1 for v in results.values() if v),
         "unhealthy_count": sum(1 for v in results.values() if not v),
     }
+
+
+# ==============================================================================
+# Pipeline Job Control
+# ==============================================================================
+
+@router.post("/jobs/{job_name}/run")
+async def run_job_manually(
+    job_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Manually trigger a pipeline job."""
+    try:
+        from app.jobs.pipeline_scheduler import pipeline_scheduler
+        await pipeline_scheduler.run_job_now(job_name)
+        return {"success": True, "message": f"Job '{job_name}' triggered"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Job failed: {str(e)}")
