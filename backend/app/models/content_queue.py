@@ -3,11 +3,23 @@ Content Queue Model
 
 v1.5.0: Outreach System - Content generation and approval workflow
 """
+import enum
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, Index
 from sqlalchemy.sql import func
 
 from app.core.database import Base
 from app.core.utils import utcnow
+
+
+class ContentStatus(str, enum.Enum):
+    """Content queue status values."""
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SCHEDULED = "scheduled"
+    POSTING = "posting"
+    POSTED = "posted"
+    FAILED = "failed"
 
 
 class ContentQueueItem(Base):
