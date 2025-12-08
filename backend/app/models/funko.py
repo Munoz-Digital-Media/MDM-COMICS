@@ -54,6 +54,9 @@ class Funko(Base):
     price_cib = Column(Numeric(12, 2), nullable=True)    # Complete in box
     price_new = Column(Numeric(12, 2), nullable=True)    # Sealed/new
 
+    # v1.7.0: Sales volume for demand correlation (AI/ML feature)
+    sales_volume = Column(Integer, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
