@@ -1,5 +1,5 @@
 """
-Pipeline Job Scheduler v1.0.0
+Pipeline Job Scheduler v1.7.0
 
 Automated data acquisition jobs that ACTUALLY RUN.
 
@@ -8,14 +8,16 @@ Jobs:
 2. Funko Enrichment - Fetch data from PriceCharting, update prices
 3. DLQ Retry - Retry failed jobs from dead letter queue
 4. Quarantine Cleanup - Auto-resolve old low-priority quarantine items
+5. Daily Price Snapshot - Capture price state for AI/ML training (v1.7.0)
 
 All jobs use checkpoints for crash recovery and log to DLQ on failure.
 """
 import asyncio
 import logging
 import traceback
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timedelta, date
+from decimal import Decimal
+from typing import Optional, List, Dict, Any
 from uuid import uuid4
 
 from sqlalchemy import text, select, update
@@ -575,6 +577,300 @@ async def run_dlq_retry_job():
 
 
 # =============================================================================
+# DAILY PRICE SNAPSHOT JOB (v1.7.0 - AI Intelligence)
+# =============================================================================
+
+async def run_daily_snapshot_job():
+    """
+    Capture daily price snapshots for ALL entities.
+
+    This is the core data collection job for AI/ML model training.
+    Unlike price_changelog (only captures changes), this captures complete state.
+
+    Logic:
+    1. Query all funkos with pricecharting_id
+    2. Query all comic_issues with pricecharting_id
+    3. For each entity: INSERT snapshot with current prices
+    4. Mark price_changed = TRUE if different from yesterday
+    5. Calculate days_since_change from price_changelog
+    6. Flag is_stale if updated_at > 7 days ago
+    """
+    job_name = "daily_snapshot"
+    batch_id = str(uuid4())
+    snapshot_date = date.today()
+
+    logger.info(f"[{job_name}] Starting daily price snapshot (batch: {batch_id}, date: {snapshot_date})")
+
+    async with AsyncSessionLocal() as db:
+        checkpoint = await get_or_create_checkpoint(db, job_name, "snapshot")
+
+        if checkpoint.get("is_running"):
+            logger.warning(f"[{job_name}] Job already running, skipping")
+            return
+
+        await update_checkpoint(db, job_name, is_running=True, batch_id=batch_id)
+
+        stats = {"funkos": 0, "comics": 0, "changed": 0, "errors": 0}
+
+        try:
+            # ============================================================
+            # PHASE 1: Snapshot all Funkos with pricecharting_id
+            # ============================================================
+            logger.info(f"[{job_name}] Phase 1: Snapshotting Funkos...")
+
+            funko_result = await db.execute(text("""
+                SELECT
+                    f.id,
+                    f.pricecharting_id,
+                    f.price_loose,
+                    f.price_cib,
+                    f.price_new,
+                    f.sales_volume,
+                    f.updated_at,
+                    EXTRACT(EPOCH FROM (NOW() - f.updated_at)) / 86400 as days_stale
+                FROM funkos f
+                WHERE f.pricecharting_id IS NOT NULL
+            """))
+
+            funkos = funko_result.fetchall()
+            logger.info(f"[{job_name}] Found {len(funkos)} Funkos to snapshot")
+
+            for funko in funkos:
+                try:
+                    funko_id = funko.id
+                    pricecharting_id = funko.pricecharting_id
+                    is_stale = (funko.days_stale or 0) > 7 if funko.days_stale else False
+
+                    # Check if price changed from yesterday
+                    yesterday_result = await db.execute(text("""
+                        SELECT price_loose, price_cib, price_new
+                        FROM price_snapshots
+                        WHERE entity_type = 'funko'
+                        AND entity_id = :id
+                        AND snapshot_date = :yesterday
+                    """), {"id": funko_id, "yesterday": snapshot_date - timedelta(days=1)})
+                    yesterday = yesterday_result.fetchone()
+
+                    price_changed = False
+                    if yesterday:
+                        # Compare prices (handle None values)
+                        def prices_differ(a, b):
+                            if a is None and b is None:
+                                return False
+                            if a is None or b is None:
+                                return True
+                            return abs(float(a) - float(b)) > 0.01
+
+                        price_changed = (
+                            prices_differ(funko.price_loose, yesterday.price_loose) or
+                            prices_differ(funko.price_cib, yesterday.price_cib) or
+                            prices_differ(funko.price_new, yesterday.price_new)
+                        )
+
+                    # Calculate days since last change from changelog
+                    days_result = await db.execute(text("""
+                        SELECT EXTRACT(DAY FROM NOW() - MAX(changed_at))::INTEGER as days
+                        FROM price_changelog
+                        WHERE entity_type = 'funko' AND entity_id = :id
+                    """), {"id": funko_id})
+                    days_row = days_result.fetchone()
+                    days_since_change = int(days_row.days) if days_row and days_row.days else None
+
+                    # Insert snapshot (ON CONFLICT for idempotency)
+                    await db.execute(text("""
+                        INSERT INTO price_snapshots (
+                            snapshot_date, entity_type, entity_id, pricecharting_id,
+                            price_loose, price_cib, price_new,
+                            sales_volume, price_changed, days_since_change,
+                            data_source, is_stale, created_at
+                        ) VALUES (
+                            :date, 'funko', :id, :pc_id,
+                            :loose, :cib, :new,
+                            :volume, :changed, :days,
+                            'pricecharting', :stale, NOW()
+                        )
+                        ON CONFLICT (entity_type, entity_id, snapshot_date)
+                        DO UPDATE SET
+                            price_loose = EXCLUDED.price_loose,
+                            price_cib = EXCLUDED.price_cib,
+                            price_new = EXCLUDED.price_new,
+                            sales_volume = EXCLUDED.sales_volume,
+                            price_changed = EXCLUDED.price_changed,
+                            days_since_change = EXCLUDED.days_since_change,
+                            is_stale = EXCLUDED.is_stale
+                    """), {
+                        "date": snapshot_date,
+                        "id": funko_id,
+                        "pc_id": pricecharting_id,
+                        "loose": float(funko.price_loose) if funko.price_loose else None,
+                        "cib": float(funko.price_cib) if funko.price_cib else None,
+                        "new": float(funko.price_new) if funko.price_new else None,
+                        "volume": funko.sales_volume,
+                        "changed": price_changed,
+                        "days": days_since_change,
+                        "stale": is_stale,
+                    })
+
+                    stats["funkos"] += 1
+                    if price_changed:
+                        stats["changed"] += 1
+
+                except Exception as e:
+                    logger.error(f"[{job_name}] Error snapshotting Funko {funko.id}: {e}")
+                    stats["errors"] += 1
+
+            await db.commit()
+            logger.info(f"[{job_name}] Phase 1 complete: {stats['funkos']} Funkos snapshotted")
+
+            # ============================================================
+            # PHASE 2: Snapshot all Comics with pricecharting_id
+            # ============================================================
+            logger.info(f"[{job_name}] Phase 2: Snapshotting Comics...")
+
+            comic_result = await db.execute(text("""
+                SELECT
+                    c.id,
+                    c.pricecharting_id,
+                    c.price_loose,
+                    c.price_cib,
+                    c.price_new,
+                    c.price_graded,
+                    c.price_bgs_10,
+                    c.price_cgc_98,
+                    c.price_cgc_96,
+                    c.sales_volume,
+                    c.updated_at,
+                    EXTRACT(EPOCH FROM (NOW() - c.updated_at)) / 86400 as days_stale
+                FROM comic_issues c
+                WHERE c.pricecharting_id IS NOT NULL
+            """))
+
+            comics = comic_result.fetchall()
+            logger.info(f"[{job_name}] Found {len(comics)} Comics to snapshot")
+
+            for comic in comics:
+                try:
+                    comic_id = comic.id
+                    pricecharting_id = comic.pricecharting_id
+                    is_stale = (comic.days_stale or 0) > 7 if comic.days_stale else False
+
+                    # Check if price changed from yesterday
+                    yesterday_result = await db.execute(text("""
+                        SELECT price_loose, price_cib, price_new
+                        FROM price_snapshots
+                        WHERE entity_type = 'comic'
+                        AND entity_id = :id
+                        AND snapshot_date = :yesterday
+                    """), {"id": comic_id, "yesterday": snapshot_date - timedelta(days=1)})
+                    yesterday = yesterday_result.fetchone()
+
+                    price_changed = False
+                    if yesterday:
+                        def prices_differ(a, b):
+                            if a is None and b is None:
+                                return False
+                            if a is None or b is None:
+                                return True
+                            return abs(float(a) - float(b)) > 0.01
+
+                        price_changed = (
+                            prices_differ(comic.price_loose, yesterday.price_loose) or
+                            prices_differ(comic.price_cib, yesterday.price_cib) or
+                            prices_differ(comic.price_new, yesterday.price_new)
+                        )
+
+                    # Calculate days since last change
+                    days_result = await db.execute(text("""
+                        SELECT EXTRACT(DAY FROM NOW() - MAX(changed_at))::INTEGER as days
+                        FROM price_changelog
+                        WHERE entity_type = 'comic' AND entity_id = :id
+                    """), {"id": comic_id})
+                    days_row = days_result.fetchone()
+                    days_since_change = int(days_row.days) if days_row and days_row.days else None
+
+                    # Insert snapshot
+                    await db.execute(text("""
+                        INSERT INTO price_snapshots (
+                            snapshot_date, entity_type, entity_id, pricecharting_id,
+                            price_loose, price_cib, price_new,
+                            price_graded, price_bgs_10, price_cgc_98, price_cgc_96,
+                            sales_volume, price_changed, days_since_change,
+                            data_source, is_stale, created_at
+                        ) VALUES (
+                            :date, 'comic', :id, :pc_id,
+                            :loose, :cib, :new,
+                            :graded, :bgs10, :cgc98, :cgc96,
+                            :volume, :changed, :days,
+                            'pricecharting', :stale, NOW()
+                        )
+                        ON CONFLICT (entity_type, entity_id, snapshot_date)
+                        DO UPDATE SET
+                            price_loose = EXCLUDED.price_loose,
+                            price_cib = EXCLUDED.price_cib,
+                            price_new = EXCLUDED.price_new,
+                            price_graded = EXCLUDED.price_graded,
+                            price_bgs_10 = EXCLUDED.price_bgs_10,
+                            price_cgc_98 = EXCLUDED.price_cgc_98,
+                            price_cgc_96 = EXCLUDED.price_cgc_96,
+                            sales_volume = EXCLUDED.sales_volume,
+                            price_changed = EXCLUDED.price_changed,
+                            days_since_change = EXCLUDED.days_since_change,
+                            is_stale = EXCLUDED.is_stale
+                    """), {
+                        "date": snapshot_date,
+                        "id": comic_id,
+                        "pc_id": pricecharting_id,
+                        "loose": float(comic.price_loose) if comic.price_loose else None,
+                        "cib": float(comic.price_cib) if comic.price_cib else None,
+                        "new": float(comic.price_new) if comic.price_new else None,
+                        "graded": float(comic.price_graded) if comic.price_graded else None,
+                        "bgs10": float(comic.price_bgs_10) if comic.price_bgs_10 else None,
+                        "cgc98": float(comic.price_cgc_98) if comic.price_cgc_98 else None,
+                        "cgc96": float(comic.price_cgc_96) if comic.price_cgc_96 else None,
+                        "volume": comic.sales_volume if hasattr(comic, 'sales_volume') else None,
+                        "changed": price_changed,
+                        "days": days_since_change,
+                        "stale": is_stale,
+                    })
+
+                    stats["comics"] += 1
+                    if price_changed:
+                        stats["changed"] += 1
+
+                except Exception as e:
+                    logger.error(f"[{job_name}] Error snapshotting Comic {comic.id}: {e}")
+                    stats["errors"] += 1
+
+            await db.commit()
+            logger.info(f"[{job_name}] Phase 2 complete: {stats['comics']} Comics snapshotted")
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await add_to_dlq(
+                db, job_name, str(e),
+                error_type=type(e).__name__,
+                error_trace=traceback.format_exc(),
+                batch_id=batch_id
+            )
+
+        finally:
+            total = stats["funkos"] + stats["comics"]
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=total,
+                updated_delta=stats["changed"],
+                errors_delta=stats["errors"]
+            )
+
+        logger.info(
+            f"[{job_name}] Complete: {stats['funkos']} Funkos + {stats['comics']} Comics = "
+            f"{stats['funkos'] + stats['comics']} snapshots, {stats['changed']} changed, {stats['errors']} errors"
+        )
+
+
+# =============================================================================
 # MAIN SCHEDULER
 # =============================================================================
 
@@ -605,12 +901,15 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("comic_enrichment", run_comic_enrichment_job, interval_minutes=30)),
             asyncio.create_task(self._run_job_loop("funko_price_check", run_funko_price_check_job, interval_minutes=60)),
             asyncio.create_task(self._run_job_loop("dlq_retry", run_dlq_retry_job, interval_minutes=15)),
+            # v1.7.0: Daily price snapshot for AI/ML training (runs once per day at startup, then every 24h)
+            asyncio.create_task(self._run_job_loop("daily_snapshot", run_daily_snapshot_job, interval_minutes=1440)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
         print("[SCHEDULER]   - comic_enrichment: every 30 minutes")
         print("[SCHEDULER]   - funko_price_check: every 60 minutes")
         print("[SCHEDULER]   - dlq_retry: every 15 minutes")
+        print("[SCHEDULER]   - daily_snapshot: every 24 hours (AI/ML data)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -649,6 +948,7 @@ class PipelineScheduler:
             "comic_enrichment": run_comic_enrichment_job,
             "funko_price_check": run_funko_price_check_job,
             "dlq_retry": run_dlq_retry_job,
+            "daily_snapshot": run_daily_snapshot_job,  # v1.7.0
         }
 
         if job_name not in jobs:

@@ -54,6 +54,16 @@ except ImportError as e:
     data_health = None
     DATA_HEALTH_ROUTES_AVAILABLE = False
 
+# Price Intelligence v1.7.0 - AI/ML price analysis endpoints
+try:
+    from app.api.routes import price_intelligence
+    PRICE_INTELLIGENCE_ROUTES_AVAILABLE = True
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Could not import price_intelligence routes: {e}")
+    price_intelligence = None
+    PRICE_INTELLIGENCE_ROUTES_AVAILABLE = False
+
 # Pipeline Scheduler v1.6.0 - automated data acquisition jobs
 try:
     from app.jobs.pipeline_scheduler import pipeline_scheduler
@@ -417,6 +427,12 @@ if DATA_HEALTH_ROUTES_AVAILABLE:
     app.include_router(data_health.router, prefix="/api/admin", tags=["Admin - Data Health"])
 else:
     logger.warning("Data health routes disabled - import failed")
+
+# Price Intelligence v1.7.0
+if PRICE_INTELLIGENCE_ROUTES_AVAILABLE:
+    app.include_router(price_intelligence.router, prefix="/api/prices", tags=["Price Intelligence"])
+else:
+    logger.warning("Price intelligence routes disabled - import failed")
 
 
 @app.get("/", tags=["Health"])
