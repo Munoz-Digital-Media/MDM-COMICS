@@ -362,6 +362,192 @@ async def migrate_outreach_tables():
         pass
 
 
+async def migrate_user_management_tables():
+    """
+    User Management System v2.0.0: Create user management tables on startup.
+    This is an idempotent migration - safe to run on every startup.
+
+    Creates:
+    - users table columns (email_verified_at, lockout fields, etc.)
+    - roles table
+    - user_roles junction table
+    - user_sessions table
+    - user_audit_log table
+    - dsar_requests table
+    - email_verifications table
+    - password_resets table
+    """
+    try:
+        async with engine.begin() as conn:
+            # 1. Add missing columns to users table
+            logger.info("User Management: Adding missing columns to users table...")
+            user_columns = [
+                ("email_verified_at", "TIMESTAMP WITH TIME ZONE"),
+                ("failed_login_attempts", "INTEGER DEFAULT 0"),
+                ("locked_until", "TIMESTAMP WITH TIME ZONE"),
+                ("lockout_count", "INTEGER DEFAULT 0"),
+                ("password_changed_at", "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
+                ("last_login_at", "TIMESTAMP WITH TIME ZONE"),
+                ("last_login_ip_hash", "VARCHAR(64)"),
+                ("deleted_at", "TIMESTAMP WITH TIME ZONE"),
+            ]
+            for col_name, col_type in user_columns:
+                try:
+                    await conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                except Exception:
+                    pass  # Column may already exist
+
+            # 2. Create roles table
+            logger.info("User Management: Creating roles table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS roles (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(50) UNIQUE NOT NULL,
+                    description TEXT,
+                    permissions JSONB NOT NULL DEFAULT '[]',
+                    is_system BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_roles_name ON roles(name)"))
+
+            # Seed system roles
+            system_roles = [
+                ("customer", "Default customer role", '["orders:read", "orders:create", "profile:read", "profile:update"]'),
+                ("admin", "Full administrative access", '["*"]'),
+                ("support", "Customer support role", '["users:read", "orders:read", "orders:update"]'),
+                ("inventory", "Inventory management", '["products:*", "inventory:*"]'),
+            ]
+            for name, desc, perms in system_roles:
+                try:
+                    await conn.execute(text("""
+                        INSERT INTO roles (name, description, permissions, is_system)
+                        VALUES (:name, :desc, :perms::jsonb, TRUE)
+                        ON CONFLICT (name) DO NOTHING
+                    """), {"name": name, "desc": desc, "perms": perms})
+                except Exception:
+                    pass
+
+            # 3. Create user_roles junction table
+            logger.info("User Management: Creating user_roles table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_roles (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
+                    assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    expires_at TIMESTAMP WITH TIME ZONE,
+                    UNIQUE(user_id, role_id)
+                )
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_roles_user_id ON user_roles(user_id)"))
+
+            # 4. Create user_sessions table
+            logger.info("User Management: Creating user_sessions table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    token_jti VARCHAR(36) UNIQUE NOT NULL,
+                    refresh_jti VARCHAR(36),
+                    device_fingerprint_hash VARCHAR(64),
+                    user_agent_hash VARCHAR(64),
+                    ip_address_hash VARCHAR(64),
+                    device_type VARCHAR(50),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    revoked_at TIMESTAMP WITH TIME ZONE,
+                    revoke_reason VARCHAR(50)
+                )
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_token_jti ON user_sessions(token_jti)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_user_id ON user_sessions(user_id)"))
+
+            # 5. Create user_audit_log table
+            logger.info("User Management: Creating user_audit_log table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_audit_log (
+                    id BIGSERIAL PRIMARY KEY,
+                    ts TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+                    actor_type VARCHAR(20) NOT NULL,
+                    actor_id_hash VARCHAR(64) NOT NULL,
+                    action VARCHAR(100) NOT NULL,
+                    resource_type VARCHAR(50) NOT NULL,
+                    resource_id_hash VARCHAR(64),
+                    before_hash VARCHAR(128),
+                    after_hash VARCHAR(128),
+                    outcome VARCHAR(20) NOT NULL,
+                    ip_hash VARCHAR(64),
+                    event_metadata JSONB DEFAULT '{}',
+                    prev_hash VARCHAR(128),
+                    entry_hash VARCHAR(128) NOT NULL
+                )
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_ts ON user_audit_log(ts)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_actor ON user_audit_log(actor_id_hash, ts)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_resource ON user_audit_log(resource_type, resource_id_hash)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_action ON user_audit_log(action)"))
+
+            # 6. Create dsar_requests table
+            logger.info("User Management: Creating dsar_requests table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS dsar_requests (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    request_type VARCHAR(20) NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    completed_at TIMESTAMP WITH TIME ZONE,
+                    export_url_hash VARCHAR(128),
+                    processed_by INTEGER REFERENCES users(id),
+                    notes TEXT,
+                    ledger_tx_id VARCHAR(128)
+                )
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dsar_user ON dsar_requests(user_id)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dsar_status ON dsar_requests(status)"))
+
+            # 7. Create email_verifications table
+            logger.info("User Management: Creating email_verifications table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS email_verifications (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    token_hash VARCHAR(64) UNIQUE NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    verified_at TIMESTAMP WITH TIME ZONE
+                )
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_verifications_user ON email_verifications(user_id)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_verifications_token ON email_verifications(token_hash)"))
+
+            # 8. Create password_resets table
+            logger.info("User Management: Creating password_resets table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS password_resets (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    token_hash VARCHAR(64) UNIQUE NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    used_at TIMESTAMP WITH TIME ZONE
+                )
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_resets_user ON password_resets(user_id)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_resets_token ON password_resets(token_hash)"))
+
+        logger.info("User Management tables migration complete")
+    except Exception as e:
+        logger.error(f"User Management tables migration failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -380,6 +566,8 @@ async def lifespan(app: FastAPI):
     await migrate_shipping_tables()
     # Outreach System v1.5.0: Create outreach tables
     await migrate_outreach_tables()
+    # User Management System v2.0.0: Create user management tables
+    await migrate_user_management_tables()
     # Import Funkos if database is empty
     await import_funkos_if_needed()
 
