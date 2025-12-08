@@ -130,8 +130,9 @@ async def update_checkpoint(
         else:
             updates.append("last_run_completed = NOW()")
     if batch_id is not None:
-        updates.append("current_batch_id = :batch_id::uuid")
-        params["batch_id"] = batch_id
+        # Use raw UUID value with SQLAlchemy text - asyncpg handles UUID casting
+        updates.append("current_batch_id = :batch_id")
+        params["batch_id"] = batch_id  # Pass as string, asyncpg will handle
     if last_error is not None:
         updates.append("last_error = :error")
         params["error"] = last_error[:1000]
@@ -160,20 +161,19 @@ async def add_to_dlq(
         text("""
             INSERT INTO dead_letter_queue
             (job_type, batch_id, entity_type, entity_id, external_id,
-             error_message, error_type, error_trace, request_data, created_at)
-            VALUES (:job_type, :batch_id::uuid, :entity_type, :entity_id, :external_id,
-                    :error_message, :error_type, :error_trace, :request_data::jsonb, NOW())
+             error_message, error_type, error_trace, created_at, status)
+            VALUES (:job_type, :batch_id, :entity_type, :entity_id, :external_id,
+                    :error_message, :error_type, :error_trace, NOW(), 'PENDING')
         """),
         {
             "job_type": job_type,
-            "batch_id": batch_id,
+            "batch_id": batch_id,  # asyncpg handles UUID string
             "entity_type": entity_type,
             "entity_id": entity_id,
             "external_id": external_id,
             "error_message": error_message[:2000],
             "error_type": error_type,
             "error_trace": error_trace[:5000] if error_trace else None,
-            "request_data": str(request_data) if request_data else None,
         }
     )
     await db.commit()
@@ -478,11 +478,20 @@ async def run_dlq_retry_job():
     logger.info(f"[{job_name}] Starting DLQ retry job")
 
     async with AsyncSessionLocal() as db:
-        # Find entries ready for retry
+        # First check if table exists and has data
+        try:
+            count_result = await db.execute(text("SELECT COUNT(*) FROM dead_letter_queue"))
+            total = count_result.scalar() or 0
+            logger.info(f"[{job_name}] DLQ has {total} total entries")
+        except Exception as e:
+            logger.warning(f"[{job_name}] DLQ table not ready: {e}")
+            return
+
+        # Find entries ready for retry - use enum member name (PENDING) not value
         result = await db.execute(text("""
             SELECT id, job_type, entity_type, entity_id, external_id, retry_count, max_retries
             FROM dead_letter_queue
-            WHERE status = 'pending'
+            WHERE status = 'PENDING'
             AND retry_count < max_retries
             AND (next_retry_at IS NULL OR next_retry_at <= NOW())
             ORDER BY created_at
@@ -505,10 +514,10 @@ async def run_dlq_retry_job():
             retry_count = entry.retry_count
 
             try:
-                # Mark as retrying
+                # Mark as retrying - use enum member name (RETRYING)
                 await db.execute(text("""
                     UPDATE dead_letter_queue
-                    SET status = 'retrying', last_retry_at = NOW(), retry_count = retry_count + 1
+                    SET status = 'RETRYING', last_retry_at = NOW(), retry_count = retry_count + 1
                     WHERE id = :id
                 """), {"id": entry_id})
                 await db.commit()
@@ -528,18 +537,18 @@ async def run_dlq_retry_job():
                 if success:
                     await db.execute(text("""
                         UPDATE dead_letter_queue
-                        SET status = 'resolved', resolved_at = NOW()
+                        SET status = 'RESOLVED', resolved_at = NOW()
                         WHERE id = :id
                     """), {"id": entry_id})
                     stats["resolved"] += 1
                 else:
                     # Calculate next retry time with exponential backoff
                     backoff_minutes = 5 * (2 ** retry_count)  # 5, 10, 20, 40...
-                    await db.execute(text("""
+                    await db.execute(text(f"""
                         UPDATE dead_letter_queue
-                        SET status = 'pending', next_retry_at = NOW() + INTERVAL ':mins minutes'
+                        SET status = 'PENDING', next_retry_at = NOW() + INTERVAL '{backoff_minutes} minutes'
                         WHERE id = :id
-                    """.replace(":mins", str(backoff_minutes))), {"id": entry_id})
+                    """), {"id": entry_id})
                     stats["failed"] += 1
 
                 stats["retried"] += 1
@@ -549,7 +558,7 @@ async def run_dlq_retry_job():
                 logger.error(f"[{job_name}] Error retrying DLQ entry {entry_id}: {e}")
                 await db.execute(text("""
                     UPDATE dead_letter_queue
-                    SET status = 'pending',
+                    SET status = 'PENDING',
                         next_retry_at = NOW() + INTERVAL '30 minutes',
                         error_message = error_message || E'\nRetry error: ' || :error
                     WHERE id = :id
