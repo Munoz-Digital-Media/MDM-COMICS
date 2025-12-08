@@ -637,7 +637,6 @@ async def revoke_all_user_sessions(
 
     count = await session_service.revoke_all_sessions(
         user_id=user_id,
-        revoked_by_id=current_user.id,
         reason="admin_revoked",
     )
 

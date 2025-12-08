@@ -743,7 +743,6 @@ async def revoke_session(
 
     success = await session_service.revoke_session(
         session_id=session_id,
-        revoked_by_id=current_user.id,
         reason="user_revoked",
     )
 
