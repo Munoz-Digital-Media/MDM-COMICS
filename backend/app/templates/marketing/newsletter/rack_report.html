@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Rack Factor - Week {{ week_number }}, {{ year }}</title>
+    <style>
+        /* Reset */
+        body, table, td, p, a, li {
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }
+        table, td {
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+        img {
+            -ms-interpolation-mode: bicubic;
+            border: 0;
+            height: auto;
+            line-height: 100%;
+            outline: none;
+            text-decoration: none;
+        }
+
+        /* Base styles */
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            background-color: #f4f4f4;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 30px 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            color: #ffffff;
+            margin: 0;
+            font-size: 32px;
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+
+        .header .subtitle {
+            color: #a0a0a0;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+
+        .section {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #1a1a2e;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e74c3c;
+            display: inline-block;
+        }
+
+        .section-title-gold {
+            font-size: 18px;
+            font-weight: bold;
+            color: #1a1a2e;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f1c40f;
+            display: inline-block;
+        }
+
+        .portfolio-box {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .portfolio-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #1a1a2e;
+        }
+
+        .portfolio-change {
+            font-size: 16px;
+            margin-top: 10px;
+        }
+
+        .portfolio-change.up { color: #27ae60; }
+        .portfolio-change.down { color: #e74c3c; }
+
+        .category-row {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .category-item {
+            text-align: center;
+            padding: 10px;
+            min-width: 150px;
+        }
+
+        .category-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+
+        .category-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #1a1a2e;
+        }
+
+        /* Flagrant Winner - Special highlight */
+        .flagrant-box {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%);
+            border: 3px solid #f39c12;
+            border-radius: 12px;
+            padding: 25px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .flagrant-badge {
+            background: #e74c3c;
+            color: #fff;
+            padding: 8px 20px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 15px;
+            letter-spacing: 1px;
+        }
+
+        .flagrant-name {
+            font-size: 22px;
+            font-weight: bold;
+            color: #1a1a2e;
+            margin: 10px 0;
+        }
+
+        .flagrant-change {
+            font-size: 36px;
+            font-weight: bold;
+            color: #27ae60;
+        }
+
+        .flagrant-prices {
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+        }
+
+        .mover-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .mover-item:last-child {
+            border-bottom: none;
+        }
+
+        .mover-rank {
+            font-size: 20px;
+            font-weight: bold;
+            color: #ddd;
+            width: 30px;
+        }
+
+        .mover-image {
+            width: 50px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 4px;
+            margin-right: 12px;
+        }
+
+        .mover-info {
+            flex: 1;
+        }
+
+        .mover-name {
+            font-weight: bold;
+            color: #1a1a2e;
+            font-size: 14px;
+        }
+
+        .mover-prices {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .mover-change {
+            font-weight: bold;
+            font-size: 14px;
+            text-align: right;
+            min-width: 60px;
+        }
+
+        .mover-change.up { color: #27ae60; }
+        .mover-change.down { color: #e74c3c; }
+
+        /* Rack Reliables */
+        .reliable-item {
+            display: inline-block;
+            text-align: center;
+            padding: 10px;
+            margin: 5px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            min-width: 100px;
+        }
+
+        .reliable-name {
+            font-size: 11px;
+            color: #1a1a2e;
+            max-width: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .reliable-value {
+            font-weight: bold;
+            color: #27ae60;
+            font-size: 14px;
+        }
+
+        /* Forecast Section */
+        .forecast-item {
+            background: linear-gradient(135deg, #e8f4fd 0%, #d1e8fa 100%);
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .forecast-prediction {
+            font-weight: bold;
+            color: #1a1a2e;
+        }
+
+        .forecast-confidence {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .arrival-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .arrival-item {
+            text-align: center;
+            padding: 10px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+        }
+
+        .arrival-image {
+            width: 100%;
+            max-width: 120px;
+            height: 120px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+
+        .arrival-name {
+            font-size: 12px;
+            margin-top: 8px;
+            color: #1a1a2e;
+        }
+
+        .arrival-price {
+            font-weight: bold;
+            color: #e74c3c;
+        }
+
+        .editors-choice {
+            background: linear-gradient(135deg, #fff9e6 0%, #fff5cc 100%);
+            border: 2px solid #f1c40f;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .editors-choice-badge {
+            background: #f1c40f;
+            color: #1a1a2e;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 15px;
+        }
+
+        .trend-item {
+            padding: 10px 0;
+            border-left: 3px solid #3498db;
+            padding-left: 15px;
+            margin-bottom: 10px;
+        }
+
+        .footer {
+            background: #1a1a2e;
+            padding: 30px 20px;
+            text-align: center;
+        }
+
+        .footer a {
+            color: #fff;
+            text-decoration: none;
+        }
+
+        .footer .social-links {
+            margin: 20px 0;
+        }
+
+        .footer .social-links a {
+            margin: 0 10px;
+            display: inline-block;
+        }
+
+        .unsubscribe {
+            font-size: 12px;
+            color: #666;
+            margin-top: 20px;
+        }
+
+        .unsubscribe a {
+            color: #999;
+        }
+
+        /* Mobile responsive */
+        @media only screen and (max-width: 600px) {
+            .container {
+                width: 100% !important;
+            }
+            .category-row {
+                flex-direction: column;
+            }
+            .arrival-grid {
+                grid-template-columns: 1fr;
+            }
+            .portfolio-value {
+                font-size: 28px;
+            }
+            .flagrant-change {
+                font-size: 28px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f4f4f4;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table class="container" role="presentation" width="600" cellspacing="0" cellpadding="0" border="0">
+
+                    <!-- Header -->
+                    <tr>
+                        <td class="header">
+                            {% if logo_url %}
+                            <img src="{{ logo_url }}" alt="The Rack Factor" style="max-width: 200px; margin-bottom: 15px;">
+                            {% endif %}
+                            <h1>THE RACK FACTOR</h1>
+                            <div class="subtitle">The Rack Factor Recap | Week {{ week_number }}, {{ year }}</div>
+                        </td>
+                    </tr>
+
+                    <!-- Portfolio Snapshot -->
+                    <tr>
+                        <td class="section">
+                            <div class="section-title">Collection Snapshot</div>
+                            <div class="portfolio-box">
+                                <div class="portfolio-value">${{ portfolio.total_value|default('0')|round(2)|format_currency }}</div>
+                                {% if portfolio.weekly_change %}
+                                <div class="portfolio-change {{ 'up' if portfolio.weekly_change.change_percent > 0 else 'down' }}">
+                                    {{ '+' if portfolio.weekly_change.change_percent > 0 else '' }}{{ portfolio.weekly_change.change_percent|round(1) }}%
+                                    ({{ '+' if portfolio.weekly_change.change_dollars > 0 else '' }}${{ portfolio.weekly_change.change_dollars|abs|round(2)|format_currency }})
+                                </div>
+                                {% endif %}
+                                <table width="100%" style="margin-top: 20px;">
+                                    <tr>
+                                        <td align="center" style="padding: 10px;">
+                                            <div class="category-label">Comics</div>
+                                            <div class="category-value">${{ portfolio.comics.total_value|round(2)|format_currency }}</div>
+                                            <div style="font-size: 11px; color: #999;">{{ portfolio.comics.priced_count }} items</div>
+                                        </td>
+                                        <td align="center" style="padding: 10px;">
+                                            <div class="category-label">Funkos</div>
+                                            <div class="category-value">${{ portfolio.funkos.total_value|round(2)|format_currency }}</div>
+                                            <div style="font-size: 11px; color: #999;">{{ portfolio.funkos.priced_count }} items</div>
+                                        </td>
+                                        <td align="center" style="padding: 10px;">
+                                            <div class="category-label">Inventory</div>
+                                            <div class="category-value">${{ portfolio.products.total_value|round(2)|format_currency }}</div>
+                                            <div style="font-size: 11px; color: #999;">{{ portfolio.products.item_count }} items</div>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- THE RACK FACTOR FLAGRANT - #1 Top Gainer -->
+                    {% if flagrant_winner %}
+                    <tr>
+                        <td class="section">
+                            <div class="section-title-gold">THE RACK FACTOR FLAGRANT</div>
+                            <div class="flagrant-box">
+                                <div class="flagrant-badge">THIS WEEK'S BIGGEST MOVER</div>
+                                {% if flagrant_winner.image_url %}
+                                <img src="{{ flagrant_winner.image_url }}" alt="{{ flagrant_winner.name }}"
+                                     style="max-width: 150px; max-height: 150px; border-radius: 8px; margin: 15px 0;">
+                                {% endif %}
+                                <div class="flagrant-name">{{ flagrant_winner.name }}</div>
+                                <div class="flagrant-change">+{{ flagrant_winner.change_percent|round(1) }}%</div>
+                                <div class="flagrant-prices">
+                                    ${{ flagrant_winner.price_old|round(2) }} → ${{ flagrant_winner.price_new|round(2) }}
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- RACK FACTOR FAVORITES - Top Gainers -->
+                    {% if comic_favorites or funko_favorites %}
+                    <tr>
+                        <td class="section">
+                            <div class="section-title">RACK FACTOR FAVORITES</div>
+                            <div style="font-size: 13px; color: #666; margin-bottom: 15px;">Top performers making moves this week</div>
+
+                            {% if comic_favorites %}
+                            <div style="margin-bottom: 20px;">
+                                <div style="font-size: 14px; font-weight: bold; color: #27ae60; margin-bottom: 10px;">Comics</div>
+                                {% for mover in comic_favorites[:5] %}
+                                <div class="mover-item">
+                                    <div class="mover-rank">{{ loop.index + 1 }}</div>
+                                    {% if mover.image_url %}
+                                    <img src="{{ mover.image_url }}" alt="{{ mover.name }}" class="mover-image">
+                                    {% endif %}
+                                    <div class="mover-info">
+                                        <div class="mover-name">{{ mover.name }}</div>
+                                        <div class="mover-prices">${{ mover.price_old|round(2) }} → ${{ mover.price_new|round(2) }}</div>
+                                    </div>
+                                    <div class="mover-change up">+{{ mover.change_percent|round(1) }}%</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+
+                            {% if funko_favorites %}
+                            <div>
+                                <div style="font-size: 14px; font-weight: bold; color: #27ae60; margin-bottom: 10px;">Funkos</div>
+                                {% for mover in funko_favorites[:5] %}
+                                <div class="mover-item">
+                                    <div class="mover-rank">{{ loop.index + 1 }}</div>
+                                    {% if mover.image_url %}
+                                    <img src="{{ mover.image_url }}" alt="{{ mover.name }}" class="mover-image">
+                                    {% endif %}
+                                    <div class="mover-info">
+                                        <div class="mover-name">{{ mover.name }}</div>
+                                        <div class="mover-prices">${{ mover.price_old|round(2) }} → ${{ mover.price_new|round(2) }}</div>
+                                    </div>
+                                    <div class="mover-change up">+{{ mover.change_percent|round(1) }}%</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- RACK FACTOR FUNK - Top Losers -->
+                    {% if comic_funk or funko_funk %}
+                    <tr>
+                        <td class="section">
+                            <div class="section-title">RACK FACTOR FUNK</div>
+                            <div style="font-size: 13px; color: #666; margin-bottom: 15px;">These items caught the funk this week - potential buying opportunities?</div>
+
+                            {% if comic_funk %}
+                            <div style="margin-bottom: 20px;">
+                                <div style="font-size: 14px; font-weight: bold; color: #e74c3c; margin-bottom: 10px;">Comics</div>
+                                {% for mover in comic_funk[:5] %}
+                                <div class="mover-item">
+                                    <div class="mover-rank">{{ loop.index }}</div>
+                                    {% if mover.image_url %}
+                                    <img src="{{ mover.image_url }}" alt="{{ mover.name }}" class="mover-image">
+                                    {% endif %}
+                                    <div class="mover-info">
+                                        <div class="mover-name">{{ mover.name }}</div>
+                                        <div class="mover-prices">${{ mover.price_old|round(2) }} → ${{ mover.price_new|round(2) }}</div>
+                                    </div>
+                                    <div class="mover-change down">{{ mover.change_percent|round(1) }}%</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+
+                            {% if funko_funk %}
+                            <div>
+                                <div style="font-size: 14px; font-weight: bold; color: #e74c3c; margin-bottom: 10px;">Funkos</div>
+                                {% for mover in funko_funk[:5] %}
+                                <div class="mover-item">
+                                    <div class="mover-rank">{{ loop.index }}</div>
+                                    {% if mover.image_url %}
+                                    <img src="{{ mover.image_url }}" alt="{{ mover.name }}" class="mover-image">
+                                    {% endif %}
+                                    <div class="mover-info">
+                                        <div class="mover-name">{{ mover.name }}</div>
+                                        <div class="mover-prices">${{ mover.price_old|round(2) }} → ${{ mover.price_new|round(2) }}</div>
+                                    </div>
+                                    <div class="mover-change down">{{ mover.change_percent|round(1) }}%</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- THE RACK RELIABLES - Stable Performers -->
+                    {% if comic_reliables or funko_reliables %}
+                    <tr>
+                        <td class="section">
+                            <div class="section-title">THE RACK RELIABLES</div>
+                            <div style="font-size: 13px; color: #666; margin-bottom: 15px;">Solid performers holding steady value</div>
+
+                            {% if comic_reliables %}
+                            <div style="margin-bottom: 15px;">
+                                <div style="font-size: 12px; color: #27ae60; font-weight: bold; margin-bottom: 8px;">Comics</div>
+                                {% for item in comic_reliables[:5] %}
+                                <div class="reliable-item">
+                                    <div class="reliable-name">{{ item.name|truncate(20) }}</div>
+                                    <div class="reliable-value">${{ item.value|round(2) }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+
+                            {% if funko_reliables %}
+                            <div>
+                                <div style="font-size: 12px; color: #27ae60; font-weight: bold; margin-bottom: 8px;">Funkos</div>
+                                {% for item in funko_reliables[:5] %}
+                                <div class="reliable-item">
+                                    <div class="reliable-name">{{ item.name|truncate(20) }}</div>
+                                    <div class="reliable-value">${{ item.value|round(2) }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- THE RACK FACTOR FORECAST - AI Predictions -->
+                    {% if forecast %}
+                    <tr>
+                        <td class="section">
+                            <div class="section-title-gold">THE RACK FACTOR FORECAST</div>
+                            <div style="font-size: 13px; color: #666; margin-bottom: 15px;">AI-powered picks to watch next week</div>
+
+                            {% for item in forecast[:5] %}
+                            <div class="forecast-item">
+                                <div class="forecast-prediction">
+                                    {{ '📈' if item.prediction == 'bullish' else '📉' }}
+                                    {{ item.name }}
+                                </div>
+                                <div style="font-size: 13px; color: #1a1a2e; margin: 5px 0;">
+                                    Currently ${{ item.current_price|round(2) }} |
+                                    Prediction: <strong>{{ item.prediction|upper }}</strong>
+                                </div>
+                                <div class="forecast-confidence">
+                                    Confidence: {{ item.confidence }}% | {{ item.reason }}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- New Arrivals -->
+                    {% if new_arrivals %}
+                    <tr>
+                        <td class="section">
+                            <div class="section-title">New Arrivals</div>
+                            <table width="100%" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    {% for arrival in new_arrivals[:4] %}
+                                    <td width="50%" align="center" style="padding: 10px; vertical-align: top;">
+                                        <div class="arrival-item">
+                                            {% if arrival.image_url %}
+                                            <img src="{{ arrival.image_url }}" alt="{{ arrival.name }}" class="arrival-image">
+                                            {% endif %}
+                                            <div class="arrival-name">{{ arrival.name|truncate(40) }}</div>
+                                            {% if arrival.price %}
+                                            <div class="arrival-price">${{ arrival.price|round(2) }}</div>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    {% if loop.index == 2 %}
+                                </tr><tr>
+                                    {% endif %}
+                                    {% endfor %}
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- Editor's Choice -->
+                    {% if editors_choice %}
+                    <tr>
+                        <td class="section">
+                            <div class="editors-choice">
+                                <div class="editors-choice-badge">EDITOR'S PICK</div>
+                                {% if editors_choice.image_url %}
+                                <img src="{{ editors_choice.image_url }}" alt="{{ editors_choice.name }}"
+                                     style="max-width: 200px; max-height: 200px; border-radius: 8px; margin-bottom: 15px;">
+                                {% endif %}
+                                <div style="font-size: 18px; font-weight: bold; color: #1a1a2e;">{{ editors_choice.name }}</div>
+                                {% if editors_choice.price %}
+                                <div style="font-size: 24px; font-weight: bold; color: #e74c3c; margin-top: 10px;">
+                                    ${{ editors_choice.price|round(2) }}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- Market Trends -->
+                    {% if market_trends %}
+                    <tr>
+                        <td class="section">
+                            <div class="section-title">Market Trends</div>
+                            {% for trend in market_trends %}
+                            <div class="trend-item">
+                                <div style="font-weight: bold;">{{ trend.trend_type|replace('_', ' ')|title }}</div>
+                                <div style="color: #666; font-size: 14px;">{{ trend.description }}</div>
+                            </div>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- Join The Rack Factor Family -->
+                    <tr>
+                        <td class="section" style="background: #f8f9fa; text-align: center;">
+                            <div style="font-size: 16px; font-weight: bold; color: #1a1a2e; margin-bottom: 10px;">
+                                Welcome to The Rack Factor Family!
+                            </div>
+                            <div style="font-size: 13px; color: #666; margin-bottom: 15px;">
+                                Thanks for being part of our community of collectors and investors.
+                            </div>
+                            <a href="{{ shop_url|default('https://mdmcomics.com') }}"
+                               style="display: inline-block; background: #e74c3c; color: #fff; padding: 12px 30px;
+                                      border-radius: 25px; text-decoration: none; font-weight: bold;">
+                                Shop MDM Comics
+                            </a>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer">
+                            <img src="{{ app_logo_url|default('https://mdmcomics.com/logo.png') }}"
+                                 alt="MDM Comics" style="max-width: 150px; margin-bottom: 20px;">
+                            <div style="color: #fff; margin-bottom: 10px;">
+                                <a href="{{ shop_url|default('https://mdmcomics.com') }}">Shop</a> |
+                                <a href="{{ contact_url|default('https://mdmcomics.com/contact') }}">Contact</a>
+                            </div>
+                            <div class="social-links">
+                                <a href="https://bsky.app/profile/mdmcomics.com">Bluesky</a> |
+                                <a href="https://facebook.com/mdmcomics">Facebook</a>
+                            </div>
+                            <div class="unsubscribe">
+                                <a href="{{ unsubscribe_url }}">Unsubscribe</a> |
+                                <a href="{{ preferences_url }}">Manage Preferences</a>
+                            </div>
+                            <div style="color: #666; font-size: 11px; margin-top: 15px;">
+                                &copy; {{ year }} MDM Comics. All rights reserved.<br>
+                                The Rack Factor - Your Weekly Collectibles Intelligence
+                            </div>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

@@ -294,6 +294,120 @@ export const adminAPI = {
       method: 'POST',
     });
   },
+
+  // ==================== BRAND ASSET MANAGEMENT v1.0.0 ====================
+
+  // --- Assets ---
+  getAssets: async (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.assetType) params.set('asset_type', options.assetType);
+    if (options.includeDeleted) params.set('include_deleted', 'true');
+    params.set('limit', options.limit || 50);
+    params.set('offset', options.offset || 0);
+
+    return fetchAPI('/admin/assets?' + params.toString());
+  },
+
+  getAsset: async (assetId) => {
+    return fetchAPI('/admin/assets/' + assetId);
+  },
+
+  uploadAsset: async (file, name, assetType, settingKey = null) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', name);
+    formData.append('asset_type', assetType);
+    if (settingKey) formData.append('setting_key', settingKey);
+
+    const url = API_BASE + '/admin/assets/upload';
+    const headers = {};
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Upload failed');
+    }
+
+    return response.json();
+  },
+
+  updateAsset: async (assetId, updateData) => {
+    return fetchAPI('/admin/assets/' + assetId, {
+      method: 'PATCH',
+      body: JSON.stringify(updateData),
+    });
+  },
+
+  deleteAsset: async (assetId) => {
+    return fetchAPI('/admin/assets/' + assetId, {
+      method: 'DELETE',
+    });
+  },
+
+  restoreAsset: async (assetId) => {
+    return fetchAPI('/admin/assets/' + assetId + '/restore', {
+      method: 'POST',
+    });
+  },
+
+  getAssetVersion: async (assetId, version) => {
+    return fetchAPI('/admin/assets/' + assetId + '/versions/' + version);
+  },
+
+  // --- Settings ---
+  getSettings: async (category = null) => {
+    const params = new URLSearchParams();
+    if (category) params.set('category', category);
+    return fetchAPI('/admin/settings?' + params.toString());
+  },
+
+  getSetting: async (key) => {
+    return fetchAPI('/admin/settings/' + key);
+  },
+
+  updateSetting: async (key, value, description = null) => {
+    const body = { value };
+    if (description) body.description = description;
+    return fetchAPI('/admin/settings/' + key, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+  },
+
+  createSetting: async (data) => {
+    return fetchAPI('/admin/settings', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteSetting: async (key) => {
+    return fetchAPI('/admin/settings/' + key, {
+      method: 'DELETE',
+    });
+  },
+
+  bulkUpdateSettings: async (settings) => {
+    return fetchAPI('/admin/settings/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ settings }),
+    });
+  },
+
+  // --- Public branding (no auth) ---
+  getPublicBranding: async () => {
+    return fetchAPI('/admin/settings/public/branding');
+  },
 };
 
 export default adminAPI;

@@ -78,6 +78,9 @@ except ImportError as e:
     print(f"Warning: Could not import price_snapshot model: {e}")
     PriceSnapshot = None
 
+# Brand Asset Management v1.0.0
+from app.models.site_settings import SiteSettings, BrandAsset, BrandAssetVersion, DEFAULT_SITE_SETTINGS
+
 # Data Acquisition Pipeline v1.0.0
 try:
     from app.models.pipeline import (
@@ -180,4 +183,9 @@ __all__ = [
     "DataQuarantine",
     "QuarantineReason",
     "FieldProvenance",
+    # Brand Asset Management v1.0.0
+    "SiteSettings",
+    "BrandAsset",
+    "BrandAssetVersion",
+    "DEFAULT_SITE_SETTINGS",
 ]

@@ -186,6 +186,11 @@ class Settings(BaseSettings):
     BLUESKY_HANDLE: str = ""
     BLUESKY_APP_PASSWORD: str = ""
 
+    # Social (Meta - Facebook/Instagram) v1.5.1
+    META_ACCESS_TOKEN: str = ""  # Long-lived page access token
+    META_PAGE_ID: str = ""  # Facebook Page ID
+    META_INSTAGRAM_ACCOUNT_ID: str = ""  # Instagram Business Account ID (Phase 2+)
+
     # AI (OpenAI)
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4-turbo-preview"
@@ -207,6 +212,17 @@ class Settings(BaseSettings):
     PIPELINE_COMIC_ENRICHMENT_INTERVAL_MINUTES: int = 30
     PIPELINE_FUNKO_PRICE_CHECK_INTERVAL_MINUTES: int = 60
     PIPELINE_DLQ_RETRY_INTERVAL_MINUTES: int = 15
+
+    # ===== THE RACK FACTOR v1.5.2 =====
+    # Newsletter and Social Media Content Engine
+    RACK_FACTOR_ENABLED: bool = True  # Master toggle for The Rack Factor
+    RACK_FACTOR_LOGO_URL: str = ""  # URL to The Rack Factor logo for emails
+    RACK_FACTOR_NEWSLETTER_DAY: int = 4  # 0=Mon, 4=Fri (Friday newsletter)
+    RACK_FACTOR_NEWSLETTER_HOUR: int = 10  # 10 AM EST
+    RACK_FACTOR_SOCIAL_HOUR: int = 16  # 4:30 PM EST daily posts
+    RACK_FACTOR_SOCIAL_MINUTE: int = 30
+    RACK_FACTOR_DAILY_TOP_MOVERS: int = 5  # Top 5 up + Top 5 down
+    RACK_FACTOR_WEEKLY_TOP_MOVERS: int = 10  # Top 10 in newsletter
 
     @model_validator(mode="after")
     def validate_production_config(self):
