@@ -66,6 +66,66 @@ class ProductUpdateRequest(BaseModel):
     description: Optional[str] = None
 
 
+# ----- Dashboard -----
+
+@router.get("/dashboard")
+async def get_dashboard(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get admin dashboard overview with key metrics."""
+    # Product stats
+    product_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_products,
+            COALESCE(SUM(stock * price), 0) as total_value,
+            COUNT(*) FILTER (WHERE stock <= low_stock_threshold) as low_stock_count
+        FROM products
+        WHERE deleted_at IS NULL
+    """))
+    product_row = product_result.fetchone()
+
+    # Pending barcode queue
+    queue_result = await db.execute(text("""
+        SELECT COUNT(*) FROM barcode_queue WHERE status = 'pending'
+    """))
+    pending_queue = queue_result.scalar() or 0
+
+    # Recent orders (last 7 days)
+    orders_result = await db.execute(text("""
+        SELECT COUNT(*) FROM orders
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+    """))
+    recent_orders = orders_result.scalar() or 0
+
+    # Recent orders list (last 5)
+    recent_orders_result = await db.execute(text("""
+        SELECT id, order_number, customer_email, status, created_at
+        FROM orders
+        ORDER BY created_at DESC
+        LIMIT 5
+    """))
+    recent_orders_list = [
+        {
+            "id": row[0],
+            "order_number": row[1],
+            "customer_email": row[2],
+            "status": row[3],
+            "created_at": row[4].isoformat() if row[4] else None
+        }
+        for row in recent_orders_result.fetchall()
+    ]
+
+    return {
+        "total_products": product_row[0],
+        "total_value": float(product_row[1]),
+        "low_stock_count": product_row[2],
+        "pending_queue": pending_queue,
+        "recent_orders": recent_orders,
+        "recent_orders_list": recent_orders_list
+    }
+
+
 # ----- Barcode Queue Endpoints -----
 
 @router.post("/barcode-queue")
