@@ -71,6 +71,29 @@ except ImportError as e:
     print(f"Warning: Could not import price_changelog model: {e}")
     PriceChangelog = None
 
+# Data Acquisition Pipeline v1.0.0
+try:
+    from app.models.pipeline import (
+        FieldChangelog,
+        ChangeReason,
+        DeadLetterQueue,
+        DLQStatus,
+        PipelineCheckpoint,
+        DataQuarantine,
+        QuarantineReason,
+        FieldProvenance,
+    )
+except ImportError as e:
+    print(f"Warning: Could not import pipeline models: {e}")
+    FieldChangelog = None
+    ChangeReason = None
+    DeadLetterQueue = None
+    DLQStatus = None
+    PipelineCheckpoint = None
+    DataQuarantine = None
+    QuarantineReason = None
+    FieldProvenance = None
+
 __all__ = [
     "User",
     "Product",
@@ -139,4 +162,13 @@ __all__ = [
     "ContentQueueItem",
     "ContentStatus",
     "PriceChangelog",
+    # Data Acquisition Pipeline v1.0.0
+    "FieldChangelog",
+    "ChangeReason",
+    "DeadLetterQueue",
+    "DLQStatus",
+    "PipelineCheckpoint",
+    "DataQuarantine",
+    "QuarantineReason",
+    "FieldProvenance",
 ]

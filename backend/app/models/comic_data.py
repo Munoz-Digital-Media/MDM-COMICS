@@ -1,9 +1,12 @@
 """
 Comic Data Models - Local cache of Metron data
 Stores ALL data points from Metron API for internal use
+
+v1.5.0: Added PriceCharting integration fields to ComicIssue
+        (resolves RISK-005 schema drift from pipeline spec)
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, Table, Float, JSON
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, Table, Float, JSON, Numeric
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -129,6 +132,24 @@ class ComicIssue(Base):
     # Perceptual hash of cover image for image search (BE-003 optimization)
     # 64-bit pHash stored as hex string - indexed for efficient lookup
     cover_hash = Column(String(16), index=True)
+
+    # -------------------------------------------------------------------------
+    # PriceCharting Integration (v1.5.0 - resolves RISK-005 schema drift)
+    # These fields are synced by import_pricecharting_comics.py and price_sync_daily.py
+    # -------------------------------------------------------------------------
+    pricecharting_id = Column(Integer, unique=True, index=True)
+    price_loose = Column(Numeric(12, 2))      # Ungraded/raw value
+    price_cib = Column(Numeric(12, 2))        # Complete in box
+    price_new = Column(Numeric(12, 2))        # Sealed/new
+    price_graded = Column(Numeric(12, 2))     # Generic graded value
+    price_bgs_10 = Column(Numeric(12, 2))     # BGS 10 (pristine)
+    price_cgc_98 = Column(Numeric(12, 2))     # CGC 9.8
+    price_cgc_96 = Column(Numeric(12, 2))     # CGC 9.6
+    asin = Column(String(20))                 # Amazon ASIN
+    sales_volume = Column(Integer)            # PriceCharting sales volume
+    handle = Column(String(255))              # URL-friendly identifier
+    year = Column(Integer)                    # Publication year
+    series_name = Column(String(255))         # Extracted series name
 
     # Raw Metron response - STORE EVERYTHING
     raw_data = Column(JSON)
