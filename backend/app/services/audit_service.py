@@ -3,10 +3,12 @@ Audit Service
 
 Per constitution_cyberSec.json §5: Immutable audit logging with hash chain.
 Per constitution_db.json: All state changes logged.
+
+FIXED: Aligned with UserAuditLog model schema (2025-12-08)
 """
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy import select, and_, or_, func
@@ -22,7 +24,7 @@ class AuditService:
 
     Features:
     - Hash chain for tamper detection
-    - PII hashing (IP, user agent)
+    - PII hashing (IP, actor IDs)
     - Structured event logging
     - Query and export capabilities
     """
@@ -33,28 +35,30 @@ class AuditService:
     async def log(
         self,
         action: str,
-        user_id: Optional[int] = None,
-        target_user_id: Optional[int] = None,
-        resource_type: Optional[str] = None,
+        actor_type: str = "user",
+        actor_id: Optional[int] = None,
+        resource_type: str = "user",
         resource_id: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        outcome: str = "success",
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
-        session_id: Optional[int] = None,
+        before_state: Optional[Dict[str, Any]] = None,
+        after_state: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> UserAuditLog:
         """
         Create an audit log entry with hash chain.
 
         Args:
             action: Action type (use AuditAction constants)
-            user_id: ID of user performing action
-            target_user_id: ID of user being acted upon (if different)
+            actor_type: Type of actor ('user', 'admin', 'system', 'api')
+            actor_id: ID of actor performing action (will be hashed)
             resource_type: Type of resource (user, role, order, etc.)
-            resource_id: ID of the resource
-            details: Additional details as dict
+            resource_id: ID of the resource (will be hashed)
+            outcome: Result of action ('success', 'failure', 'denied')
             ip_address: Client IP (will be hashed)
-            user_agent: Client user agent (will be hashed)
-            session_id: Session ID if available
+            before_state: State before change (will be hashed)
+            after_state: State after change (will be hashed)
+            metadata: Additional details as dict (no PII)
 
         Returns:
             Created audit log entry
@@ -62,22 +66,29 @@ class AuditService:
         # Get previous entry's hash for chain
         prev_hash = await self._get_last_hash()
 
-        # Hash PII
+        # Hash sensitive identifiers
+        actor_id_hash = pii_handler.hash_for_lookup(str(actor_id)) if actor_id else pii_handler.hash_for_lookup("anonymous")
+        resource_id_hash = pii_handler.hash_for_lookup(str(resource_id)) if resource_id else None
         ip_hash = pii_handler.hash_ip(ip_address) if ip_address else None
-        ua_hash = pii_handler.hash_user_agent(user_agent) if user_agent else None
+
+        # Hash state objects for change tracking
+        before_hash = self._hash_state(before_state) if before_state else None
+        after_hash = self._hash_state(after_state) if after_state else None
 
         # Create entry
         entry = UserAuditLog(
-            user_id=user_id,
-            target_user_id=target_user_id,
+            actor_type=actor_type,
+            actor_id_hash=actor_id_hash,
             action=action,
             resource_type=resource_type,
-            resource_id=str(resource_id) if resource_id else None,
-            details=details,
+            resource_id_hash=resource_id_hash,
+            outcome=outcome,
             ip_hash=ip_hash,
-            user_agent_hash=ua_hash,
-            session_id=session_id,
+            before_hash=before_hash,
+            after_hash=after_hash,
+            event_metadata=metadata or {},
             prev_hash=prev_hash,
+            entry_hash="",  # Will be calculated
         )
 
         # Calculate entry hash
@@ -87,24 +98,30 @@ class AuditService:
         await self.db.flush()
         return entry
 
+    def _hash_state(self, state: Dict[str, Any]) -> str:
+        """Hash a state dictionary for change tracking."""
+        serialized = json.dumps(state, sort_keys=True, default=str)
+        return hashlib.sha256(serialized.encode()).hexdigest()
+
     def _calculate_hash(self, entry: UserAuditLog, prev_hash: Optional[str]) -> str:
         """Calculate hash for entry including previous hash."""
         data = {
-            "user_id": entry.user_id,
-            "target_user_id": entry.target_user_id,
+            "actor_type": entry.actor_type,
+            "actor_id_hash": entry.actor_id_hash,
             "action": entry.action,
             "resource_type": entry.resource_type,
-            "resource_id": entry.resource_id,
-            "details": entry.details,
+            "resource_id_hash": entry.resource_id_hash,
+            "outcome": entry.outcome,
             "ip_hash": entry.ip_hash,
-            "user_agent_hash": entry.user_agent_hash,
-            "session_id": entry.session_id,
+            "before_hash": entry.before_hash,
+            "after_hash": entry.after_hash,
+            "event_metadata": entry.event_metadata,
             "prev_hash": prev_hash,
-            "created_at": entry.created_at.isoformat() if entry.created_at else datetime.now(timezone.utc).isoformat(),
+            "ts": entry.ts.isoformat() if entry.ts else datetime.now(timezone.utc).isoformat(),
         }
 
         serialized = json.dumps(data, sort_keys=True, default=str)
-        return hashlib.sha256(serialized.encode()).hexdigest()[:64]
+        return hashlib.sha256(serialized.encode()).hexdigest()
 
     async def _get_last_hash(self) -> Optional[str]:
         """Get hash of the last audit entry."""
@@ -125,13 +142,7 @@ class AuditService:
             end_id: Ending entry ID (default: end)
 
         Returns:
-            Dict with verification results:
-            {
-                "valid": bool,
-                "entries_checked": int,
-                "first_invalid_id": int or None,
-                "error": str or None
-            }
+            Dict with verification results
         """
         query = select(UserAuditLog).order_by(UserAuditLog.id)
 
@@ -150,9 +161,7 @@ class AuditService:
         entries_checked = 0
 
         for entry in entries:
-            # First entry should have no prev_hash, or match the stored prev_hash
             if entries_checked == 0 and start_id:
-                # If starting mid-chain, get the actual previous hash
                 prev_result = await self.db.execute(
                     select(UserAuditLog.entry_hash)
                     .where(UserAuditLog.id < start_id)
@@ -161,7 +170,6 @@ class AuditService:
                 )
                 prev_hash = prev_result.scalar_one_or_none()
 
-            # Verify prev_hash matches
             if entry.prev_hash != prev_hash:
                 return {
                     "valid": False,
@@ -170,7 +178,6 @@ class AuditService:
                     "error": f"prev_hash mismatch at entry {entry.id}"
                 }
 
-            # Verify entry_hash
             calculated = self._calculate_hash(entry, prev_hash)
             if entry.entry_hash != calculated:
                 return {
@@ -185,10 +192,9 @@ class AuditService:
 
         return {"valid": True, "entries_checked": entries_checked, "first_invalid_id": None, "error": None}
 
-    async def get_user_audit_trail(
+    async def get_actor_audit_trail(
         self,
-        user_id: int,
-        include_as_target: bool = True,
+        actor_id: int,
         actions: Optional[List[str]] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
@@ -196,11 +202,10 @@ class AuditService:
         offset: int = 0,
     ) -> List[UserAuditLog]:
         """
-        Get audit trail for a specific user.
+        Get audit trail for a specific actor.
 
         Args:
-            user_id: User ID to query
-            include_as_target: Include entries where user is target
+            actor_id: Actor ID to query (will be hashed for lookup)
             actions: Filter by action types
             start_date: Filter by start date
             end_date: Filter by end date
@@ -210,31 +215,20 @@ class AuditService:
         Returns:
             List of audit log entries
         """
-        conditions = []
-
-        if include_as_target:
-            conditions.append(
-                or_(
-                    UserAuditLog.user_id == user_id,
-                    UserAuditLog.target_user_id == user_id
-                )
-            )
-        else:
-            conditions.append(UserAuditLog.user_id == user_id)
+        actor_id_hash = pii_handler.hash_for_lookup(str(actor_id))
+        conditions = [UserAuditLog.actor_id_hash == actor_id_hash]
 
         if actions:
             conditions.append(UserAuditLog.action.in_(actions))
-
         if start_date:
-            conditions.append(UserAuditLog.created_at >= start_date)
-
+            conditions.append(UserAuditLog.ts >= start_date)
         if end_date:
-            conditions.append(UserAuditLog.created_at <= end_date)
+            conditions.append(UserAuditLog.ts <= end_date)
 
         result = await self.db.execute(
             select(UserAuditLog)
             .where(and_(*conditions))
-            .order_by(UserAuditLog.created_at.desc())
+            .order_by(UserAuditLog.ts.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -257,33 +251,30 @@ class AuditService:
             List of security audit events
         """
         security_actions = [
-            AuditAction.LOGIN_SUCCESS,
-            AuditAction.LOGIN_FAILED,
-            AuditAction.LOGOUT,
-            AuditAction.PASSWORD_CHANGED,
-            AuditAction.PASSWORD_RESET_REQUESTED,
-            AuditAction.PASSWORD_RESET_COMPLETED,
-            AuditAction.ACCOUNT_LOCKED,
-            AuditAction.ACCOUNT_UNLOCKED,
+            AuditAction.USER_LOGIN,
+            AuditAction.USER_LOGIN_FAILED,
+            AuditAction.USER_LOGOUT,
+            AuditAction.USER_PASSWORD_CHANGE,
+            AuditAction.USER_PASSWORD_RESET_REQUEST,
+            AuditAction.USER_PASSWORD_RESET,
+            AuditAction.USER_LOCKED,
+            AuditAction.USER_UNLOCKED,
             AuditAction.SESSION_REVOKED,
             AuditAction.ROLE_ASSIGNED,
             AuditAction.ROLE_REVOKED,
-            AuditAction.PERMISSION_DENIED,
         ]
 
-        cutoff = datetime.now(timezone.utc).replace(
-            hour=datetime.now(timezone.utc).hour - hours
-        )
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         result = await self.db.execute(
             select(UserAuditLog)
             .where(
                 and_(
                     UserAuditLog.action.in_(security_actions),
-                    UserAuditLog.created_at >= cutoff
+                    UserAuditLog.ts >= cutoff
                 )
             )
-            .order_by(UserAuditLog.created_at.desc())
+            .order_by(UserAuditLog.ts.desc())
             .limit(limit)
         )
 
@@ -291,7 +282,7 @@ class AuditService:
 
     async def count_failed_logins(
         self,
-        user_id: Optional[int] = None,
+        actor_id: Optional[int] = None,
         ip_hash: Optional[str] = None,
         hours: int = 1,
     ) -> int:
@@ -299,24 +290,23 @@ class AuditService:
         Count failed login attempts.
 
         Args:
-            user_id: Filter by user
+            actor_id: Filter by actor (will be hashed)
             ip_hash: Filter by IP hash
             hours: Look back period
 
         Returns:
             Count of failed attempts
         """
-        cutoff = datetime.now(timezone.utc).replace(
-            hour=datetime.now(timezone.utc).hour - hours
-        )
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         conditions = [
-            UserAuditLog.action == AuditAction.LOGIN_FAILED,
-            UserAuditLog.created_at >= cutoff,
+            UserAuditLog.action == AuditAction.USER_LOGIN_FAILED,
+            UserAuditLog.ts >= cutoff,
         ]
 
-        if user_id:
-            conditions.append(UserAuditLog.target_user_id == user_id)
+        if actor_id:
+            actor_id_hash = pii_handler.hash_for_lookup(str(actor_id))
+            conditions.append(UserAuditLog.actor_id_hash == actor_id_hash)
         if ip_hash:
             conditions.append(UserAuditLog.ip_hash == ip_hash)
 
@@ -327,20 +317,19 @@ class AuditService:
 
         return result.scalar() or 0
 
-    async def export_user_audit_data(self, user_id: int) -> List[Dict[str, Any]]:
+    async def export_actor_audit_data(self, actor_id: int) -> List[Dict[str, Any]]:
         """
-        Export all audit data for a user (DSAR compliance).
+        Export all audit data for an actor (DSAR compliance).
 
         Args:
-            user_id: User ID to export
+            actor_id: Actor ID to export
 
         Returns:
             List of audit entries as dicts (PII redacted)
         """
-        entries = await self.get_user_audit_trail(
-            user_id=user_id,
-            include_as_target=True,
-            limit=10000,  # Large limit for export
+        entries = await self.get_actor_audit_trail(
+            actor_id=actor_id,
+            limit=10000,
         )
 
         export_data = []
@@ -349,16 +338,14 @@ class AuditService:
                 "id": entry.id,
                 "action": entry.action,
                 "resource_type": entry.resource_type,
-                "resource_id": entry.resource_id,
-                "details": entry.details,
-                "created_at": entry.created_at.isoformat(),
-                # IP and user agent hashes not included (PII)
+                "outcome": entry.outcome,
+                "event_metadata": entry.event_metadata,
+                "ts": entry.ts.isoformat(),
             })
 
         return export_data
 
 
-# Convenience function for quick logging
 async def log_audit(
     db: AsyncSession,
     action: str,
