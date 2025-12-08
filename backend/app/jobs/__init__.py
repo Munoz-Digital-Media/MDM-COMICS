@@ -26,6 +26,7 @@ from app.jobs.pipeline_scheduler import (
     run_comic_enrichment_job,
     run_funko_price_check_job,
     run_dlq_retry_job,
+    run_daily_snapshot_job,  # v1.7.0
 )
 
 __all__ = [
@@ -42,4 +43,6 @@ __all__ = [
     "run_comic_enrichment_job",
     "run_funko_price_check_job",
     "run_dlq_retry_job",
+    # Price Snapshots for AI Intelligence v1.7.0
+    "run_daily_snapshot_job",
 ]

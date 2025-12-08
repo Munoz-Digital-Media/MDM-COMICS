@@ -71,6 +71,13 @@ except ImportError as e:
     print(f"Warning: Could not import price_changelog model: {e}")
     PriceChangelog = None
 
+# Price Snapshots for AI Intelligence v1.7.0
+try:
+    from app.models.price_snapshot import PriceSnapshot
+except ImportError as e:
+    print(f"Warning: Could not import price_snapshot model: {e}")
+    PriceSnapshot = None
+
 # Data Acquisition Pipeline v1.0.0
 try:
     from app.models.pipeline import (
@@ -162,6 +169,8 @@ __all__ = [
     "ContentQueueItem",
     "ContentStatus",
     "PriceChangelog",
+    # Price Snapshots for AI Intelligence v1.7.0
+    "PriceSnapshot",
     # Data Acquisition Pipeline v1.0.0
     "FieldChangelog",
     "ChangeReason",
