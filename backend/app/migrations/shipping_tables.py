@@ -23,9 +23,11 @@ async def migrate_shipping_tables(engine):
     Create shipping tables if they don't exist.
 
     This is an idempotent migration - safe to run multiple times.
+    Uses separate transactions for DDL and DML to prevent cascading failures.
     """
     logger.info("Starting shipping tables migration...")
 
+    # Transaction 1: Create all tables (DDL)
     async with engine.begin() as conn:
         # ==================== addresses table ====================
         await conn.execute(text("""
@@ -185,22 +187,31 @@ async def migrate_shipping_tables(engine):
         except Exception as e:
             logger.debug(f"Column may already exist: {e}")
 
-        # ==================== Insert default UPS carrier if not exists ====================
-        result = await conn.execute(text("""
-            SELECT id FROM carriers WHERE code = 'UPS'
-        """))
-        if result.fetchone() is None:
-            await conn.execute(text("""
-                INSERT INTO carriers (code, name, is_active, service_levels, default_package_type)
-                VALUES (
-                    'UPS',
-                    'United Parcel Service',
-                    FALSE,
-                    '["03", "02", "01", "13", "14"]',
-                    '02'
-                )
+    logger.info("Shipping tables DDL migration complete!")
+
+    # Transaction 2: Insert seed data (DML) - separate transaction to prevent DDL rollback on failure
+    try:
+        async with engine.begin() as conn:
+            # ==================== Insert default UPS carrier if not exists ====================
+            result = await conn.execute(text("""
+                SELECT id FROM carriers WHERE code = 'UPS'
             """))
-            logger.info("Created default UPS carrier record (inactive - configure credentials)")
+            if result.fetchone() is None:
+                await conn.execute(text("""
+                    INSERT INTO carriers (code, name, display_name, is_active, service_levels, default_package_type)
+                    VALUES (
+                        'UPS',
+                        'United Parcel Service',
+                        'UPS',
+                        FALSE,
+                        '["03", "02", "01", "13", "14"]',
+                        '02'
+                    )
+                """))
+                logger.info("Created default UPS carrier record (inactive - configure credentials)")
+    except Exception as e:
+        # DML failures shouldn't block startup - carrier may already exist with different schema
+        logger.warning(f"Could not seed UPS carrier (may already exist or schema mismatch): {e}")
 
     logger.info("Shipping tables migration complete!")
 
