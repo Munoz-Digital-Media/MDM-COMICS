@@ -1,0 +1,26 @@
+# MDM Comics Cron Service - Railway Configuration
+# This file is for the data-pipeline-cron service
+# Copy this to railway.toml in the cron service's Railway settings or use rootDirectory
+
+[build]
+builder = "nixpacks"
+# Watch path ensures rebuilds only when backend changes
+watchPatterns = ["backend/**"]
+
+[deploy]
+# Standalone cron runner (NOT uvicorn/web server)
+startCommand = "python run_cron.py"
+# No health check - this is a background worker, not a web service
+healthcheckPath = ""
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+# Single instance for cron jobs
+numReplicas = 1
+
+[nixpacks]
+# Python version
+providers = ["python"]
+
+[nixpacks.apt]
+# System packages if needed
+packages = []

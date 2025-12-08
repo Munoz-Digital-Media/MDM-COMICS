@@ -1,0 +1,26 @@
+# MDM Comics Backend - Railway Configuration
+# This file is read by Railway for deployment settings
+# Config-as-code ensures consistent, reproducible deployments
+
+[build]
+builder = "nixpacks"
+# Watch path ensures rebuilds only when backend changes
+watchPatterns = ["backend/**"]
+
+[deploy]
+# Main FastAPI application
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+# Number of replicas (1 for cost efficiency)
+numReplicas = 1
+
+[nixpacks]
+# Python version
+providers = ["python"]
+
+[nixpacks.apt]
+# System packages if needed
+packages = []
