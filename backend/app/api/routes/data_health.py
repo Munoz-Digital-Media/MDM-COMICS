@@ -600,3 +600,103 @@ async def run_job_manually(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Job failed: {str(e)}")
+
+
+# ==============================================================================
+# Database Migrations (Admin-Only)
+# ==============================================================================
+
+@router.post("/migrations/price-snapshots")
+async def run_price_snapshots_migration(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Run the price_snapshots table migration.
+
+    Creates the price_snapshots table and indexes for AI/ML training data.
+    Safe to run multiple times (uses IF NOT EXISTS).
+    """
+    try:
+        # Check if table already exists
+        check = await db.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'price_snapshots'
+            )
+        """))
+        table_exists = check.scalar()
+
+        if table_exists:
+            # Get row count
+            count_result = await db.execute(text("SELECT COUNT(*) FROM price_snapshots"))
+            row_count = count_result.scalar() or 0
+            return {
+                "success": True,
+                "message": "Table already exists",
+                "table": "price_snapshots",
+                "row_count": row_count
+            }
+
+        # Create the price_snapshots table
+        await db.execute(text("""
+            CREATE TABLE IF NOT EXISTS price_snapshots (
+                id BIGSERIAL PRIMARY KEY,
+                snapshot_date DATE NOT NULL,
+                entity_type VARCHAR(50) NOT NULL,
+                entity_id INTEGER NOT NULL,
+                pricecharting_id INTEGER,
+                price_loose NUMERIC(12, 2),
+                price_cib NUMERIC(12, 2),
+                price_new NUMERIC(12, 2),
+                price_graded NUMERIC(12, 2),
+                price_bgs_10 NUMERIC(12, 2),
+                price_cgc_98 NUMERIC(12, 2),
+                price_cgc_96 NUMERIC(12, 2),
+                sales_volume INTEGER,
+                price_changed BOOLEAN NOT NULL DEFAULT FALSE,
+                days_since_change INTEGER,
+                volatility_7d NUMERIC(8, 4),
+                volatility_30d NUMERIC(8, 4),
+                trend_7d NUMERIC(8, 4),
+                trend_30d NUMERIC(8, 4),
+                momentum NUMERIC(8, 4),
+                data_source VARCHAR(50) NOT NULL DEFAULT 'pricecharting',
+                confidence_score NUMERIC(3, 2),
+                is_stale BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                CONSTRAINT ck_price_snapshots_entity_type
+                    CHECK (entity_type IN ('funko', 'comic')),
+                CONSTRAINT ck_price_snapshots_confidence_range
+                    CHECK (confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1))
+            )
+        """))
+
+        # Create indexes
+        indexes = [
+            ("idx_price_snapshots_lookup", "CREATE INDEX IF NOT EXISTS idx_price_snapshots_lookup ON price_snapshots (entity_type, entity_id, snapshot_date DESC)"),
+            ("idx_price_snapshots_date", "CREATE INDEX IF NOT EXISTS idx_price_snapshots_date ON price_snapshots (snapshot_date DESC)"),
+            ("idx_price_snapshots_pricecharting", "CREATE INDEX IF NOT EXISTS idx_price_snapshots_pricecharting ON price_snapshots (pricecharting_id) WHERE pricecharting_id IS NOT NULL"),
+            ("idx_price_snapshots_volatile", "CREATE INDEX IF NOT EXISTS idx_price_snapshots_volatile ON price_snapshots (volatility_30d DESC NULLS LAST) WHERE volatility_30d IS NOT NULL"),
+            ("idx_price_snapshots_stale", "CREATE INDEX IF NOT EXISTS idx_price_snapshots_stale ON price_snapshots (entity_type, entity_id) WHERE is_stale = TRUE"),
+            ("idx_price_snapshots_unique", "CREATE UNIQUE INDEX IF NOT EXISTS idx_price_snapshots_unique ON price_snapshots (entity_type, entity_id, snapshot_date)"),
+        ]
+
+        created_indexes = []
+        for name, sql in indexes:
+            await db.execute(text(sql))
+            created_indexes.append(name)
+
+        await db.commit()
+
+        return {
+            "success": True,
+            "message": "Migration completed successfully",
+            "table": "price_snapshots",
+            "indexes_created": created_indexes
+        }
+
+    except Exception as e:
+        logger.error(f"Migration failed: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
