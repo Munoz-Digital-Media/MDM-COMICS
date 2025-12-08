@@ -44,6 +44,12 @@ class AuditService:
         before_state: Optional[Dict[str, Any]] = None,
         after_state: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        # Compatibility aliases for auth.py
+        user_id: Optional[int] = None,
+        target_user_id: Optional[int] = None,
+        details: Optional[Dict[str, Any]] = None,
+        user_agent: Optional[str] = None,
+        session_id: Optional[int] = None,
     ) -> UserAuditLog:
         """
         Create an audit log entry with hash chain.
@@ -59,10 +65,32 @@ class AuditService:
             before_state: State before change (will be hashed)
             after_state: State after change (will be hashed)
             metadata: Additional details as dict (no PII)
+            user_id: Alias for actor_id (auth.py compatibility)
+            target_user_id: Used for resource_id when resource_type is user
+            details: Alias for metadata (auth.py compatibility)
+            user_agent: Stored in metadata (auth.py compatibility)
+            session_id: Stored in metadata (auth.py compatibility)
 
         Returns:
             Created audit log entry
         """
+        # Handle compatibility aliases
+        if user_id is not None and actor_id is None:
+            actor_id = user_id
+        if target_user_id is not None and resource_id is None:
+            resource_id = str(target_user_id)
+        if details is not None and metadata is None:
+            metadata = details
+
+        # Add user_agent and session_id to metadata if provided
+        if user_agent or session_id:
+            if metadata is None:
+                metadata = {}
+            if user_agent:
+                metadata["user_agent"] = user_agent[:200] if user_agent else None
+            if session_id:
+                metadata["session_id"] = session_id
+
         # Get previous entry's hash for chain
         prev_hash = await self._get_last_hash()
 

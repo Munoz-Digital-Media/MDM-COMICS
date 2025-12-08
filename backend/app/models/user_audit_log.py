@@ -72,15 +72,23 @@ class AuditAction:
     USER_LOGIN_FAILED = "user.login_failed"
     USER_LOGOUT = "user.logout"
     USER_LOGOUT_ALL = "user.logout_all"
+    # Aliases for auth.py compatibility
+    LOGIN_SUCCESS = "user.login"
+    LOGIN_FAILED = "user.login_failed"
 
     # Account management
     USER_REGISTER = "user.register"
+    USER_CREATED = "user.created"  # auth.py registration
     USER_UPDATE = "user.update"
     USER_PASSWORD_CHANGE = "user.password_change"
+    PASSWORD_CHANGED = "user.password_change"  # Alias for auth.py
     USER_PASSWORD_RESET_REQUEST = "user.password_reset_request"
+    PASSWORD_RESET_REQUESTED = "user.password_reset_request"  # Alias for auth.py
     USER_PASSWORD_RESET = "user.password_reset"
     USER_EMAIL_VERIFY = "user.email_verify"
+    EMAIL_VERIFICATION_SENT = "user.email_verification_sent"  # auth.py
     USER_LOCKED = "user.locked"
+    ACCOUNT_LOCKED = "user.locked"  # Alias for auth.py
     USER_UNLOCKED = "user.unlocked"
     USER_DEACTIVATED = "user.deactivated"
     USER_REACTIVATED = "user.reactivated"
