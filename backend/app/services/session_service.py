@@ -70,9 +70,9 @@ class SessionService:
         # Check concurrent session limit
         await self._enforce_session_limit(user_id)
 
-        # Generate session token
-        raw_token = self.generate_session_token()
-        token_hash = self.hash_token(raw_token)
+        # Generate session token (JWT ID)
+        import uuid
+        token_jti = str(uuid.uuid4())
 
         # Hash PII
         ip_hash = pii_handler.hash_ip(ip_address) if ip_address else None
@@ -83,18 +83,17 @@ class SessionService:
 
         session = UserSession(
             user_id=user_id,
-            session_token_hash=token_hash,
-            ip_hash=ip_hash,
+            token_jti=token_jti,
+            ip_address_hash=ip_hash,
             user_agent_hash=ua_hash,
-            device_info=device_info,
-            is_active=True,
+            device_type=device_info,
             expires_at=expires_at,
         )
 
         self.db.add(session)
         await self.db.flush()
 
-        return session, raw_token
+        return session, token_jti
 
     async def _enforce_session_limit(self, user_id: int) -> int:
         """
@@ -108,13 +107,13 @@ class SessionService:
         Returns:
             Number of sessions revoked
         """
-        # Count active sessions
+        # Count active sessions (not revoked, not expired)
         result = await self.db.execute(
             select(func.count(UserSession.id))
             .where(
                 and_(
                     UserSession.user_id == user_id,
-                    UserSession.is_active == True,
+                    UserSession.revoked_at.is_(None),
                     UserSession.expires_at > datetime.now(timezone.utc),
                 )
             )
