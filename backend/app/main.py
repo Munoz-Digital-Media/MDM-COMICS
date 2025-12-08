@@ -241,6 +241,84 @@ async def stock_cleanup_scheduler():
 
 
 
+async def ensure_price_snapshots_table():
+    """
+    v1.7.0: Ensure price_snapshots table exists for ML/AI training data.
+
+    This is a safe idempotent migration that runs on startup.
+    Uses IF NOT EXISTS so it's safe to run multiple times.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            # Check if table exists
+            result = await db.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'price_snapshots'
+                )
+            """))
+            table_exists = result.scalar()
+
+            if table_exists:
+                logger.info("[STARTUP] price_snapshots table already exists")
+                return
+
+            logger.info("[STARTUP] Creating price_snapshots table...")
+
+            # Create the table
+            await db.execute(text("""
+                CREATE TABLE IF NOT EXISTS price_snapshots (
+                    id BIGSERIAL PRIMARY KEY,
+                    snapshot_date DATE NOT NULL,
+                    entity_type VARCHAR(50) NOT NULL,
+                    entity_id INTEGER NOT NULL,
+                    pricecharting_id INTEGER,
+                    price_loose NUMERIC(12, 2),
+                    price_cib NUMERIC(12, 2),
+                    price_new NUMERIC(12, 2),
+                    price_graded NUMERIC(12, 2),
+                    price_bgs_10 NUMERIC(12, 2),
+                    price_cgc_98 NUMERIC(12, 2),
+                    price_cgc_96 NUMERIC(12, 2),
+                    sales_volume INTEGER,
+                    price_changed BOOLEAN NOT NULL DEFAULT FALSE,
+                    days_since_change INTEGER,
+                    volatility_7d NUMERIC(8, 4),
+                    volatility_30d NUMERIC(8, 4),
+                    trend_7d NUMERIC(8, 4),
+                    trend_30d NUMERIC(8, 4),
+                    momentum NUMERIC(8, 4),
+                    data_source VARCHAR(50) NOT NULL DEFAULT 'pricecharting',
+                    confidence_score NUMERIC(3, 2),
+                    is_stale BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    CONSTRAINT ck_price_snapshots_entity_type
+                        CHECK (entity_type IN ('funko', 'comic')),
+                    CONSTRAINT ck_price_snapshots_confidence_range
+                        CHECK (confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1))
+                )
+            """))
+
+            # Create indexes
+            indexes = [
+                "CREATE INDEX IF NOT EXISTS idx_price_snapshots_lookup ON price_snapshots (entity_type, entity_id, snapshot_date DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_price_snapshots_date ON price_snapshots (snapshot_date DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_price_snapshots_pricecharting ON price_snapshots (pricecharting_id) WHERE pricecharting_id IS NOT NULL",
+                "CREATE INDEX IF NOT EXISTS idx_price_snapshots_volatile ON price_snapshots (volatility_30d DESC NULLS LAST) WHERE volatility_30d IS NOT NULL",
+                "CREATE INDEX IF NOT EXISTS idx_price_snapshots_stale ON price_snapshots (entity_type, entity_id) WHERE is_stale = TRUE",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_price_snapshots_unique ON price_snapshots (entity_type, entity_id, snapshot_date)",
+            ]
+            for idx_sql in indexes:
+                await db.execute(text(idx_sql))
+
+            await db.commit()
+            logger.info("[STARTUP] price_snapshots table created successfully")
+
+    except Exception as e:
+        logger.error(f"[STARTUP] Failed to create price_snapshots table: {e}")
+        # Don't fail startup - the table can be created manually if needed
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -249,8 +327,12 @@ async def lifespan(app: FastAPI):
     P0-1: Now includes stock cleanup scheduler
     P2-11: HTTP client lifecycle management (metron_service cleanup)
     P3-14: Funko scraper code removed (blocked by Funko.com)
+    v1.7.0: Auto-create price_snapshots table for ML/AI training
     """
     global _stock_cleanup_task
+
+    # v1.7.0: Ensure price_snapshots table exists
+    await ensure_price_snapshots_table()
 
     # Import Funkos if database is empty
     await import_funkos_if_needed()
