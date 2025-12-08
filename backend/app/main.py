@@ -33,8 +33,15 @@ from app.api.routes import products, users, auth, cart, orders, grading, comics,
 from app.api.routes import shipping
 # User Management System v1.0.0
 from app.api.routes import admin_users, admin_roles, admin_dsar
-# Outreach System v1.5.0
-from app.api.routes import newsletter, webhooks
+# Outreach System v1.5.0 - optional imports for graceful degradation
+try:
+    from app.api.routes import newsletter, webhooks
+    OUTREACH_ROUTES_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Could not import outreach routes: {e}")
+    newsletter = None
+    webhooks = None
+    OUTREACH_ROUTES_AVAILABLE = False
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -525,8 +532,11 @@ app.include_router(admin_users.router, prefix="/api/admin/users", tags=["Admin -
 app.include_router(admin_roles.router, prefix="/api/admin/roles", tags=["Admin - Roles"])
 app.include_router(admin_dsar.router, prefix="/api/admin/dsar", tags=["Admin - DSAR/Compliance"])
 # Outreach System v1.5.0
-app.include_router(newsletter.router, prefix="/api", tags=["Newsletter"])
-app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
+if OUTREACH_ROUTES_AVAILABLE:
+    app.include_router(newsletter.router, prefix="/api", tags=["Newsletter"])
+    app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
+else:
+    logger.warning("Outreach routes disabled - import failed")
 
 
 @app.get("/", tags=["Health"])
