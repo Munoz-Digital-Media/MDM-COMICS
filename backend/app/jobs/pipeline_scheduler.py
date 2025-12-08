@@ -262,11 +262,16 @@ async def run_comic_enrichment_job():
 
                         if data.get("page_count"):
                             updates.append("page_count = :pages")
-                            params["pages"] = data["page_count"]
+                            params["pages"] = int(data["page_count"]) if data["page_count"] else None
 
                         if data.get("price"):
                             updates.append("price = :price")
-                            params["price"] = data["price"]
+                            # Metron returns price as string, convert to float
+                            try:
+                                params["price"] = float(data["price"])
+                            except (ValueError, TypeError):
+                                params["price"] = None
+                                updates.remove("price = :price")
 
                         if data.get("upc"):
                             updates.append("upc = :upc")
@@ -420,11 +425,11 @@ async def run_funko_price_check_job():
                                     WHERE id = :id
                                 """), {"id": funko_id, "price": new_price})
 
-                                # Log the change
+                                # Log the change - asyncpg handles UUID strings natively
                                 await db.execute(text("""
                                     INSERT INTO price_changelog
                                     (entity_type, entity_id, entity_name, field_name, old_value, new_value, change_pct, data_source, reason, sync_batch_id)
-                                    VALUES ('funko', :id, :name, 'price_loose', :old, :new, :pct, 'pricecharting', 'price_check', :batch::uuid)
+                                    VALUES ('funko', :id, :name, 'price_loose', :old, :new, :pct, 'pricecharting', 'price_check', :batch)
                                 """), {
                                     "id": funko_id,
                                     "name": title[:200] if title else None,
