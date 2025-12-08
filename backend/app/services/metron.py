@@ -2,9 +2,15 @@
 Metron Comic Database API Service
 https://metron.cloud/
 
+v1.6.0: Fixed client lifecycle management (RISK-010 from pipeline spec)
+        - Proper async context manager for client lifecycle
+        - Registered shutdown hook for cleanup
+        - Client is now properly closed on service shutdown
+
 v1.1.0: Refactored to use ResilientHTTPClient for retry logic,
         exponential backoff, and rate limiting per pipeline spec.
 """
+import atexit
 import logging
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -18,12 +24,14 @@ logger = logging.getLogger(__name__)
 class MetronService:
     """
     Service for interacting with the Metron comic database API.
-    
+
     Uses ResilientHTTPClient for:
     - Automatic retries with exponential backoff
     - Rate limiting to prevent bans
     - Circuit breaker for repeated failures
     - Jitter to prevent thundering herd
+
+    v1.6.0: Proper async context manager support for lifecycle management
     """
 
     def __init__(self):
@@ -31,22 +39,42 @@ class MetronService:
         self._username = settings.METRON_USERNAME
         self._password = settings.METRON_PASSWORD
         self._client: Optional[ResilientHTTPClient] = None
+        self._client_owned = False  # Track if we own the client
+
+    async def __aenter__(self):
+        """Async context manager entry - initialize client."""
+        await self._ensure_client()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit - close client."""
+        await self.close()
+
+    async def _ensure_client(self):
+        """Ensure client is initialized."""
+        if self._client is None:
+            self._client = get_metron_client()
+            await self._client.__aenter__()
+            self._client_owned = True
+            logger.debug("[METRON] Client initialized")
 
     @asynccontextmanager
     async def _get_client(self):
         """Get or create a resilient HTTP client."""
-        if self._client is None:
-            self._client = get_metron_client()
-            # Enter the context manager
-            await self._client.__aenter__()
-            
+        await self._ensure_client()
         yield self._client
 
     async def close(self):
-        """Close the HTTP client."""
-        if self._client:
-            await self._client.__aexit__(None, None, None)
-            self._client = None
+        """Close the HTTP client if we own it."""
+        if self._client and self._client_owned:
+            try:
+                await self._client.__aexit__(None, None, None)
+                logger.debug("[METRON] Client closed")
+            except Exception as e:
+                logger.warning(f"[METRON] Error closing client: {e}")
+            finally:
+                self._client = None
+                self._client_owned = False
 
     async def _request(
         self, 

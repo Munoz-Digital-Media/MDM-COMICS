@@ -38,10 +38,21 @@ try:
     from app.api.routes import newsletter, webhooks
     OUTREACH_ROUTES_AVAILABLE = True
 except ImportError as e:
+    logger = logging.getLogger(__name__)
     logger.warning(f"Could not import outreach routes: {e}")
     newsletter = None
     webhooks = None
     OUTREACH_ROUTES_AVAILABLE = False
+
+# Data Acquisition Pipeline v1.0.0 - optional import for graceful degradation
+try:
+    from app.api.routes import data_health
+    DATA_HEALTH_ROUTES_AVAILABLE = True
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Could not import data_health routes: {e}")
+    data_health = None
+    DATA_HEALTH_ROUTES_AVAILABLE = False
 from app.core.config import settings
 from app.core.database import init_db, AsyncSessionLocal, engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -587,6 +598,216 @@ async def migrate_user_management_tables():
     logger.info("User Management tables migration complete")
 
 
+async def migrate_pipeline_tables():
+    """
+    Data Acquisition Pipeline v1.0.0: Create pipeline tables on startup.
+    This is an idempotent migration - safe to run on every startup.
+
+    Creates:
+    - field_changelog (generalized change tracking)
+    - dead_letter_queue (failed job storage)
+    - pipeline_checkpoints (job resume state)
+    - data_quarantine (low-confidence data review)
+    - field_provenance (source tracking per field)
+    """
+    # 1. field_changelog table
+    try:
+        async with engine.begin() as conn:
+            logger.info("Pipeline: Creating field_changelog table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS field_changelog (
+                    id SERIAL PRIMARY KEY,
+                    entity_type VARCHAR(50) NOT NULL,
+                    entity_id INTEGER NOT NULL,
+                    entity_name VARCHAR(500),
+                    field_name VARCHAR(100) NOT NULL,
+                    old_value TEXT,
+                    new_value TEXT,
+                    value_type VARCHAR(50) DEFAULT 'string',
+                    change_pct NUMERIC(8, 2),
+                    data_source VARCHAR(50) NOT NULL,
+                    reason VARCHAR(50) NOT NULL DEFAULT 'sync',
+                    changed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    sync_batch_id UUID,
+                    changed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+                )
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_field_changelog_entity
+                ON field_changelog(entity_type, entity_id)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_field_changelog_changed_at
+                ON field_changelog(changed_at)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_field_changelog_batch
+                ON field_changelog(sync_batch_id)
+            """))
+            await conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_field_changelog_idempotent
+                ON field_changelog(entity_type, entity_id, field_name, sync_batch_id)
+                WHERE sync_batch_id IS NOT NULL
+            """))
+            logger.info("Pipeline: field_changelog table complete")
+    except Exception as e:
+        logger.warning(f"Pipeline: field_changelog table warning: {e}")
+
+    # 2. dead_letter_queue table
+    try:
+        async with engine.begin() as conn:
+            logger.info("Pipeline: Creating dead_letter_queue table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS dead_letter_queue (
+                    id SERIAL PRIMARY KEY,
+                    job_type VARCHAR(100) NOT NULL,
+                    batch_id UUID,
+                    entity_type VARCHAR(50),
+                    entity_id INTEGER,
+                    external_id VARCHAR(100),
+                    error_message TEXT NOT NULL,
+                    error_type VARCHAR(100),
+                    error_trace TEXT,
+                    request_data JSONB,
+                    response_data JSONB,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    retry_count INTEGER DEFAULT 0,
+                    max_retries INTEGER DEFAULT 3,
+                    next_retry_at TIMESTAMP WITH TIME ZONE,
+                    last_retry_at TIMESTAMP WITH TIME ZONE,
+                    resolved_at TIMESTAMP WITH TIME ZONE,
+                    resolved_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    resolution_notes TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_dlq_status ON dead_letter_queue(status)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_dlq_job ON dead_letter_queue(job_type, status)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_dlq_retry ON dead_letter_queue(status, next_retry_at)
+            """))
+            logger.info("Pipeline: dead_letter_queue table complete")
+    except Exception as e:
+        logger.warning(f"Pipeline: dead_letter_queue table warning: {e}")
+
+    # 3. pipeline_checkpoints table
+    try:
+        async with engine.begin() as conn:
+            logger.info("Pipeline: Creating pipeline_checkpoints table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pipeline_checkpoints (
+                    id SERIAL PRIMARY KEY,
+                    job_name VARCHAR(100) NOT NULL UNIQUE,
+                    job_type VARCHAR(50) NOT NULL,
+                    last_processed_id INTEGER,
+                    last_page INTEGER,
+                    cursor VARCHAR(500),
+                    total_processed INTEGER DEFAULT 0,
+                    total_updated INTEGER DEFAULT 0,
+                    total_errors INTEGER DEFAULT 0,
+                    state_data JSONB,
+                    current_batch_id UUID,
+                    is_running BOOLEAN DEFAULT FALSE,
+                    last_run_started TIMESTAMP WITH TIME ZONE,
+                    last_run_completed TIMESTAMP WITH TIME ZONE,
+                    last_error TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_checkpoint_running ON pipeline_checkpoints(is_running)
+            """))
+            logger.info("Pipeline: pipeline_checkpoints table complete")
+    except Exception as e:
+        logger.warning(f"Pipeline: pipeline_checkpoints table warning: {e}")
+
+    # 4. data_quarantine table
+    try:
+        async with engine.begin() as conn:
+            logger.info("Pipeline: Creating data_quarantine table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS data_quarantine (
+                    id SERIAL PRIMARY KEY,
+                    entity_type VARCHAR(50) NOT NULL,
+                    entity_id INTEGER,
+                    reason VARCHAR(50) NOT NULL,
+                    confidence_score NUMERIC(5, 4),
+                    quarantined_data JSONB NOT NULL,
+                    conflict_data JSONB,
+                    potential_match_ids JSONB,
+                    match_scores JSONB,
+                    data_source VARCHAR(50) NOT NULL,
+                    batch_id UUID,
+                    is_resolved BOOLEAN DEFAULT FALSE,
+                    resolved_at TIMESTAMP WITH TIME ZONE,
+                    resolved_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    resolution_action VARCHAR(50),
+                    resolution_notes TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_quarantine_status ON data_quarantine(is_resolved)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_quarantine_entity ON data_quarantine(entity_type, entity_id)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_quarantine_reason ON data_quarantine(reason, is_resolved)
+            """))
+            logger.info("Pipeline: data_quarantine table complete")
+    except Exception as e:
+        logger.warning(f"Pipeline: data_quarantine table warning: {e}")
+
+    # 5. field_provenance table
+    try:
+        async with engine.begin() as conn:
+            logger.info("Pipeline: Creating field_provenance table...")
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS field_provenance (
+                    id SERIAL PRIMARY KEY,
+                    entity_type VARCHAR(50) NOT NULL,
+                    entity_id INTEGER NOT NULL,
+                    field_name VARCHAR(100) NOT NULL,
+                    data_source VARCHAR(50) NOT NULL,
+                    source_id VARCHAR(100),
+                    source_url TEXT,
+                    confidence_score NUMERIC(5, 4) DEFAULT 1.0,
+                    trust_weight NUMERIC(3, 2) DEFAULT 1.0,
+                    license_type VARCHAR(100),
+                    requires_attribution BOOLEAN DEFAULT FALSE,
+                    attribution_text TEXT,
+                    is_locked BOOLEAN DEFAULT FALSE,
+                    locked_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    locked_at TIMESTAMP WITH TIME ZONE,
+                    lock_reason TEXT,
+                    fetched_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            await conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_provenance_unique
+                ON field_provenance(entity_type, entity_id, field_name)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_provenance_source ON field_provenance(data_source)
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_provenance_locked ON field_provenance(is_locked)
+            """))
+            logger.info("Pipeline: field_provenance table complete")
+    except Exception as e:
+        logger.warning(f"Pipeline: field_provenance table warning: {e}")
+
+    logger.info("Data Acquisition Pipeline tables migration complete")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -607,6 +828,8 @@ async def lifespan(app: FastAPI):
     await migrate_outreach_tables()
     # User Management System v2.0.0: Create user management tables
     await migrate_user_management_tables()
+    # Data Acquisition Pipeline v1.0.0: Create pipeline tables
+    await migrate_pipeline_tables()
     # Import Funkos if database is empty
     await import_funkos_if_needed()
 
@@ -764,6 +987,12 @@ if OUTREACH_ROUTES_AVAILABLE:
     app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
 else:
     logger.warning("Outreach routes disabled - import failed")
+
+# Data Acquisition Pipeline v1.0.0
+if DATA_HEALTH_ROUTES_AVAILABLE:
+    app.include_router(data_health.router, prefix="/api/admin", tags=["Admin - Data Health"])
+else:
+    logger.warning("Data health routes disabled - import failed")
 
 
 @app.get("/", tags=["Health"])

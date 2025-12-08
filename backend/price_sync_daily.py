@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Daily Price Sync System v1.1.0
+Daily Price Sync System v1.6.0
 
 Syncs pricing data from PriceCharting for Funkos and Comics.
 Per constitution_db.json Section 5: "Critical tables track change provenance (who, when, reason)."
+
+v1.6.0 CHANGES (Data Acquisition Pipeline):
+- Fail-fast validation for PRICECHARTING_API_TOKEN (RISK-009)
+- Log ALL errors - no suppression cap (RISK-008)
+- Error summary with details at end of sync
 
 v1.1.0 CRITICAL CHANGES:
 - Replaced blocking requests.get() with async httpx via ResilientHTTPClient
@@ -60,8 +65,10 @@ AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=F
 PC_API_TOKEN = os.getenv("PRICECHARTING_API_TOKEN", "")
 PC_BASE_URL = "https://www.pricecharting.com/api/product"
 
+# v1.6.0: Fail-fast validation - exit early if token not configured (RISK-009)
 if not PC_API_TOKEN:
-    logger.error("PRICECHARTING_API_TOKEN not set. Price sync will fail.")
+    logger.critical("PRICECHARTING_API_TOKEN not set. Exiting - price sync cannot proceed without API token.")
+    sys.exit(1)
 
 
 async def ensure_changelog_table():
@@ -299,8 +306,15 @@ async def sync_funko_prices(
 
         except Exception as e:
             stats["errors"] += 1
-            if stats["errors"] <= 5:
-                logger.error(f"Error syncing Funko {pc_id}: {e}")
+            # v1.6.0: Log ALL errors (RISK-008) - summary at end of sync
+            if "error_details" not in stats:
+                stats["error_details"] = []
+            stats["error_details"].append({
+                "pc_id": pc_id,
+                "title": title[:100] if title else "Unknown",
+                "error": str(e)[:200]
+            })
+            logger.warning(f"Error syncing Funko {pc_id} ({title[:50] if title else 'Unknown'}): {e}")
 
         # Commit every 100 records for progress visibility
         # Note: This creates partial update risk on crash - acceptable tradeoff
@@ -417,8 +431,15 @@ async def sync_comic_prices(
 
         except Exception as e:
             stats["errors"] += 1
-            if stats["errors"] <= 5:
-                logger.error(f"Error syncing Comic {pc_id}: {e}")
+            # v1.6.0: Log ALL errors (RISK-008) - summary at end of sync
+            if "error_details" not in stats:
+                stats["error_details"] = []
+            stats["error_details"].append({
+                "pc_id": pc_id,
+                "title": title[:100] if title else "Unknown",
+                "error": str(e)[:200]
+            })
+            logger.warning(f"Error syncing Comic {pc_id} ({title[:50] if title else 'Unknown'}): {e}")
 
         if stats["checked"] % 100 == 0:
             await db.commit()
@@ -489,7 +510,7 @@ async def main():
     import uuid
 
     logger.info("=" * 70)
-    logger.info("DAILY PRICE SYNC v1.1.0")
+    logger.info("DAILY PRICE SYNC v1.6.0")
     logger.info(f"Started: {datetime.now().isoformat()}")
     logger.info("=" * 70)
 
@@ -553,9 +574,29 @@ async def main():
             ), {"batch_id": batch_id})
             total_changes = result.scalar()
 
+            # v1.6.0: Error summary (RISK-008)
+            total_errors = funko_stats['errors'] + comic_stats['errors']
+            if total_errors > 0:
+                logger.info("=" * 70)
+                logger.info(f"ERROR SUMMARY ({total_errors} total errors)")
+                logger.info("=" * 70)
+
+                # Show up to 20 error details
+                all_errors = []
+                all_errors.extend(funko_stats.get('error_details', []))
+                all_errors.extend(comic_stats.get('error_details', []))
+
+                for i, err in enumerate(all_errors[:20], 1):
+                    logger.error(f"  [{i}] PC ID {err['pc_id']}: {err['title']}")
+                    logger.error(f"       {err['error']}")
+
+                if len(all_errors) > 20:
+                    logger.error(f"  ... and {len(all_errors) - 20} more errors (see logs above)")
+
             logger.info("=" * 70)
             logger.info("SYNC COMPLETE!")
             logger.info(f"Total changes logged: {total_changes}")
+            logger.info(f"Total errors: {total_errors}")
             logger.info(f"Batch ID: {batch_id}")
             logger.info(f"Finished: {datetime.now().isoformat()}")
             logger.info("=" * 70)
