@@ -49,10 +49,27 @@ from app.models.user_audit_log import UserAuditLog, AuditAction
 from app.models.password_reset import PasswordResetToken
 from app.models.email_verification import EmailVerificationToken
 from app.models.dsar_request import DSARRequest, DSARType, DSARStatus
-# Outreach System v1.5.0
-from app.models.newsletter import NewsletterSubscriber, EmailEvent, SubscriberStatus
-from app.models.content_queue import ContentQueueItem, ContentStatus
-from app.models.price_changelog import PriceChangelog
+# Outreach System v1.5.0 - optional imports for graceful degradation
+try:
+    from app.models.newsletter import NewsletterSubscriber, EmailEvent, SubscriberStatus
+except ImportError as e:
+    print(f"Warning: Could not import newsletter models: {e}")
+    NewsletterSubscriber = None
+    EmailEvent = None
+    SubscriberStatus = None
+
+try:
+    from app.models.content_queue import ContentQueueItem, ContentStatus
+except ImportError as e:
+    print(f"Warning: Could not import content_queue models: {e}")
+    ContentQueueItem = None
+    ContentStatus = None
+
+try:
+    from app.models.price_changelog import PriceChangelog
+except ImportError as e:
+    print(f"Warning: Could not import price_changelog model: {e}")
+    PriceChangelog = None
 
 __all__ = [
     "User",
