@@ -22,6 +22,7 @@ def get_cookie_domain(request: Request) -> Optional[str]:
     Get the cookie domain from settings or auto-detect from request.
 
     Returns None for localhost to let the browser auto-set.
+    For production, returns the root domain with leading dot for cross-subdomain sharing.
     """
     if settings.COOKIE_DOMAIN:
         return settings.COOKIE_DOMAIN
@@ -32,6 +33,14 @@ def get_cookie_domain(request: Request) -> Optional[str]:
     # Don't set domain for localhost (browser handles it)
     if host in ("localhost", "127.0.0.1"):
         return None
+
+    # For production domains, extract root domain for cross-subdomain cookies
+    # e.g., api.mdmcomics.com -> .mdmcomics.com
+    parts = host.split(".")
+    if len(parts) >= 2:
+        # Get the root domain (last two parts)
+        root_domain = ".".join(parts[-2:])
+        return f".{root_domain}"
 
     return host
 
