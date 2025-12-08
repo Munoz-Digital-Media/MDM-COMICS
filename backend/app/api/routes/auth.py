@@ -328,7 +328,7 @@ async def login(
         user_id=user.id,
         ip_address=client_ip,
         user_agent=user_agent,
-        device_info=user_agent[:100] if user_agent else None,
+        device_info=user_agent[:50] if user_agent else None,  # device_type column is VARCHAR(50)
     )
 
     # Log successful login
