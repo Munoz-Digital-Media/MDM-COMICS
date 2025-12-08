@@ -592,13 +592,13 @@ class PipelineScheduler:
     async def start(self):
         """Start all scheduled jobs."""
         if self._running:
-            logger.warning("Pipeline scheduler already running")
+            print("[SCHEDULER] Pipeline scheduler already running")
             return
 
         self._running = True
-        logger.info("=" * 60)
-        logger.info("PIPELINE SCHEDULER STARTED")
-        logger.info("=" * 60)
+        print("=" * 60)
+        print("[SCHEDULER] PIPELINE SCHEDULER STARTED")
+        print("=" * 60)
 
         # Start job loops
         self._tasks = [
@@ -607,10 +607,11 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("dlq_retry", run_dlq_retry_job, interval_minutes=15)),
         ]
 
-        logger.info("Scheduled jobs:")
-        logger.info("  - comic_enrichment: every 30 minutes")
-        logger.info("  - funko_price_check: every 60 minutes")
-        logger.info("  - dlq_retry: every 15 minutes")
+        print("[SCHEDULER] Scheduled jobs:")
+        print("[SCHEDULER]   - comic_enrichment: every 30 minutes")
+        print("[SCHEDULER]   - funko_price_check: every 60 minutes")
+        print("[SCHEDULER]   - dlq_retry: every 15 minutes")
+        print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
         """Stop all scheduled jobs."""
@@ -633,11 +634,13 @@ class PipelineScheduler:
 
         while self._running:
             try:
-                logger.info(f"[SCHEDULER] Running {name}...")
+                print(f"[SCHEDULER] Running {name}...")
                 await job_func()
+                print(f"[SCHEDULER] Job {name} completed")
             except Exception as e:
-                logger.error(f"[SCHEDULER] Job {name} failed: {e}")
+                print(f"[SCHEDULER] Job {name} failed: {e}")
 
+            print(f"[SCHEDULER] Next {name} run in {interval_minutes} minutes")
             await asyncio.sleep(interval_seconds)
 
     async def run_job_now(self, job_name: str):
