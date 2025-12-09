@@ -110,8 +110,9 @@ export default function InventorySummary() {
           break;
         case 'change_pct':
         default:
-          aVal = Math.abs(a.change_pct || 0);
-          bVal = Math.abs(b.change_pct || 0);
+          // Sort by actual value so gains and losses are separated
+          aVal = a.change_pct || 0;
+          bVal = b.change_pct || 0;
           break;
       }
       return priceSort.dir === 'asc' ? aVal - bVal : bVal - aVal;
