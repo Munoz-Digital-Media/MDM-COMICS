@@ -1,10 +1,11 @@
 import React, { useState, useCallback } from "react";
 import { Search, X, Loader2, BookOpen, Calendar, Building2 } from "lucide-react";
 import { comicsAPI } from "../services/api";
+import DataAttribution from "./DataAttribution";
 
 /**
  * Comic Database Search Component
- * Searches the Metron database for comic issues
+ * Searches GCD (primary) and Metron databases for comic issues
  */
 export default function ComicSearch({ onSelectComic, onClose }) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -119,7 +120,7 @@ export default function ComicSearch({ onSelectComic, onClose }) {
             <div className="text-center py-12">
               <BookOpen className="w-16 h-16 text-zinc-700 mx-auto mb-4" />
               <p className="text-zinc-500">Search for comics by series name and issue number</p>
-              <p className="text-zinc-600 text-sm mt-2">Powered by Metron Database</p>
+              <p className="text-zinc-600 text-sm mt-2">Powered by GCD + Metron</p>
             </div>
           )}
 
@@ -185,11 +186,9 @@ export default function ComicSearch({ onSelectComic, onClose }) {
           )}
         </div>
 
-        {/* Footer */}
+        {/* Footer - GCD Attribution (CC-BY-SA 4.0 required) */}
         <div className="p-4 border-t border-zinc-800 text-center">
-          <p className="text-xs text-zinc-600">
-            Data provided by <a href="https://metron.cloud" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">Metron.cloud</a>
-          </p>
+          <DataAttribution sources={["gcd", "metron"]} variant="footer" />
         </div>
       </div>
     </div>
