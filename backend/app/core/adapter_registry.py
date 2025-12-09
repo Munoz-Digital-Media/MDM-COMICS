@@ -370,8 +370,8 @@ METRON_CONFIG = AdapterConfig(
 GCD_CONFIG = AdapterConfig(
     name="gcd",
     source_type=DataSourceType.DATABASE_DUMP,  # Primary method is DB dump
-    enabled=False,  # Disabled by default - P2 priority
-    priority=30,
+    enabled=True,  # GCD-Primary architecture - enabled for catalog
+    priority=5,  # Highest priority for bibliographic data (lower = higher)
     requests_per_second=1.0,
     burst_limit=3,
     license_type="CC-BY-SA-4.0",
@@ -392,3 +392,190 @@ MARVEL_FANDOM_CONFIG = AdapterConfig(
     attribution_text="Character data sourced from Marvel Database (https://marvel.fandom.com) under CC BY-SA 3.0 license.",
     images_allowed=False,  # Images are NOT covered by CC BY-SA
 )
+
+
+# =============================================================================
+# Source Priority Resolution - GCD-Primary Architecture v1.7.0
+# =============================================================================
+#
+# Field-level priority determines which source wins for each data field.
+# GCD is primary for bibliographic data, PriceCharting for pricing,
+# Metron as fallback for metadata.
+#
+# Priority order (lower = higher priority):
+#   5  - GCD: Bibliographic (series, issue, publisher, ISBN/UPC, credits)
+#   10 - PriceCharting: Pricing data only
+#   20 - Metron: Metadata fallback (synopsis, characters, images)
+#   40 - MarvelFandom: Character data (future)
+
+# Field categories for priority resolution
+FIELD_CATEGORIES = {
+    "catalog": {
+        # GCD is authoritative (priority 5)
+        "fields": [
+            "series_name", "issue_number", "volume", "publisher_name",
+            "isbn", "upc", "barcode", "cover_date", "release_date",
+            "page_count", "variant_name", "variant_of_id",
+            "gcd_id", "gcd_series_id", "gcd_publisher_id",
+        ],
+        "primary_source": "gcd",
+        "fallback_sources": ["metron"],
+    },
+    "pricing": {
+        # PriceCharting is authoritative
+        "fields": [
+            "price_loose", "price_cib", "price_new", "price_graded",
+            "pricecharting_id", "market_price", "average_price",
+        ],
+        "primary_source": "pricecharting",
+        "fallback_sources": [],
+    },
+    "metadata": {
+        # Metron is authoritative for rich metadata
+        "fields": [
+            "synopsis", "description", "story_arc", "characters",
+            "teams", "locations", "genres",
+            "metron_id",
+        ],
+        "primary_source": "metron",
+        "fallback_sources": ["gcd"],
+    },
+    "credits": {
+        # GCD has best credits data
+        "fields": [
+            "writer", "penciller", "inker", "colorist", "letterer",
+            "cover_artist", "editor", "credits",
+        ],
+        "primary_source": "gcd",
+        "fallback_sources": ["metron"],
+    },
+    "images": {
+        # Metron/PriceCharting for images (GCD cannot provide images)
+        "fields": [
+            "cover_image", "image_url", "thumbnail_url",
+        ],
+        "primary_source": "metron",
+        "fallback_sources": ["pricecharting"],
+    },
+}
+
+
+def get_field_priority(field_name: str) -> tuple[str, list[str]]:
+    """
+    Get the primary source and fallback sources for a field.
+
+    Returns:
+        Tuple of (primary_source, fallback_sources)
+    """
+    for category, config in FIELD_CATEGORIES.items():
+        if field_name in config["fields"]:
+            return config["primary_source"], config["fallback_sources"]
+
+    # Default: GCD primary, Metron fallback
+    return "gcd", ["metron"]
+
+
+def resolve_field_value(
+    field_name: str,
+    source_values: Dict[str, Any],
+    allow_fallback: bool = True,
+) -> tuple[Any, str]:
+    """
+    Resolve the best value for a field from multiple sources.
+
+    Args:
+        field_name: Name of the field
+        source_values: Dict mapping source name to value
+        allow_fallback: Whether to use fallback sources if primary is None
+
+    Returns:
+        Tuple of (resolved_value, source_name)
+    """
+    primary, fallbacks = get_field_priority(field_name)
+
+    # Try primary source first
+    if primary in source_values and source_values[primary] is not None:
+        return source_values[primary], primary
+
+    # Try fallbacks in order
+    if allow_fallback:
+        for fallback in fallbacks:
+            if fallback in source_values and source_values[fallback] is not None:
+                return source_values[fallback], fallback
+
+    # No value found
+    return None, ""
+
+
+def merge_records_with_priority(
+    records: Dict[str, Dict[str, Any]],
+    allow_fallback: bool = True,
+) -> tuple[Dict[str, Any], Dict[str, str]]:
+    """
+    Merge records from multiple sources using field-level priority.
+
+    Args:
+        records: Dict mapping source name to record dict
+        allow_fallback: Whether to use fallback sources if primary is None
+
+    Returns:
+        Tuple of (merged_record, field_provenance)
+        - merged_record: Dict with best value for each field
+        - field_provenance: Dict mapping field name to source name
+    """
+    # Collect all field names across sources
+    all_fields = set()
+    for record in records.values():
+        if record:
+            all_fields.update(record.keys())
+
+    # Resolve each field
+    merged = {}
+    provenance = {}
+
+    for field in all_fields:
+        # Skip internal fields
+        if field.startswith("_"):
+            continue
+
+        source_values = {
+            source: record.get(field) if record else None
+            for source, record in records.items()
+        }
+
+        value, source = resolve_field_value(field, source_values, allow_fallback)
+
+        if value is not None:
+            merged[field] = value
+            provenance[field] = source
+
+    return merged, provenance
+
+
+def get_source_config(source_name: str) -> Optional[AdapterConfig]:
+    """Get the config for a source by name."""
+    configs = {
+        "gcd": GCD_CONFIG,
+        "pricecharting": PRICECHARTING_CONFIG,
+        "metron": METRON_CONFIG,
+        "marvel_fandom": MARVEL_FANDOM_CONFIG,
+    }
+    return configs.get(source_name)
+
+
+def requires_attribution(sources: List[str]) -> List[Dict[str, str]]:
+    """
+    Get attribution requirements for a list of sources.
+
+    Returns list of attribution dicts with source name and text.
+    """
+    attributions = []
+    for source in sources:
+        config = get_source_config(source)
+        if config and config.requires_attribution and config.attribution_text:
+            attributions.append({
+                "source": source,
+                "license": config.license_type,
+                "attribution": config.attribution_text,
+            })
+    return attributions
