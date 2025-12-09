@@ -425,7 +425,7 @@ import AboutContact from "./components/AboutContact";
                   <h1 className="font-comic text-xl sm:text-2xl md:text-3xl text-orange-500 truncate">
                     MDM COMICS
                   </h1>
-                  <p className="text-[10px] sm:text-xs text-zinc-500 -mt-1 truncate">Comics • Collectibles • Supplies</p>
+                  <p className="hidden sm:block text-xs text-zinc-500 -mt-1 truncate">Comics • Collectibles • Supplies</p>
                 </div>
               </div>
 
