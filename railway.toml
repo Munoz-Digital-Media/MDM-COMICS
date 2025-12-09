@@ -1,0 +1,22 @@
+# Railway Monorepo Configuration
+# This file helps Railway understand the project structure
+
+# Note: Root directory settings must ALSO be configured in Railway Dashboard
+# Service Settings → Source → Root Directory
+#
+# Backend services: Set to "backend"
+# Frontend service: Set to "/" (root) or leave empty
+
+# Documentation for service configuration:
+# - MDM-COMICS BACKEND: rootDirectory = "backend"
+# - data-pipeline-cron: rootDirectory = "backend"
+# - MDM COMICS FRONTEND: rootDirectory = "/" (uses root package.json)
+
+[build]
+# Default builder for all services
+builder = "NIXPACKS"
+
+[deploy]
+# Default restart policy
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

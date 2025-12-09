@@ -34,8 +34,8 @@ import AboutContact from "./components/AboutContact";
       className="product-card bg-zinc-900 rounded-xl border border-zinc-800 fade-up"
       style={{ animationDelay: `${0.05 * index}s` }}
     >
-      {/* Product Image */}
-      <div className="relative h-36 bg-zinc-800 rounded-t-xl overflow-hidden">
+      {/* Product Image - responsive height */}
+      <div className="relative h-32 sm:h-36 md:h-40 bg-zinc-800 rounded-t-xl overflow-hidden">
         <img
           src={product.image}
           alt={product.name}
@@ -46,22 +46,22 @@ import AboutContact from "./components/AboutContact";
           }}
         />
         {/* Badges - compact */}
-        <div className="absolute top-2 left-2 flex flex-col gap-1">
+        <div className="absolute top-1.5 sm:top-2 left-1.5 sm:left-2 flex flex-col gap-1">
           {product.featured && (
-            <span className="px-2 py-1 bg-orange-500 rounded-full text-[10px] font-bold text-white shadow-lg">
+            <span className="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-orange-500 rounded-full text-[9px] sm:text-[10px] font-bold text-white shadow-lg">
               ⭐ FEATURED
             </span>
           )}
           {product.stock <= 5 && (
-            <span className="px-2 py-1 bg-red-600 rounded-full text-[10px] font-bold text-white shadow-lg">
+            <span className="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-red-600 rounded-full text-[9px] sm:text-[10px] font-bold text-white shadow-lg">
               🔥 {product.stock} left
             </span>
           )}
         </div>
         {/* Sale badge - top right */}
         {product.originalPrice && (
-          <div className="absolute top-2 right-2">
-            <span className="px-2 py-1 bg-green-600 rounded-full text-[10px] font-bold text-white shadow-lg">
+          <div className="absolute top-1.5 sm:top-2 right-1.5 sm:right-2">
+            <span className="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-green-600 rounded-full text-[9px] sm:text-[10px] font-bold text-white shadow-lg">
               SALE
             </span>
           </div>
@@ -69,23 +69,23 @@ import AboutContact from "./components/AboutContact";
       </div>
 
       {/* Product Info */}
-      <div className="p-3">
-        <p className="text-[10px] text-orange-500 font-semibold mb-0.5">{product.subcategory}</p>
-        <h3 className="font-bold text-sm text-white mb-1 line-clamp-2 leading-tight">{product.name}</h3>
-        <p className="text-zinc-500 text-xs mb-2 line-clamp-1">{product.description}</p>
+      <div className="p-2 sm:p-3">
+        <p className="text-[9px] sm:text-[10px] text-orange-500 font-semibold mb-0.5">{product.subcategory}</p>
+        <h3 className="font-bold text-xs sm:text-sm text-white mb-1 line-clamp-2 leading-tight">{product.name}</h3>
+        <p className="text-zinc-500 text-[10px] sm:text-xs mb-2 line-clamp-1">{product.description}</p>
 
         {/* Rating */}
         <div className="flex items-center gap-1 mb-2">
           <Star className="w-3 h-3 fill-orange-500 text-orange-500" />
-          <span className="text-xs text-zinc-400">{product.rating}</span>
+          <span className="text-[10px] sm:text-xs text-zinc-400">{product.rating}</span>
         </div>
 
         {/* Price & Add to Cart */}
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="text-lg font-bold text-white">${product.price}</span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <span className="text-base sm:text-lg font-bold text-white">${product.price}</span>
             {product.originalPrice && (
-              <span className="ml-1 text-xs text-zinc-500 line-through">
+              <span className="ml-1 text-[10px] sm:text-xs text-zinc-500 line-through">
                 ${product.originalPrice}
               </span>
             )}
@@ -93,13 +93,13 @@ import AboutContact from "./components/AboutContact";
           <button
             onClick={() => addToCart(product)}
             disabled={product.stock === 0}
-            className={`p-2 rounded-lg transition-all ${
+            className={`p-2.5 sm:p-2 rounded-lg transition-all flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center ${
               product.stock === 0
                 ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
                 : "bg-orange-500 text-white hover:shadow-lg hover:shadow-orange-500/25 active:scale-95"
             }`}
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
       </div>
@@ -543,11 +543,11 @@ import AboutContact from "./components/AboutContact";
           <main className="hero-gradient">
             {/* Hero Section */}
             <section className="max-w-7xl mx-auto px-4 py-12">
-              <div className="text-center mb-12 fade-up" style={{ animationDelay: "0.1s" }}>
-                <h2 className="font-comic text-5xl md:text-7xl mb-4 text-white">
+              <div className="text-center mb-8 sm:mb-12 fade-up" style={{ animationDelay: "0.1s" }}>
+                <h2 className="font-comic text-3xl sm:text-5xl md:text-7xl mb-3 sm:mb-4 text-white">
                   SHOP THE <span className="text-orange-500">RACK!</span>
                 </h2>
-                <p className="text-zinc-400 text-lg max-w-2xl mx-auto">
+                <p className="text-zinc-400 text-base sm:text-lg max-w-2xl mx-auto px-2">
                   Slabs for the serious. Back issues for the curious. Funkos for everyone!
                 </p>
               </div>
@@ -664,24 +664,24 @@ import AboutContact from "./components/AboutContact";
             {/* Features Section */}
             <section className="border-t border-zinc-800 bg-zinc-900/50">
               <div className="max-w-5xl mx-auto px-4 py-8">
-                <div className="grid grid-cols-3 divide-x divide-zinc-800">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-0 sm:divide-x divide-zinc-800">
                   <div className="flex flex-col items-center text-center px-4">
-                    <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
-                      <Truck className="w-6 h-6 text-orange-500" />
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
+                      <Truck className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
                     </div>
                     <h4 className="font-bold text-white text-sm">Fast Shipping</h4>
                     <p className="text-zinc-500 text-xs">Free on orders $50+</p>
                   </div>
                   <div className="flex flex-col items-center text-center px-4">
-                    <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
-                      <Package className="w-6 h-6 text-orange-500" />
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
+                      <Package className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
                     </div>
                     <h4 className="font-bold text-white text-sm">Secure Packaging</h4>
                     <p className="text-zinc-500 text-xs">Protective cases included</p>
                   </div>
                   <div className="flex flex-col items-center text-center px-4">
-                    <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
-                      <CreditCard className="w-6 h-6 text-orange-500" />
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
+                      <CreditCard className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
                     </div>
                     <h4 className="font-bold text-white text-sm">Secure Payment</h4>
                     <p className="text-zinc-500 text-xs">PayPal, Stripe & more</p>
