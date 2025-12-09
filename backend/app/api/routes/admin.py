@@ -1206,3 +1206,115 @@ async def toggle_user_admin(
         "is_admin": user.is_admin,
         "message": f"User {action} admin"
     }
+
+
+# ----- Pipeline Job Management -----
+
+@router.get("/pipeline/checkpoints")
+async def get_pipeline_checkpoints(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get status of all pipeline job checkpoints."""
+    result = await db.execute(text("""
+        SELECT
+            job_name, job_type, is_running,
+            last_run_started, last_run_completed,
+            total_processed, total_updated, total_errors,
+            last_error, updated_at
+        FROM pipeline_checkpoints
+        ORDER BY job_name
+    """))
+
+    checkpoints = result.fetchall()
+    return {
+        "checkpoints": [
+            {
+                "job_name": r[0],
+                "job_type": r[1],
+                "is_running": r[2],
+                "last_run_started": r[3].isoformat() if r[3] else None,
+                "last_run_completed": r[4].isoformat() if r[4] else None,
+                "total_processed": r[5] or 0,
+                "total_updated": r[6] or 0,
+                "total_errors": r[7] or 0,
+                "last_error": r[8],
+                "updated_at": r[9].isoformat() if r[9] else None,
+            }
+            for r in checkpoints
+        ]
+    }
+
+
+@router.post("/pipeline/checkpoints/{job_name}/clear")
+async def clear_pipeline_checkpoint(
+    job_name: str,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Manually clear a stale checkpoint (set is_running=false)."""
+    result = await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET is_running = false,
+            last_error = COALESCE(last_error, '') || E'\nManually cleared by admin at ' || NOW()::text
+        WHERE job_name = :name
+        RETURNING job_name
+    """), {"name": job_name})
+
+    cleared = result.fetchone()
+    if not cleared:
+        raise HTTPException(status_code=404, detail=f"Checkpoint not found: {job_name}")
+
+    await db.commit()
+    logger.info(f"Pipeline checkpoint cleared: {job_name} by {current_user.id}")
+
+    return {"message": f"Checkpoint cleared for job: {job_name}"}
+
+
+@router.get("/pipeline/stats")
+async def get_pipeline_stats(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get pipeline statistics including DLQ counts and record counts."""
+    # DLQ counts by status
+    dlq_result = await db.execute(text("""
+        SELECT status, COUNT(*) as count
+        FROM dead_letter_queue
+        GROUP BY status
+    """))
+    dlq_counts = {r[0]: r[1] for r in dlq_result.fetchall()}
+
+    # Record counts with pricecharting_id
+    pc_result = await db.execute(text("""
+        SELECT
+            (SELECT COUNT(*) FROM funkos WHERE pricecharting_id IS NOT NULL) as funkos_with_pc,
+            (SELECT COUNT(*) FROM comic_issues WHERE pricecharting_id IS NOT NULL) as comics_with_pc,
+            (SELECT COUNT(*) FROM funkos) as total_funkos,
+            (SELECT COUNT(*) FROM comic_issues) as total_comics
+    """))
+    counts = pc_result.fetchone()
+
+    # Price changelog count (last 24h)
+    changelog_result = await db.execute(text("""
+        SELECT COUNT(*)
+        FROM price_changelog
+        WHERE changed_at > NOW() - INTERVAL '24 hours'
+    """))
+    changes_24h = changelog_result.scalar() or 0
+
+    return {
+        "dlq": {
+            "pending": dlq_counts.get("PENDING", 0),
+            "retrying": dlq_counts.get("RETRYING", 0),
+            "resolved": dlq_counts.get("RESOLVED", 0),
+            "dead": dlq_counts.get("DEAD", 0),
+        },
+        "records": {
+            "funkos_with_pricecharting": counts[0] if counts else 0,
+            "comics_with_pricecharting": counts[1] if counts else 0,
+            "total_funkos": counts[2] if counts else 0,
+            "total_comics": counts[3] if counts else 0,
+        },
+        "price_changes_24h": changes_24h,
+    }

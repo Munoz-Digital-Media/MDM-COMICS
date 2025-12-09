@@ -44,6 +44,37 @@ logger = logging.getLogger(__name__)
 # CHECKPOINT MANAGEMENT
 # =============================================================================
 
+# Stale checkpoint timeout in hours - if a job claims to be "running" for longer
+# than this, we assume it crashed and clear the flag
+STALE_CHECKPOINT_TIMEOUT_HOURS = 2
+
+
+async def clear_stale_checkpoints(db: AsyncSession) -> int:
+    """
+    Clear is_running flags for jobs that have been "running" for too long.
+
+    This handles the case where a container was killed mid-job, leaving
+    is_running = true forever. Returns the number of stale checkpoints cleared.
+    """
+    result = await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET is_running = false,
+            last_error = COALESCE(last_error, '') || E'\nCleared stale checkpoint at ' || NOW()::text
+        WHERE is_running = true
+        AND last_run_started IS NOT NULL
+        AND last_run_started < NOW() - make_interval(hours => :timeout_hours)
+        RETURNING job_name
+    """), {"timeout_hours": STALE_CHECKPOINT_TIMEOUT_HOURS})
+
+    cleared = result.fetchall()
+    if cleared:
+        await db.commit()
+        for row in cleared:
+            logger.warning(f"[CHECKPOINT] Cleared stale checkpoint for job: {row.job_name}")
+
+    return len(cleared)
+
+
 async def get_or_create_checkpoint(db: AsyncSession, job_name: str, job_type: str) -> dict:
     """Get existing checkpoint or create new one."""
     result = await db.execute(
@@ -895,6 +926,18 @@ class PipelineScheduler:
         print("=" * 60)
         print("[SCHEDULER] PIPELINE SCHEDULER STARTED")
         print("=" * 60)
+
+        # Clear any stale checkpoints from crashed runs
+        print("[SCHEDULER] Checking for stale checkpoints...")
+        try:
+            async with AsyncSessionLocal() as db:
+                cleared = await clear_stale_checkpoints(db)
+                if cleared:
+                    print(f"[SCHEDULER] Cleared {cleared} stale checkpoint(s)")
+                else:
+                    print("[SCHEDULER] No stale checkpoints found")
+        except Exception as e:
+            print(f"[SCHEDULER] Warning: Could not check stale checkpoints: {e}")
 
         # Start job loops
         self._tasks = [
