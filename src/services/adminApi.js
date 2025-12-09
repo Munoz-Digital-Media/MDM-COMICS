@@ -431,9 +431,23 @@ export const adminAPI = {
     });
   },
 
-  // Reset GCD checkpoint (clears error state, keeps progress)
+  // Reset GCD checkpoint (starts from offset 0 - use for full re-import)
   resetGCDCheckpoint: async () => {
     return fetchAPI('/admin/pipeline/gcd/reset-checkpoint', {
+      method: 'POST',
+    });
+  },
+
+  // Clear stale lock (keeps offset, just clears is_running flag)
+  clearGCDStaleLock: async () => {
+    return fetchAPI('/admin/pipeline/gcd/clear-stale-lock', {
+      method: 'POST',
+    });
+  },
+
+  // Sync offset to actual DB count (skips already-imported records)
+  syncGCDOffset: async () => {
+    return fetchAPI('/admin/pipeline/gcd/sync-offset', {
       method: 'POST',
     });
   },

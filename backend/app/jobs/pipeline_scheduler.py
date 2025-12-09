@@ -1119,9 +1119,34 @@ async def run_self_healing_job():
 
 
 async def _restart_gcd_import():
-    """Helper to restart GCD import job asynchronously."""
+    """
+    Helper to restart GCD import job asynchronously.
+
+    v1.9.1: Now syncs offset to actual DB count before restart to avoid
+    re-processing already-imported records.
+    """
     try:
-        logger.info("[_restart_gcd_import] Starting GCD import restart...")
+        logger.info("[_restart_gcd_import] Syncing offset to actual DB count...")
+
+        # Sync offset to actual DB count to avoid re-processing
+        async with AsyncSessionLocal() as db:
+            # Get actual count
+            result = await db.execute(text("""
+                SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
+            """))
+            actual_count = result.scalar() or 0
+
+            # Update checkpoint offset
+            await db.execute(text("""
+                UPDATE pipeline_checkpoints
+                SET state_data = jsonb_build_object('offset', :offset)
+                WHERE job_name = 'gcd_import'
+            """), {"offset": actual_count})
+            await db.commit()
+
+            logger.info(f"[_restart_gcd_import] Offset synced to {actual_count:,}")
+
+        logger.info("[_restart_gcd_import] Starting GCD import from synced offset...")
         result = await run_gcd_import_job(max_records=0, batch_size=5000)
         logger.info(f"[_restart_gcd_import] GCD import completed: {result}")
     except Exception as e:

@@ -1450,6 +1450,67 @@ async def reset_gcd_checkpoint(
     return {"status": "reset", "message": "GCD import checkpoint has been reset to offset 0"}
 
 
+@router.post("/pipeline/gcd/clear-stale-lock")
+async def clear_gcd_stale_lock(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Clear stale is_running lock without resetting progress.
+
+    Use this when the job is stuck with is_running=true but no actual progress.
+    This clears the lock so a new import can start from where it left off.
+    """
+    # Clear just is_running, keep everything else intact
+    await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET is_running = false,
+            last_error = 'Stale lock cleared by admin at ' || NOW()::text
+        WHERE job_name = 'gcd_import'
+    """))
+    await db.commit()
+
+    logger.info(f"GCD import stale lock cleared by admin {current_user.id}")
+
+    return {"status": "cleared", "message": "Stale lock cleared, import can resume from current offset"}
+
+
+@router.post("/pipeline/gcd/sync-offset")
+async def sync_gcd_offset(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Sync checkpoint offset to actual DB count.
+
+    Use this to skip re-processing records that are already imported.
+    Sets offset = COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
+    """
+    # Get actual count of imported records
+    result = await db.execute(text("""
+        SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
+    """))
+    actual_count = result.scalar() or 0
+
+    # Update checkpoint with synced offset
+    await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET state_data = jsonb_build_object('offset', :offset),
+            is_running = false,
+            last_error = 'Offset synced to DB count by admin at ' || NOW()::text
+        WHERE job_name = 'gcd_import'
+    """), {"offset": actual_count})
+    await db.commit()
+
+    logger.info(f"GCD import offset synced to {actual_count:,} by admin {current_user.id}")
+
+    return {
+        "status": "synced",
+        "message": f"Offset synced to actual DB count: {actual_count:,}",
+        "new_offset": actual_count
+    }
+
+
 @router.get("/pipeline/gcd/validate")
 async def validate_gcd_dump(
     current_user: User = Depends(get_current_admin),
