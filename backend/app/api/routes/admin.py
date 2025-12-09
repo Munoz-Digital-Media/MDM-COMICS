@@ -1383,6 +1383,43 @@ async def get_gcd_import_status(
     """))
     gcd_count = gcd_count_result.scalar() or 0
 
+    # Data quality stats for imported records (Option 5: Data Quality Summary)
+    quality_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(CASE WHEN image IS NOT NULL AND image != '' THEN 1 END) as with_cover,
+            COUNT(CASE WHEN description IS NOT NULL AND description != '' THEN 1 END) as with_description,
+            COUNT(CASE WHEN isbn IS NOT NULL AND isbn != '' THEN 1 END) as with_isbn,
+            COUNT(CASE WHEN upc IS NOT NULL AND upc != '' THEN 1 END) as with_upc,
+            COUNT(CASE WHEN cover_date IS NOT NULL THEN 1 END) as with_cover_date,
+            COUNT(CASE WHEN pricecharting_id IS NOT NULL THEN 1 END) as with_pricing,
+            COUNT(DISTINCT gcd_publisher_id) as unique_publishers,
+            COUNT(DISTINCT gcd_series_id) as unique_series
+        FROM comic_issues
+        WHERE gcd_id IS NOT NULL
+    """))
+    quality_row = quality_result.fetchone()
+
+    data_quality = None
+    if quality_row and quality_row[0] > 0:
+        total = quality_row[0]
+        data_quality = {
+            "total_imported": total,
+            "with_cover_image": quality_row[1],
+            "with_description": quality_row[2],
+            "with_isbn": quality_row[3],
+            "with_upc": quality_row[4],
+            "with_cover_date": quality_row[5],
+            "with_pricing": quality_row[6],
+            "unique_publishers": quality_row[7],
+            "unique_series": quality_row[8],
+            # Percentages
+            "pct_with_cover": round((quality_row[1] / total) * 100, 1) if total > 0 else 0,
+            "pct_with_description": round((quality_row[2] / total) * 100, 1) if total > 0 else 0,
+            "pct_with_isbn": round((quality_row[3] / total) * 100, 1) if total > 0 else 0,
+            "pct_with_pricing": round((quality_row[6] / total) * 100, 1) if total > 0 else 0,
+        }
+
     # Get GCD adapter validation info
     gcd_info = {
         "enabled": settings.GCD_IMPORT_ENABLED,
@@ -1419,6 +1456,7 @@ async def get_gcd_import_status(
             "current_offset": checkpoint[8].get("offset", 0) if checkpoint and checkpoint[8] else 0,
         } if checkpoint else None,
         "imported_count": gcd_count,
+        "data_quality": data_quality,
     }
 
 
