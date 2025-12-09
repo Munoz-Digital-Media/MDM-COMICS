@@ -410,22 +410,22 @@ import AboutContact from "./components/AboutContact";
         )}
 
         {/* Header */}
-        <header className="sticky top-0 z-40 bg-zinc-950/95 backdrop-blur-md border-b border-zinc-800">
-          <div className="max-w-7xl mx-auto px-4 py-4">
-            <div className="flex items-center justify-between">
+        <header className="sticky top-0 z-40 bg-zinc-950/95 backdrop-blur-md border-b border-zinc-800 overflow-x-hidden">
+          <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+            <div className="flex items-center justify-between gap-2">
               {/* Logo */}
               <div
-                className="flex items-center gap-3 cursor-pointer"
+                className="flex items-center gap-2 sm:gap-3 cursor-pointer flex-shrink-0 min-w-0"
                 onClick={() => setCurrentView("shop")}
               >
-                <div className="w-12 h-12 bg-zinc-800 border border-orange-500/30 rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/10">
-                  <span className="font-comic text-2xl text-orange-500">M</span>
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 border border-orange-500/30 rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/10 flex-shrink-0">
+                  <span className="font-comic text-xl sm:text-2xl text-orange-500">M</span>
                 </div>
-                <div>
-                  <h1 className="font-comic text-3xl text-orange-500">
+                <div className="min-w-0">
+                  <h1 className="font-comic text-xl sm:text-2xl md:text-3xl text-orange-500 truncate">
                     MDM COMICS
                   </h1>
-                  <p className="text-xs text-zinc-500 -mt-1">Comics • Collectibles • Supplies</p>
+                  <p className="text-[10px] sm:text-xs text-zinc-500 -mt-1 truncate">Comics • Collectibles • Supplies</p>
                 </div>
               </div>
 
@@ -453,16 +453,16 @@ import AboutContact from "./components/AboutContact";
               </div>
 
               {/* User & Cart Buttons */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                 {/* User Button */}
                 {user ? (
                   <div className="relative group">
-                    <button className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-orange-500 transition-colors">
-                      <div className="w-7 h-7 bg-orange-500 rounded-full flex items-center justify-center">
-                        <span className="text-xs font-bold text-white">{user.name.charAt(0).toUpperCase()}</span>
+                    <button className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 bg-zinc-900 border border-zinc-800 rounded-lg sm:rounded-xl hover:border-orange-500 transition-colors">
+                      <div className="w-6 h-6 sm:w-7 sm:h-7 bg-orange-500 rounded-full flex items-center justify-center">
+                        <span className="text-[10px] sm:text-xs font-bold text-white">{user.name.charAt(0).toUpperCase()}</span>
                       </div>
                       <span className="text-sm text-zinc-300 hidden sm:block">{user.name.split(' ')[0]}</span>
-                      <ChevronDown className="w-4 h-4 text-zinc-500" />
+                      <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 text-zinc-500 hidden sm:block" />
                     </button>
                     {/* Dropdown */}
                     <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible
@@ -488,9 +488,9 @@ import AboutContact from "./components/AboutContact";
                 ) : (
                   <button
                     onClick={() => { setAuthMode("login"); setIsAuthModalOpen(true); }}
-                    className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-orange-500 transition-colors group"
+                    className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 bg-zinc-900 border border-zinc-800 rounded-lg sm:rounded-xl hover:border-orange-500 transition-colors group"
                   >
-                    <User className="w-5 h-5 text-zinc-400 group-hover:text-orange-500 transition-colors" />
+                    <User className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-400 group-hover:text-orange-500 transition-colors" />
                     <span className="text-sm text-zinc-400 group-hover:text-orange-500 transition-colors hidden sm:block">Sign In</span>
                   </button>
                 )}
@@ -499,21 +499,21 @@ import AboutContact from "./components/AboutContact";
                 {user?.is_admin && (
                   <button
                     onClick={() => setIsAdminOpen(true)}
-                    className="relative p-3 bg-zinc-900 border border-red-800 rounded-xl hover:border-red-500 transition-colors group"
+                    className="relative p-2 sm:p-2.5 bg-zinc-900 border border-red-800 rounded-lg sm:rounded-xl hover:border-red-500 transition-colors group flex-shrink-0"
                     title="Admin Console"
                   >
-                    <Shield className="w-6 h-6 text-red-400 group-hover:text-red-500 transition-colors" />
+                    <Shield className="w-5 h-5 sm:w-6 sm:h-6 text-red-400 group-hover:text-red-500 transition-colors" />
                   </button>
                 )}
 
                 {/* Cart Button */}
                 <button
                   onClick={() => setIsCartOpen(true)}
-                  className="relative p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-orange-500 transition-colors group"
+                  className="relative p-2 sm:p-2.5 bg-zinc-900 border border-zinc-800 rounded-lg sm:rounded-xl hover:border-orange-500 transition-colors group flex-shrink-0"
                 >
-                  <ShoppingCart className="w-6 h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
+                  <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6 text-zinc-400 group-hover:text-orange-500 transition-colors" />
                   {cartCount > 0 && (
-                    <span className="absolute -top-2 -right-2 w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center text-xs font-bold text-white pulse-glow">
+                    <span className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2 w-5 h-5 sm:w-6 sm:h-6 bg-orange-500 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-bold text-white pulse-glow">
                       {cartCount}
                     </span>
                   )}
