@@ -767,7 +767,7 @@ async def get_price_changes(
         # Use make_interval for proper PostgreSQL parameterized interval
         result = await db.execute(text("""
             SELECT
-                entity_type, entity_name, field_name,
+                entity_type, entity_id, entity_name, field_name,
                 old_value, new_value, change_pct, changed_at
             FROM price_changelog
             WHERE changed_at > NOW() - make_interval(days => :days)
@@ -780,12 +780,13 @@ async def get_price_changes(
             "changes": [
                 {
                     "entity_type": r[0],
-                    "entity_name": r[1],
-                    "field": r[2],
-                    "old_value": float(r[3]) if r[3] else 0,
-                    "new_value": float(r[4]) if r[4] else 0,
-                    "change_pct": float(r[5]) if r[5] else 0,
-                    "changed_at": r[6].isoformat() if r[6] else None,
+                    "entity_id": r[1],
+                    "entity_name": r[2],
+                    "field": r[3],
+                    "old_value": float(r[4]) if r[4] else 0,
+                    "new_value": float(r[5]) if r[5] else 0,
+                    "change_pct": float(r[6]) if r[6] else 0,
+                    "changed_at": r[7].isoformat() if r[7] else None,
                 }
                 for r in result.fetchall()
             ]
@@ -794,6 +795,89 @@ async def get_price_changes(
         logger.warning(f"Price changes query failed: {e}")
         # Return empty list if table doesn't exist yet
         return {"changes": []}
+
+
+@router.get("/reports/entity/{entity_type}/{entity_id}")
+async def get_entity_details(
+    entity_type: str,
+    entity_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get detailed info for a comic or funko for the price change drawer."""
+    try:
+        if entity_type == "comic":
+            result = await db.execute(text("""
+                SELECT
+                    ci.id, ci.issue_name, ci.number, ci.image, ci.cover_date,
+                    ci.price_loose, ci.price_cib, ci.price_new, ci.price_graded,
+                    ci.upc, ci.isbn, ci.pricecharting_id, ci.year,
+                    cs.name as series_name, cp.name as publisher_name
+                FROM comic_issues ci
+                LEFT JOIN comic_series cs ON ci.series_id = cs.id
+                LEFT JOIN comic_publishers cp ON cs.publisher_id = cp.id
+                WHERE ci.id = :entity_id
+            """), {"entity_id": entity_id})
+            row = result.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Comic not found")
+
+            return {
+                "entity_type": "comic",
+                "id": row[0],
+                "name": row[1] or f"#{row[2]}",
+                "number": row[2],
+                "image_url": row[3],
+                "cover_date": row[4].isoformat() if row[4] else None,
+                "price_loose": float(row[5]) if row[5] else None,
+                "price_cib": float(row[6]) if row[6] else None,
+                "price_new": float(row[7]) if row[7] else None,
+                "price_graded": float(row[8]) if row[8] else None,
+                "upc": row[9],
+                "isbn": row[10],
+                "pricecharting_id": row[11],
+                "year": row[12],
+                "series_name": row[13],
+                "publisher_name": row[14],
+            }
+
+        elif entity_type == "funko":
+            result = await db.execute(text("""
+                SELECT
+                    id, title, handle, image_url, category, license,
+                    product_type, box_number, funko_url,
+                    price_loose, price_cib, price_new, pricecharting_id
+                FROM funkos
+                WHERE id = :entity_id
+            """), {"entity_id": entity_id})
+            row = result.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Funko not found")
+
+            return {
+                "entity_type": "funko",
+                "id": row[0],
+                "name": row[1],
+                "handle": row[2],
+                "image_url": row[3],
+                "category": row[4],
+                "license": row[5],
+                "product_type": row[6],
+                "box_number": row[7],
+                "funko_url": row[8],
+                "price_loose": float(row[9]) if row[9] else None,
+                "price_cib": float(row[10]) if row[10] else None,
+                "price_new": float(row[11]) if row[11] else None,
+                "pricecharting_id": row[12],
+            }
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown entity type: {entity_type}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Entity details query failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch entity details")
 
 
 # ----- User Management -----
