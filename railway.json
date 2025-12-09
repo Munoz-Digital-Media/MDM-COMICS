@@ -3,7 +3,7 @@
   "build": {
     "builder": "NIXPACKS",
     "nixpacksConfigPath": "nixpacks.toml",
-    "watchPatterns": ["src/**", "public/**", "index.html", "package.json", "vite.config.js"]
+    "watchPatterns": ["src/**", "public/**", "index.html", "package.json", "vite.config.js", "backend/**"]
   },
   "deploy": {
     "startCommand": "npx serve dist -s -l $PORT",
