@@ -2,10 +2,10 @@
 # Ensures consistent Python version and build behavior
 
 [phases.setup]
-nixPkgs = ["python312", "python312Packages.pip", "gcc"]
+nixPkgs = ["python312Full", "gcc"]
 
 [phases.install]
-cmds = ["python3 -m pip install --upgrade pip", "python3 -m pip install -r requirements.txt"]
+cmds = ["python3.12 -m ensurepip --upgrade", "python3.12 -m pip install -r requirements.txt"]
 
 [start]
-cmd = "python3 -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+cmd = "python3.12 -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
