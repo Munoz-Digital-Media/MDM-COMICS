@@ -20,76 +20,76 @@ logger = logging.getLogger(__name__)
 
 async def release_expired_reservations() -> dict:
     """
-    Release all expired stock reservations and restore inventory.
+    Release all expired stock reservations and restore inventory using an
+    efficient, atomic, set-based SQL query. This is a PostgreSQL-specific
+    implementation that avoids loading all expired records into memory.
 
     Returns:
         dict with count of released reservations and affected products
     """
     stats = {
         "reservations_released": 0,
-        "products_restored": set(),
+        "products_restored": 0,
         "stock_restored": 0,
         "errors": 0
     }
 
+    # This query is PostgreSQL specific.
+    # It atomically finds expired reservations, updates product stock,
+    # deletes the reservations, and returns statistics in a single transaction.
+    atomic_cleanup_sql = text("""
+        WITH expired AS (
+            SELECT id, product_id, quantity
+            FROM stock_reservation
+            WHERE expires_at < NOW() AT TIME ZONE 'UTC'
+            FOR UPDATE SKIP LOCKED
+        ),
+        agg_expired AS (
+            SELECT product_id, SUM(quantity) as total_quantity
+            FROM expired
+            GROUP BY product_id
+        ),
+        updated_products AS (
+            UPDATE product
+            SET stock = product.stock + agg_expired.total_quantity
+            FROM agg_expired
+            WHERE product.id = agg_expired.product_id
+            RETURNING product.id
+        ),
+        deleted_reservations AS (
+            DELETE FROM stock_reservation
+            WHERE id IN (SELECT id FROM expired)
+            RETURNING 1
+        )
+        SELECT
+            (SELECT COUNT(*) FROM deleted_reservations) as reservations_released,
+            (SELECT COUNT(*) FROM updated_products) as products_restored,
+            (SELECT COALESCE(SUM(quantity), 0) FROM expired) as stock_restored;
+    """)
+
     async with AsyncSessionLocal() as db:
         try:
-            # Find all expired reservations with FOR UPDATE lock
-            result = await db.execute(
-                select(StockReservation)
-                .where(StockReservation.expires_at < datetime.now(timezone.utc))
-                .with_for_update()
-            )
-            expired = result.scalars().all()
+            async with db.begin():
+                result = await db.execute(atomic_cleanup_sql)
+                query_stats = result.first()
 
-            if not expired:
-                logger.debug("No expired reservations to clean up")
-                return stats
-
-            # Group by product for efficient stock restoration
-            product_quantities = {}
-            for reservation in expired:
-                product_id = reservation.product_id
-                if product_id not in product_quantities:
-                    product_quantities[product_id] = 0
-                product_quantities[product_id] += reservation.quantity
-                stats["reservations_released"] += 1
-
-            # Restore stock for each affected product
-            for product_id, quantity in product_quantities.items():
-                try:
-                    await db.execute(
-                        update(Product)
-                        .where(Product.id == product_id)
-                        .values(stock=Product.stock + quantity)
+                if query_stats and query_stats.reservations_released > 0:
+                    stats.update({
+                        "reservations_released": query_stats.reservations_released,
+                        "products_restored": query_stats.products_restored,
+                        "stock_restored": int(query_stats.stock_restored),
+                    })
+                    logger.info(
+                        f"Released {stats['reservations_released']} expired reservations, "
+                        f"restored {stats['stock_restored']} units across {stats['products_restored']} products"
                     )
-                    stats["products_restored"].add(product_id)
-                    stats["stock_restored"] += quantity
-                except Exception as e:
-                    logger.error(f"Error restoring stock for product {product_id}: {e}")
-                    stats["errors"] += 1
-
-            # Delete all expired reservations
-            await db.execute(
-                delete(StockReservation)
-                .where(StockReservation.expires_at < datetime.now(timezone.utc))
-            )
-
-            await db.commit()
-
-            # Convert set to count for JSON serialization
-            stats["products_restored"] = len(stats["products_restored"])
-
-            if stats["reservations_released"] > 0:
-                logger.info(
-                    f"Released {stats['reservations_released']} expired reservations, "
-                    f"restored {stats['stock_restored']} units across {stats['products_restored']} products"
-                )
+                else:
+                    logger.debug("No expired reservations to clean up")
 
         except Exception as e:
-            logger.error(f"Error in stock cleanup: {e}")
+            logger.error(f"Error in atomic stock cleanup: {e}", exc_info=True)
             stats["errors"] += 1
-            await db.rollback()
+            # The transaction is automatically rolled back by the async with db.begin() context manager
 
     return stats
 
