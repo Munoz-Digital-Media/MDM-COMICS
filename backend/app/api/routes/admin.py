@@ -757,24 +757,51 @@ async def get_low_stock_report(
 
 @router.get("/reports/price-changes")
 async def get_price_changes(
-    days: int = Query(7, ge=1, le=90),
-    threshold_pct: float = Query(10.0, ge=0),
+    days: int = Query(1, ge=1, le=90),  # Default to 1 day for daily tracking
+    threshold_pct: float = Query(2.0, ge=0),  # Default to 2% threshold
+    limit: int = Query(500, ge=10, le=1000),  # Configurable limit, default 500
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get significant price changes from price_changelog."""
+    """Get significant price changes from price_changelog.
+
+    Returns up to `limit` results, split evenly between comics and funkos.
+    Default: 250 comics + 250 funkos = 500 total.
+    """
     try:
-        # Use make_interval for proper PostgreSQL parameterized interval
-        result = await db.execute(text("""
+        half_limit = limit // 2
+
+        # Get comics and funkos separately to ensure even split
+        comics_result = await db.execute(text("""
             SELECT
                 entity_type, entity_id, entity_name, field_name,
                 old_value, new_value, change_pct, changed_at
             FROM price_changelog
             WHERE changed_at > NOW() - make_interval(days => :days)
               AND ABS(COALESCE(change_pct, 0)) >= :threshold
+              AND entity_type = 'comic'
             ORDER BY ABS(COALESCE(change_pct, 0)) DESC
-            LIMIT 100
-        """), {"days": days, "threshold": threshold_pct})
+            LIMIT :limit
+        """), {"days": days, "threshold": threshold_pct, "limit": half_limit})
+
+        funkos_result = await db.execute(text("""
+            SELECT
+                entity_type, entity_id, entity_name, field_name,
+                old_value, new_value, change_pct, changed_at
+            FROM price_changelog
+            WHERE changed_at > NOW() - make_interval(days => :days)
+              AND ABS(COALESCE(change_pct, 0)) >= :threshold
+              AND entity_type = 'funko'
+            ORDER BY ABS(COALESCE(change_pct, 0)) DESC
+            LIMIT :limit
+        """), {"days": days, "threshold": threshold_pct, "limit": half_limit})
+
+        comics = comics_result.fetchall()
+        funkos = funkos_result.fetchall()
+
+        # Combine and sort by change_pct descending
+        all_changes = list(comics) + list(funkos)
+        all_changes.sort(key=lambda r: abs(float(r[6]) if r[6] else 0), reverse=True)
 
         return {
             "changes": [
@@ -788,13 +815,20 @@ async def get_price_changes(
                     "change_pct": float(r[6]) if r[6] else 0,
                     "changed_at": r[7].isoformat() if r[7] else None,
                 }
-                for r in result.fetchall()
-            ]
+                for r in all_changes
+            ],
+            "meta": {
+                "comics_count": len(comics),
+                "funkos_count": len(funkos),
+                "total": len(all_changes),
+                "days": days,
+                "threshold_pct": threshold_pct,
+            }
         }
     except Exception as e:
         logger.warning(f"Price changes query failed: {e}")
         # Return empty list if table doesn't exist yet
-        return {"changes": []}
+        return {"changes": [], "meta": {"comics_count": 0, "funkos_count": 0, "total": 0}}
 
 
 @router.get("/reports/entity/{entity_type}/{entity_id}")

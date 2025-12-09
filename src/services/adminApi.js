@@ -242,8 +242,8 @@ export const adminAPI = {
     return fetchAPI('/admin/reports/low-stock?threshold=' + threshold);
   },
 
-  getPriceChanges: async (days = 7, thresholdPct = 10) => {
-    return fetchAPI('/admin/reports/price-changes?days=' + days + '&threshold_pct=' + thresholdPct);
+  getPriceChanges: async (days = 1, thresholdPct = 2, limit = 500) => {
+    return fetchAPI('/admin/reports/price-changes?days=' + days + '&threshold_pct=' + thresholdPct + '&limit=' + limit);
   },
 
   getEntityDetails: async (entityType, entityId) => {

@@ -63,7 +63,8 @@ export default function InventorySummary() {
 
   // Pagination state
   const [pricePage, setPricePage] = useState(1);
-  const PRICE_PAGE_SIZE = 10;
+  const [pricePageSize, setPricePageSize] = useState(10);
+  const [priceMeta, setPriceMeta] = useState(null);
 
   const fetchData = async () => {
     try {
@@ -71,11 +72,12 @@ export default function InventorySummary() {
       const [summaryData, lowStockData, priceData] = await Promise.all([
         adminAPI.getInventorySummary(),
         adminAPI.getLowStockItems(lowStockThreshold),
-        adminAPI.getPriceChanges(7, 10),
+        adminAPI.getPriceChanges(1, 2, 500),  // daily, 2% threshold, 500 limit (250/250 split)
       ]);
       setSummary(summaryData);
       setLowStock(lowStockData.items || []);
       setPriceChanges(priceData.changes || []);
+      setPriceMeta(priceData.meta || null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -133,16 +135,16 @@ export default function InventorySummary() {
 
   // Paginated price changes
   const paginatedPriceChanges = useMemo(() => {
-    const start = (pricePage - 1) * PRICE_PAGE_SIZE;
-    return filteredPriceChanges.slice(start, start + PRICE_PAGE_SIZE);
-  }, [filteredPriceChanges, pricePage]);
+    const start = (pricePage - 1) * pricePageSize;
+    return filteredPriceChanges.slice(start, start + pricePageSize);
+  }, [filteredPriceChanges, pricePage, pricePageSize]);
 
-  const totalPricePages = Math.ceil(filteredPriceChanges.length / PRICE_PAGE_SIZE);
+  const totalPricePages = Math.ceil(filteredPriceChanges.length / pricePageSize);
 
-  // Reset page when filter changes
+  // Reset page when filter or page size changes
   useEffect(() => {
     setPricePage(1);
-  }, [priceFilter]);
+  }, [priceFilter, pricePageSize]);
 
   const handlePriceSort = (field) => {
     setPriceSort(prev => {
@@ -405,10 +407,34 @@ export default function InventorySummary() {
           )}
 
           {/* Pagination Controls */}
-          <div className="mt-4 pt-4 border-t border-zinc-800 flex items-center justify-between">
-            <p className="text-xs text-zinc-500">
-              {filteredPriceChanges.length} of {priceChanges.length} changes (≥10%)
-            </p>
+          <div className="mt-4 pt-4 border-t border-zinc-800 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-zinc-500">
+                {filteredPriceChanges.length} of {priceChanges.length} changes (≥2%)
+                {priceMeta && (
+                  <span className="ml-1">
+                    ({priceMeta.comics_count} comics, {priceMeta.funkos_count} funkos)
+                  </span>
+                )}
+              </p>
+              {/* Page Size Selector */}
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-zinc-600">Show:</span>
+                {[10, 50, 100].map(size => (
+                  <button
+                    key={size}
+                    onClick={() => setPricePageSize(size)}
+                    className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                      pricePageSize === size
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
             {totalPricePages > 1 && (
               <div className="flex items-center gap-2">
                 <button
