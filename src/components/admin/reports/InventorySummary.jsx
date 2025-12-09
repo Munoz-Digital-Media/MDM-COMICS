@@ -2,10 +2,10 @@
  * InventorySummary - Inventory value, counts, and low stock alerts
  * Phase 3: MDM Admin Console Inventory System v1.3.0
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   DollarSign, Package, AlertTriangle, TrendingUp, TrendingDown,
-  Loader2, RefreshCw, Download
+  Loader2, RefreshCw, Download, ArrowUpDown, ChevronUp, ChevronDown
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 
@@ -51,6 +51,10 @@ export default function InventorySummary() {
   const [lowStockThreshold, setLowStockThreshold] = useState(5);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Price Changes filter/sort state
+  const [priceFilter, setPriceFilter] = useState('all'); // 'all', 'comic', 'funko'
+  const [priceSort, setPriceSort] = useState({ field: 'change_pct', dir: 'desc' });
+
   const fetchData = async () => {
     try {
       setError(null);
@@ -77,6 +81,59 @@ export default function InventorySummary() {
   const handleRefresh = () => {
     setRefreshing(true);
     fetchData();
+  };
+
+  // Filtered and sorted price changes
+  const filteredPriceChanges = useMemo(() => {
+    let filtered = [...priceChanges];
+
+    // Apply filter
+    if (priceFilter !== 'all') {
+      filtered = filtered.filter(c => c.entity_type === priceFilter);
+    }
+
+    // Apply sort
+    filtered.sort((a, b) => {
+      let aVal, bVal;
+      switch (priceSort.field) {
+        case 'name':
+          aVal = (a.entity_name || '').toLowerCase();
+          bVal = (b.entity_name || '').toLowerCase();
+          return priceSort.dir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        case 'old_value':
+          aVal = a.old_value || 0;
+          bVal = b.old_value || 0;
+          break;
+        case 'new_value':
+          aVal = a.new_value || 0;
+          bVal = b.new_value || 0;
+          break;
+        case 'change_pct':
+        default:
+          aVal = Math.abs(a.change_pct || 0);
+          bVal = Math.abs(b.change_pct || 0);
+          break;
+      }
+      return priceSort.dir === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+
+    return filtered;
+  }, [priceChanges, priceFilter, priceSort]);
+
+  const handlePriceSort = (field) => {
+    setPriceSort(prev => ({
+      field,
+      dir: prev.field === field && prev.dir === 'desc' ? 'asc' : 'desc'
+    }));
+  };
+
+  const SortIcon = ({ field }) => {
+    if (priceSort.field !== field) {
+      return <ArrowUpDown className="w-3 h-3 text-zinc-600" />;
+    }
+    return priceSort.dir === 'asc'
+      ? <ChevronUp className="w-3 h-3 text-orange-400" />
+      : <ChevronDown className="w-3 h-3 text-orange-400" />;
   };
 
   if (loading) {
@@ -227,37 +284,88 @@ export default function InventorySummary() {
 
         {/* Recent Price Changes */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-zinc-400 mb-4">Price Changes (Last 7 Days)</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-zinc-400">Price Changes (Last 7 Days)</h3>
+            {/* Filter Buttons */}
+            <div className="flex gap-1">
+              {[
+                { key: 'all', label: 'ALL' },
+                { key: 'comic', label: 'COMICS' },
+                { key: 'funko', label: 'FUNKOS' },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setPriceFilter(key)}
+                  className={`px-2 py-1 text-xs rounded transition-colors ${
+                    priceFilter === key
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-          {priceChanges.length === 0 ? (
-            <p className="text-sm text-zinc-500 text-center py-4">No significant price changes</p>
+          {/* Sortable Headers */}
+          <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-zinc-800/30 rounded-lg text-xs">
+            <button
+              onClick={() => handlePriceSort('name')}
+              className="flex items-center gap-1 text-zinc-400 hover:text-white flex-1 min-w-0"
+            >
+              Name <SortIcon field="name" />
+            </button>
+            <button
+              onClick={() => handlePriceSort('old_value')}
+              className="flex items-center gap-1 text-zinc-400 hover:text-white w-16 justify-end"
+            >
+              Prev <SortIcon field="old_value" />
+            </button>
+            <span className="w-4 text-center text-zinc-600">→</span>
+            <button
+              onClick={() => handlePriceSort('new_value')}
+              className="flex items-center gap-1 text-zinc-400 hover:text-white w-16 justify-start"
+            >
+              <SortIcon field="new_value" /> Curr
+            </button>
+            <button
+              onClick={() => handlePriceSort('change_pct')}
+              className="flex items-center gap-1 text-zinc-400 hover:text-white w-16 justify-end"
+            >
+              Δ% <SortIcon field="change_pct" />
+            </button>
+          </div>
+
+          {filteredPriceChanges.length === 0 ? (
+            <p className="text-sm text-zinc-500 text-center py-4">
+              {priceChanges.length === 0 ? 'No significant price changes' : 'No matches for filter'}
+            </p>
           ) : (
             <div className="space-y-2 max-h-80 overflow-auto">
-              {priceChanges.map((change, idx) => (
+              {filteredPriceChanges.map((change, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-lg"
+                  className="flex items-center gap-2 p-3 bg-zinc-800/50 rounded-lg"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-white truncate">{change.entity_name}</p>
                     <p className="text-xs text-zinc-500 capitalize">{change.entity_type} • {change.field}</p>
                   </div>
-                  <div className="flex items-center gap-2 ml-2">
-                    <span className="text-xs text-zinc-500">${change.old_value?.toFixed(2)}</span>
-                    <span className="text-zinc-600">→</span>
-                    <span className="text-xs text-white">${change.new_value?.toFixed(2)}</span>
-                    <div className={`flex items-center gap-0.5 ${
-                      change.change_pct > 0 ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {change.change_pct > 0 ? (
-                        <TrendingUp className="w-3 h-3" />
-                      ) : (
-                        <TrendingDown className="w-3 h-3" />
-                      )}
-                      <span className="text-xs">
-                        {change.change_pct > 0 ? '+' : ''}{change.change_pct?.toFixed(1)}%
-                      </span>
-                    </div>
+                  <span className="text-xs text-zinc-500 w-16 text-right">${change.old_value?.toFixed(2)}</span>
+                  <span className="w-4 text-center text-zinc-600">→</span>
+                  <span className="text-xs text-white w-16">${change.new_value?.toFixed(2)}</span>
+                  <div className={`flex items-center gap-0.5 w-16 justify-end ${
+                    change.change_pct > 0 ? 'text-green-400' : 'text-red-400'
+                  }`}>
+                    {change.change_pct > 0 ? (
+                      <TrendingUp className="w-3 h-3" />
+                    ) : (
+                      <TrendingDown className="w-3 h-3" />
+                    )}
+                    <span className="text-xs">
+                      {change.change_pct > 0 ? '+' : ''}{change.change_pct?.toFixed(1)}%
+                    </span>
                   </div>
                 </div>
               ))}
@@ -266,7 +374,7 @@ export default function InventorySummary() {
 
           <div className="mt-4 pt-4 border-t border-zinc-800">
             <p className="text-xs text-zinc-500">
-              Showing changes greater than 10%
+              {filteredPriceChanges.length} of {priceChanges.length} changes (≥10%)
             </p>
           </div>
         </div>
