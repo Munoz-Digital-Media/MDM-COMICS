@@ -1318,3 +1318,159 @@ async def get_pipeline_stats(
         },
         "price_changes_24h": changes_24h,
     }
+
+
+# ----- GCD Import Management (v1.8.0) -----
+
+class GCDImportRequest(BaseModel):
+    """Request to trigger GCD import job."""
+    max_records: int = Field(default=0, ge=0, description="Max records to import (0 = unlimited)")
+    batch_size: int = Field(default=1000, ge=100, le=10000, description="Records per batch")
+    db_path: Optional[str] = Field(default=None, description="Custom SQLite path (uses settings default if None)")
+
+
+@router.post("/pipeline/gcd/import")
+async def trigger_gcd_import(
+    request: GCDImportRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Trigger GCD import job manually.
+
+    This imports comics from the GCD SQLite database dump.
+    Use max_records=10000 for validation, then max_records=0 for full import.
+
+    Returns immediately with job status - import runs asynchronously.
+    """
+    import asyncio
+    from app.jobs.pipeline_scheduler import run_gcd_import_job
+
+    logger.info(f"GCD import triggered by admin {current_user.id}: max_records={request.max_records}")
+
+    # Run the job (this will check GCD_IMPORT_ENABLED setting)
+    result = await run_gcd_import_job(
+        db_path=request.db_path,
+        batch_size=request.batch_size,
+        max_records=request.max_records,
+    )
+
+    return result
+
+
+@router.get("/pipeline/gcd/status")
+async def get_gcd_import_status(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get GCD import job status and statistics."""
+    from app.core.config import settings
+
+    # Get checkpoint info
+    checkpoint_result = await db.execute(text("""
+        SELECT
+            job_name, is_running, last_run_started, last_run_completed,
+            total_processed, total_updated, total_errors, last_error,
+            state_data
+        FROM pipeline_checkpoints
+        WHERE job_name = 'gcd_import'
+    """))
+    checkpoint = checkpoint_result.fetchone()
+
+    # Count records with gcd_id
+    gcd_count_result = await db.execute(text("""
+        SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
+    """))
+    gcd_count = gcd_count_result.scalar() or 0
+
+    # Get GCD adapter validation info
+    gcd_info = {
+        "enabled": settings.GCD_IMPORT_ENABLED,
+        "dump_path": settings.GCD_DUMP_PATH,
+        "batch_size": settings.GCD_IMPORT_BATCH_SIZE,
+        "max_records": settings.GCD_IMPORT_MAX_RECORDS,
+    }
+
+    # Validate dump exists
+    import os
+    dump_exists = os.path.exists(settings.GCD_DUMP_PATH)
+    gcd_info["dump_exists"] = dump_exists
+
+    # Get total count from GCD if dump exists
+    if dump_exists:
+        try:
+            from app.adapters.gcd import GCDAdapter
+            adapter = GCDAdapter()
+            gcd_info["dump_total_count"] = adapter.get_total_count(settings.GCD_DUMP_PATH)
+        except Exception as e:
+            gcd_info["dump_total_count"] = None
+            gcd_info["dump_error"] = str(e)
+
+    return {
+        "settings": gcd_info,
+        "checkpoint": {
+            "is_running": checkpoint[1] if checkpoint else False,
+            "last_run_started": checkpoint[2].isoformat() if checkpoint and checkpoint[2] else None,
+            "last_run_completed": checkpoint[3].isoformat() if checkpoint and checkpoint[3] else None,
+            "total_processed": checkpoint[4] if checkpoint else 0,
+            "total_updated": checkpoint[5] if checkpoint else 0,
+            "total_errors": checkpoint[6] if checkpoint else 0,
+            "last_error": checkpoint[7] if checkpoint else None,
+            "current_offset": checkpoint[8].get("offset", 0) if checkpoint and checkpoint[8] else 0,
+        } if checkpoint else None,
+        "imported_count": gcd_count,
+    }
+
+
+@router.post("/pipeline/gcd/reset-checkpoint")
+async def reset_gcd_checkpoint(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reset GCD import checkpoint to start fresh.
+
+    WARNING: This will cause the next import to start from the beginning.
+    Use this if you want to re-import all data or if the checkpoint is corrupted.
+    """
+    await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET state_data = '{"offset": 0}'::jsonb,
+            is_running = false,
+            total_processed = 0,
+            total_updated = 0,
+            total_errors = 0,
+            last_error = 'Checkpoint reset by admin at ' || NOW()::text
+        WHERE job_name = 'gcd_import'
+    """))
+    await db.commit()
+
+    logger.info(f"GCD import checkpoint reset by admin {current_user.id}")
+
+    return {"status": "reset", "message": "GCD import checkpoint has been reset to offset 0"}
+
+
+@router.get("/pipeline/gcd/validate")
+async def validate_gcd_dump(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Validate GCD SQLite dump schema before import.
+
+    Returns table info and sample data to verify dump is readable.
+    """
+    from app.core.config import settings
+    from app.adapters.gcd import GCDAdapter
+
+    import os
+    if not os.path.exists(settings.GCD_DUMP_PATH):
+        raise HTTPException(
+            status_code=404,
+            detail=f"GCD dump not found at: {settings.GCD_DUMP_PATH}"
+        )
+
+    adapter = GCDAdapter()
+    validation = adapter.validate_schema(settings.GCD_DUMP_PATH)
+
+    return validation

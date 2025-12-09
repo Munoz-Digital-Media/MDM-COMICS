@@ -206,12 +206,19 @@ class Settings(BaseSettings):
     # Template directory
     MARKETING_TEMPLATE_DIR: str = "app/templates/marketing"
 
-    # ===== DATA ACQUISITION PIPELINE v1.6.0 =====
+    # ===== DATA ACQUISITION PIPELINE v1.7.0 =====
     # Pipeline Scheduler (automated data enrichment)
     PIPELINE_SCHEDULER_ENABLED: bool = True  # Enable/disable all pipeline jobs
     PIPELINE_COMIC_ENRICHMENT_INTERVAL_MINUTES: int = 30
     PIPELINE_FUNKO_PRICE_CHECK_INTERVAL_MINUTES: int = 60
     PIPELINE_DLQ_RETRY_INTERVAL_MINUTES: int = 15
+
+    # GCD (Grand Comics Database) Import - v1.7.0
+    # SQLite dump path: local dev uses assets/, Railway uses mounted volume
+    GCD_DUMP_PATH: str = "/data/gcd/2025-12-01.db"  # Railway volume mount
+    GCD_IMPORT_BATCH_SIZE: int = 1000  # Records per batch during import
+    GCD_IMPORT_ENABLED: bool = False  # Master toggle for GCD import job
+    GCD_IMPORT_MAX_RECORDS: int = 0  # 0 = unlimited, >0 = subset import for validation
 
     # ===== THE RACK FACTOR v1.5.2 =====
     # Newsletter and Social Media Content Engine

@@ -92,11 +92,23 @@ class ComicSeries(Base):
 
 
 class ComicIssue(Base):
-    """Individual comic book issues - the main data we care about"""
+    """Individual comic book issues - the main data we care about
+    
+    v1.6.0: Added GCD (Grand Comics Database) integration fields
+    - gcd_id: Unique GCD issue identifier
+    - gcd_series_id: GCD series foreign key
+    - gcd_publisher_id: GCD publisher foreign key
+    """
     __tablename__ = 'comic_issues'
 
     id = Column(Integer, primary_key=True)
     metron_id = Column(Integer, unique=True, index=True)
+    
+    # GCD Integration (v1.6.0 - Grand Comics Database)
+    # CC-BY-SA 4.0 licensed bibliographic data - NO IMAGES
+    gcd_id = Column(Integer, unique=True, index=True, nullable=True)
+    gcd_series_id = Column(Integer, index=True, nullable=True)
+    gcd_publisher_id = Column(Integer, index=True, nullable=True)
 
     # Series relationship
     series_id = Column(Integer, ForeignKey('comic_series.id'))
