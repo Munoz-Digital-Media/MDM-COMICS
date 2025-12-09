@@ -1,5 +1,5 @@
 """
-Pipeline Job Scheduler v1.8.0
+Pipeline Job Scheduler v1.9.0
 
 Automated data acquisition jobs that ACTUALLY RUN.
 
@@ -10,8 +10,15 @@ Jobs:
 4. Quarantine Cleanup - Auto-resolve old low-priority quarantine items
 5. Daily Price Snapshot - Capture price state for AI/ML training (v1.7.0)
 6. GCD Import - Import comics from Grand Comics Database SQLite dump (v1.8.0)
+7. Self-Healing - Auto-detect and restart stalled jobs (v1.9.0)
 
 All jobs use checkpoints for crash recovery and log to DLQ on failure.
+
+Self-Healing (v1.9.0):
+- Runs every 10 minutes to detect stalled jobs
+- Job considered stalled if no checkpoint update for 15+ minutes
+- Auto-restarts stuck jobs (max 5 per day per job)
+- Prevents infinite restart loops with daily rate limiting
 """
 import asyncio
 import logging
@@ -48,6 +55,11 @@ logger = logging.getLogger(__name__)
 # Stale checkpoint timeout in hours - if a job claims to be "running" for longer
 # than this, we assume it crashed and clear the flag
 STALE_CHECKPOINT_TIMEOUT_HOURS = 2
+
+# Self-healing configuration
+SELF_HEAL_CHECK_INTERVAL_MINUTES = 10  # How often to check for stalled jobs
+SELF_HEAL_STALL_THRESHOLD_MINUTES = 15  # Job considered stalled if no progress for this long
+SELF_HEAL_MAX_AUTO_RESTARTS = 5  # Max auto-restarts before giving up (per 24h period)
 
 
 async def clear_stale_checkpoints(db: AsyncSession) -> int:
@@ -954,6 +966,170 @@ async def run_daily_snapshot_job():
 
 
 # =============================================================================
+# SELF-HEALING JOB (v1.9.0 - Automated Recovery)
+# =============================================================================
+
+# Track auto-restart counts per job (reset daily)
+_auto_restart_counts: Dict[str, list] = {}
+
+
+async def run_self_healing_job():
+    """
+    Self-healing job that detects and restarts stalled pipeline jobs.
+
+    This job runs periodically (every 10 minutes by default) and:
+    1. Checks for jobs marked as running but not making progress
+    2. Clears stale checkpoints and restarts stuck jobs
+    3. Tracks restart counts to avoid infinite restart loops
+    4. Logs all healing actions for debugging
+
+    Specifically monitors:
+    - gcd_import: Large import job prone to timeout issues
+    - comic_enrichment: Metadata enrichment job
+    - funko_price_check: Price sync job
+    """
+    from app.core.config import settings
+    from datetime import timezone
+
+    job_name = "self_healing"
+    logger.info(f"[{job_name}] Starting self-healing check...")
+
+    async with AsyncSessionLocal() as db:
+        healed_count = 0
+
+        try:
+            # Get all checkpoints that claim to be running
+            result = await db.execute(text("""
+                SELECT
+                    job_name, is_running, last_run_started, updated_at,
+                    total_processed, state_data
+                FROM pipeline_checkpoints
+                WHERE is_running = true
+            """))
+            running_jobs = result.fetchall()
+
+            if not running_jobs:
+                logger.info(f"[{job_name}] No running jobs found - system healthy")
+                return {"healed": 0, "checked": 0}
+
+            logger.info(f"[{job_name}] Found {len(running_jobs)} jobs claiming to be running")
+
+            now = datetime.now(timezone.utc)
+            today = now.date().isoformat()
+
+            for job in running_jobs:
+                job_name_to_check = job.job_name
+                last_run_started = job.last_run_started
+                updated_at = job.updated_at
+                total_processed = job.total_processed or 0
+
+                # Calculate how long since last activity
+                if updated_at:
+                    # Make sure we're comparing timezone-aware datetimes
+                    if updated_at.tzinfo is None:
+                        from datetime import timezone as tz
+                        updated_at = updated_at.replace(tzinfo=tz.utc)
+                    minutes_since_update = (now - updated_at).total_seconds() / 60
+                else:
+                    minutes_since_update = float('inf')
+
+                logger.info(
+                    f"[{job_name}] Checking {job_name_to_check}: "
+                    f"minutes_since_update={minutes_since_update:.1f}, "
+                    f"threshold={SELF_HEAL_STALL_THRESHOLD_MINUTES}"
+                )
+
+                # Is this job stalled?
+                if minutes_since_update > SELF_HEAL_STALL_THRESHOLD_MINUTES:
+                    logger.warning(
+                        f"[{job_name}] STALL DETECTED: {job_name_to_check} "
+                        f"has not updated in {minutes_since_update:.1f} minutes"
+                    )
+
+                    # Check restart count for today
+                    if job_name_to_check not in _auto_restart_counts:
+                        _auto_restart_counts[job_name_to_check] = []
+
+                    # Clean up old restart records (keep only today's)
+                    _auto_restart_counts[job_name_to_check] = [
+                        ts for ts in _auto_restart_counts[job_name_to_check]
+                        if ts.startswith(today)
+                    ]
+
+                    restart_count_today = len(_auto_restart_counts[job_name_to_check])
+
+                    if restart_count_today >= SELF_HEAL_MAX_AUTO_RESTARTS:
+                        logger.error(
+                            f"[{job_name}] GIVING UP: {job_name_to_check} has been "
+                            f"auto-restarted {restart_count_today} times today. "
+                            f"Max is {SELF_HEAL_MAX_AUTO_RESTARTS}. Manual intervention required."
+                        )
+                        # Update checkpoint with error message
+                        await db.execute(text("""
+                            UPDATE pipeline_checkpoints
+                            SET is_running = false,
+                                last_error = 'SELF-HEAL LIMIT REACHED: Auto-restarted ' ||
+                                    :count || ' times today. Manual intervention required. ' ||
+                                    NOW()::text
+                            WHERE job_name = :name
+                        """), {"name": job_name_to_check, "count": restart_count_today})
+                        await db.commit()
+                        continue
+
+                    # Clear the stale checkpoint
+                    logger.info(f"[{job_name}] Clearing stale checkpoint for {job_name_to_check}")
+                    await db.execute(text("""
+                        UPDATE pipeline_checkpoints
+                        SET is_running = false,
+                            last_error = 'SELF-HEALED: Cleared stale checkpoint at ' || NOW()::text ||
+                                ' (was stalled for ' || :minutes || ' minutes)'
+                        WHERE job_name = :name
+                    """), {"name": job_name_to_check, "minutes": int(minutes_since_update)})
+                    await db.commit()
+
+                    # Record this restart
+                    _auto_restart_counts[job_name_to_check].append(f"{today}_{now.isoformat()}")
+
+                    # Restart specific jobs
+                    if job_name_to_check == "gcd_import":
+                        logger.info(f"[{job_name}] AUTO-RESTARTING gcd_import job...")
+                        try:
+                            # Don't await - fire and forget to avoid blocking
+                            asyncio.create_task(_restart_gcd_import())
+                            healed_count += 1
+                            logger.info(f"[{job_name}] GCD import restart initiated")
+                        except Exception as e:
+                            logger.error(f"[{job_name}] Failed to restart gcd_import: {e}")
+
+                    # Add handlers for other jobs as needed
+                    elif job_name_to_check in ("comic_enrichment", "funko_price_check"):
+                        # These jobs will restart on next scheduler cycle
+                        healed_count += 1
+                        logger.info(
+                            f"[{job_name}] {job_name_to_check} checkpoint cleared - "
+                            f"will restart on next scheduler cycle"
+                        )
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Self-healing job failed: {e}")
+            traceback.print_exc()
+
+        logger.info(f"[{job_name}] Complete: healed {healed_count} stalled jobs")
+        return {"healed": healed_count, "checked": len(running_jobs) if 'running_jobs' in dir() else 0}
+
+
+async def _restart_gcd_import():
+    """Helper to restart GCD import job asynchronously."""
+    try:
+        logger.info("[_restart_gcd_import] Starting GCD import restart...")
+        result = await run_gcd_import_job(max_records=0, batch_size=5000)
+        logger.info(f"[_restart_gcd_import] GCD import completed: {result}")
+    except Exception as e:
+        logger.error(f"[_restart_gcd_import] GCD import failed: {e}")
+        traceback.print_exc()
+
+
+# =============================================================================
 # GCD IMPORT JOB (v1.8.0 - Grand Comics Database)
 # =============================================================================
 
@@ -1438,6 +1614,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("dlq_retry", run_dlq_retry_job, interval_minutes=15)),
             # v1.7.0: Daily price snapshot for AI/ML training (runs once per day at startup, then every 24h)
             asyncio.create_task(self._run_job_loop("daily_snapshot", run_daily_snapshot_job, interval_minutes=1440)),
+            # v1.9.0: Self-healing job - detects and restarts stalled jobs automatically
+            asyncio.create_task(self._run_job_loop("self_healing", run_self_healing_job, interval_minutes=SELF_HEAL_CHECK_INTERVAL_MINUTES)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -1445,6 +1623,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - funko_price_check: every 60 minutes")
         print("[SCHEDULER]   - dlq_retry: every 15 minutes")
         print("[SCHEDULER]   - daily_snapshot: every 24 hours (AI/ML data)")
+        print(f"[SCHEDULER]   - self_healing: every {SELF_HEAL_CHECK_INTERVAL_MINUTES} minutes (auto-restart stalled jobs)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -1486,6 +1665,7 @@ class PipelineScheduler:
             "daily_snapshot": run_daily_snapshot_job,  # v1.7.0
             "gcd_import": run_gcd_import_job,  # v1.8.0
             "cross_reference": run_cross_reference_job,  # v1.8.0 - GCD-Primary
+            "self_healing": run_self_healing_job,  # v1.9.0 - Auto-restart stalled jobs
         }
 
         if job_name not in jobs:
