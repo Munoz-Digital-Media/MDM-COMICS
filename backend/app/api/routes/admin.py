@@ -1495,15 +1495,16 @@ async def sync_gcd_offset(
     # Update checkpoint with synced offset
     # Build the JSON string in Python to avoid SQL parameter binding issues with JSONB
     state_json = f'{{"offset": {actual_count}}}'
+    error_msg = f"Offset synced to DB count {actual_count} by admin"
     await db.execute(text("""
         UPDATE pipeline_checkpoints
-        SET state_data = :state_json::jsonb,
+        SET state_data = CAST(:state_json AS jsonb),
             is_running = false,
             last_error = :error_msg
         WHERE job_name = 'gcd_import'
     """), {
         "state_json": state_json,
-        "error_msg": f"Offset synced to DB count ({actual_count:,}) by admin"
+        "error_msg": error_msg
     })
     await db.commit()
 
