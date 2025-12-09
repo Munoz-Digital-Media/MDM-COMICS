@@ -121,10 +121,14 @@ export default function InventorySummary() {
   }, [priceChanges, priceFilter, priceSort]);
 
   const handlePriceSort = (field) => {
-    setPriceSort(prev => ({
-      field,
-      dir: prev.field === field && prev.dir === 'desc' ? 'asc' : 'desc'
-    }));
+    setPriceSort(prev => {
+      // If clicking same field, toggle direction
+      if (prev.field === field) {
+        return { field, dir: prev.dir === 'desc' ? 'asc' : 'desc' };
+      }
+      // New field: default to desc (biggest first) for numeric, asc for name
+      return { field, dir: field === 'name' ? 'asc' : 'desc' };
+    });
   };
 
   const SortIcon = ({ field }) => {
