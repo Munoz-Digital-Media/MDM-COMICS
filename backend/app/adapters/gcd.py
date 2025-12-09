@@ -367,8 +367,12 @@ class GCDAdapter(DataSourceAdapter):
         """
 
         # Add LIMIT/OFFSET if specified
+        # Note: SQLite requires LIMIT when using OFFSET
         if limit > 0:
             query += f" LIMIT {limit}"
+        elif offset > 0:
+            # No limit but has offset - use very large number to get all remaining
+            query += f" LIMIT -1"  # SQLite: -1 means unlimited
         if offset > 0:
             query += f" OFFSET {offset}"
 
