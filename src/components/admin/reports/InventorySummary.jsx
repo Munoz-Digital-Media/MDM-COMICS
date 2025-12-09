@@ -8,6 +8,7 @@ import {
   Loader2, RefreshCw, Download, ArrowUpDown, ChevronUp, ChevronDown
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
+import PriceChangeDrawer from './PriceChangeDrawer';
 
 function SummaryCard({ title, value, subtitle, icon: Icon, color = 'zinc' }) {
   const colors = {
@@ -54,6 +55,10 @@ export default function InventorySummary() {
   // Price Changes filter/sort state
   const [priceFilter, setPriceFilter] = useState('all'); // 'all', 'comic', 'funko'
   const [priceSort, setPriceSort] = useState({ field: 'change_pct', dir: 'desc' });
+
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedPriceChange, setSelectedPriceChange] = useState(null);
 
   const fetchData = async () => {
     try {
@@ -351,7 +356,11 @@ export default function InventorySummary() {
               {filteredPriceChanges.map((change, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center gap-2 p-3 bg-zinc-800/50 rounded-lg"
+                  onClick={() => {
+                    setSelectedPriceChange(change);
+                    setDrawerOpen(true);
+                  }}
+                  className="flex items-center gap-2 p-3 bg-zinc-800/50 rounded-lg cursor-pointer hover:bg-zinc-700/50 transition-colors"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-white truncate">{change.entity_name}</p>
@@ -405,6 +414,21 @@ export default function InventorySummary() {
           </div>
         </div>
       )}
+
+      {/* Price Change Drawer */}
+      <PriceChangeDrawer
+        isOpen={drawerOpen}
+        onClose={() => {
+          setDrawerOpen(false);
+          setSelectedPriceChange(null);
+        }}
+        priceChange={selectedPriceChange}
+        onCreateProduct={async (productData) => {
+          // TODO: Integrate with product creation API
+          console.log('Create product:', productData);
+          alert('Product creation coming soon! Data logged to console.');
+        }}
+      />
     </div>
   );
 }

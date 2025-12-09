@@ -246,6 +246,10 @@ export const adminAPI = {
     return fetchAPI('/admin/reports/price-changes?days=' + days + '&threshold_pct=' + thresholdPct);
   },
 
+  getEntityDetails: async (entityType, entityId) => {
+    return fetchAPI('/admin/reports/entity/' + entityType + '/' + entityId);
+  },
+
   // --- Dashboard ---
   getDashboard: async () => {
     return fetchAPI('/admin/dashboard');
