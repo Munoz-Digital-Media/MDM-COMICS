@@ -321,6 +321,47 @@ async def ensure_price_snapshots_table():
         # Don't fail startup - the table can be created manually if needed
 
 
+async def ensure_isbn_column_size():
+    """
+    v1.6.1: Ensure isbn column in comic_issues is VARCHAR(50).
+
+    GCD ISBNs with hyphens can exceed 20 characters, causing import failures.
+    This migration extends the column safely.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            # Check current column size
+            result = await db.execute(text("""
+                SELECT character_maximum_length
+                FROM information_schema.columns
+                WHERE table_name = 'comic_issues' AND column_name = 'isbn'
+            """))
+            row = result.fetchone()
+
+            if row is None:
+                logger.info("[STARTUP] isbn column does not exist in comic_issues - skipping migration")
+                return
+
+            current_size = row[0]
+
+            if current_size and current_size >= 50:
+                logger.info(f"[STARTUP] isbn column already VARCHAR({current_size}) - no migration needed")
+                return
+
+            logger.info(f"[STARTUP] Extending isbn column from VARCHAR({current_size}) to VARCHAR(50)...")
+
+            await db.execute(text("""
+                ALTER TABLE comic_issues ALTER COLUMN isbn TYPE VARCHAR(50)
+            """))
+            await db.commit()
+
+            logger.info("[STARTUP] isbn column extended to VARCHAR(50) successfully")
+
+    except Exception as e:
+        logger.error(f"[STARTUP] Failed to extend isbn column: {e}")
+        # Don't fail startup - can be fixed manually
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -335,6 +376,9 @@ async def lifespan(app: FastAPI):
 
     # v1.7.0: Ensure price_snapshots table exists
     await ensure_price_snapshots_table()
+
+    # v1.6.1: Ensure isbn column is large enough for GCD data
+    await ensure_isbn_column_size()
 
     # Import Funkos if database is empty
     await import_funkos_if_needed()
