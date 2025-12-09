@@ -412,6 +412,41 @@ export const adminAPI = {
   getPublicBranding: async () => {
     return fetchAPI('/admin/settings/public/branding');
   },
+
+  // ==================== PIPELINE MANAGEMENT ====================
+
+  // Get GCD import status
+  getGCDStatus: async () => {
+    return fetchAPI('/admin/pipeline/gcd/status');
+  },
+
+  // Trigger GCD import
+  triggerGCDImport: async (options = {}) => {
+    return fetchAPI('/admin/pipeline/gcd/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        max_records: options.max_records || 0,
+        batch_size: options.batch_size || 5000,
+      }),
+    });
+  },
+
+  // Reset GCD checkpoint (clears error state, keeps progress)
+  resetGCDCheckpoint: async () => {
+    return fetchAPI('/admin/pipeline/gcd/reset-checkpoint', {
+      method: 'POST',
+    });
+  },
+
+  // Get all pipeline checkpoints
+  getPipelineCheckpoints: async () => {
+    return fetchAPI('/admin/pipeline/checkpoints');
+  },
+
+  // Get pipeline stats
+  getPipelineStats: async () => {
+    return fetchAPI('/admin/pipeline/stats');
+  },
 };
 
 export default adminAPI;

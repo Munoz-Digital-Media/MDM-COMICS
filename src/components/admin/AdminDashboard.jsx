@@ -8,6 +8,7 @@ import {
   ShoppingCart, TrendingUp, TrendingDown, RefreshCw, Loader2
 } from 'lucide-react';
 import { adminAPI } from '../../services/adminApi';
+import PipelineStatus from './pipeline/PipelineStatus';
 
 function StatCard({ title, value, subtitle, icon: Icon, trend, trendUp, color = 'orange', onClick }) {
   const colors = {
@@ -230,6 +231,9 @@ export default function AdminDashboard({ onNavigate }) {
           </div>
         </div>
       )}
+
+      {/* GCD Import Pipeline Status */}
+      <PipelineStatus compact={false} />
 
       {/* Recent Activity */}
       <div className="grid md:grid-cols-2 gap-4">
