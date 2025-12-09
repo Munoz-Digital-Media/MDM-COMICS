@@ -2,6 +2,7 @@
  * Coupon Input Component
  *
  * Validates and applies coupon codes with visual feedback.
+ * Updated for dark theme consistency.
  */
 
 import { useState, useCallback } from 'react';
@@ -147,13 +148,13 @@ export default function CouponInput({
     validateCoupon();
   };
 
-  // Show applied coupon state
+  // Show applied coupon state (dark theme)
   if (appliedCoupon) {
     return (
-      <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+      <div className="flex items-center justify-between p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
         <div className="flex items-center gap-2">
           <svg
-            className="w-5 h-5 text-green-600"
+            className="w-5 h-5 text-green-400"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -165,17 +166,17 @@ export default function CouponInput({
               d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
-          <span className="font-medium text-green-800">
+          <span className="font-medium text-green-400">
             {appliedCoupon.code}
           </span>
-          <span className="text-green-600">
+          <span className="text-green-300">
             -${appliedCoupon.discount_amount.toFixed(2)}
           </span>
         </div>
         <button
           type="button"
           onClick={removeCoupon}
-          className="text-red-600 hover:text-red-800 text-sm font-medium"
+          className="text-red-400 hover:text-red-300 text-sm font-medium min-h-[44px] min-w-[60px] flex items-center justify-center"
         >
           Remove
         </button>
@@ -185,23 +186,23 @@ export default function CouponInput({
 
   return (
     <div className="space-y-2">
-      <form onSubmit={handleSubmit} className="flex gap-2">
+      <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2">
         <input
           type="text"
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           placeholder="Enter coupon code"
           disabled={loading}
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 uppercase"
+          className="flex-1 px-3 py-3 sm:py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-zinc-900 disabled:text-zinc-600 uppercase text-base"
           maxLength={50}
         />
         <button
           type="submit"
           disabled={loading || !code.trim()}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+          className="px-4 py-3 sm:py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed transition-colors font-medium min-h-[44px] min-w-[80px]"
         >
           {loading ? (
-            <span className="flex items-center gap-2">
+            <span className="flex items-center justify-center gap-2">
               <svg
                 className="animate-spin h-4 w-4"
                 fill="none"
@@ -221,7 +222,7 @@ export default function CouponInput({
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                 />
               </svg>
-              Applying...
+              <span className="hidden sm:inline">Applying...</span>
             </span>
           ) : (
             'Apply'
@@ -231,9 +232,9 @@ export default function CouponInput({
 
       {/* Error message */}
       {error && (
-        <div className="flex items-center gap-2 text-red-600 text-sm">
+        <div className="flex items-center gap-2 text-red-400 text-sm">
           <svg
-            className="w-4 h-4"
+            className="w-4 h-4 flex-shrink-0"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -245,15 +246,15 @@ export default function CouponInput({
               d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
-          {error}
+          <span>{error}</span>
         </div>
       )}
 
       {/* Success message */}
       {success && !appliedCoupon && (
-        <div className="flex items-center gap-2 text-green-600 text-sm">
+        <div className="flex items-center gap-2 text-green-400 text-sm">
           <svg
-            className="w-4 h-4"
+            className="w-4 h-4 flex-shrink-0"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -265,7 +266,7 @@ export default function CouponInput({
               d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
-          {success}
+          <span>{success}</span>
         </div>
       )}
     </div>
