@@ -1,5 +1,5 @@
 """
-Pipeline Job Scheduler v1.9.0
+Pipeline Job Scheduler v1.9.2
 
 Automated data acquisition jobs that ACTUALLY RUN.
 
@@ -19,6 +19,11 @@ Self-Healing (v1.9.0):
 - Job considered stalled if no checkpoint update for 15+ minutes
 - Auto-restarts stuck jobs (max 5 per day per job)
 - Prevents infinite restart loops with daily rate limiting
+
+Automatic Offset Sync (v1.9.2):
+- GCD import job ALWAYS syncs offset to actual DB count on exit
+- Ensures correct resume position whether job completes, fails, or is killed
+- Prevents re-processing of already-imported records after interruption
 """
 import asyncio
 import logging
@@ -1122,31 +1127,14 @@ async def _restart_gcd_import():
     """
     Helper to restart GCD import job asynchronously.
 
-    v1.9.1: Now syncs offset to actual DB count before restart to avoid
-    re-processing already-imported records.
+    v1.9.2: The job's finally block now handles offset sync automatically,
+    so this helper just needs to trigger the job. The job will:
+    1. Read offset from checkpoint (already synced by previous run's finally block)
+    2. Resume from correct position
+    3. Sync offset again on exit (normal, error, or interrupt)
     """
     try:
-        logger.info("[_restart_gcd_import] Syncing offset to actual DB count...")
-
-        # Sync offset to actual DB count to avoid re-processing
-        async with AsyncSessionLocal() as db:
-            # Get actual count
-            result = await db.execute(text("""
-                SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
-            """))
-            actual_count = result.scalar() or 0
-
-            # Update checkpoint offset
-            await db.execute(text("""
-                UPDATE pipeline_checkpoints
-                SET state_data = jsonb_build_object('offset', :offset)
-                WHERE job_name = 'gcd_import'
-            """), {"offset": actual_count})
-            await db.commit()
-
-            logger.info(f"[_restart_gcd_import] Offset synced to {actual_count:,}")
-
-        logger.info("[_restart_gcd_import] Starting GCD import from synced offset...")
+        logger.info("[_restart_gcd_import] Starting GCD import (offset auto-synced by previous run)...")
         result = await run_gcd_import_job(max_records=0, batch_size=5000)
         logger.info(f"[_restart_gcd_import] GCD import completed: {result}")
     except Exception as e:
@@ -1416,10 +1404,34 @@ async def run_gcd_import_job(
             )
 
         finally:
-            await update_checkpoint(
-                db, job_name,
-                is_running=False,
-            )
+            # v1.9.2: ALWAYS sync offset to actual DB count on exit
+            # This ensures we resume from the correct position whether the job:
+            # 1. Completes normally
+            # 2. Fails with an exception
+            # 3. Is manually interrupted
+            # 4. Times out / is killed by Railway
+            try:
+                actual_count_result = await db.execute(text("""
+                    SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
+                """))
+                actual_count = actual_count_result.scalar() or 0
+
+                await db.execute(text("""
+                    UPDATE pipeline_checkpoints
+                    SET state_data = jsonb_build_object('offset', CAST(:offset AS integer)),
+                        is_running = false
+                    WHERE job_name = :name
+                """), {"name": job_name, "offset": actual_count})
+                await db.commit()
+
+                logger.info(f"[{job_name}] Offset synced to actual DB count: {actual_count:,}")
+            except Exception as sync_err:
+                logger.error(f"[{job_name}] Failed to sync offset on exit: {sync_err}")
+                # Fall back to just clearing is_running flag
+                await update_checkpoint(
+                    db, job_name,
+                    is_running=False,
+                )
 
         logger.info(
             f"[{job_name}] Complete: {stats['processed']:,} processed "
