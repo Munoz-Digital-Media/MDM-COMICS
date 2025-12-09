@@ -1,5 +1,5 @@
 """
-Pipeline Job Scheduler v1.7.0
+Pipeline Job Scheduler v1.8.0
 
 Automated data acquisition jobs that ACTUALLY RUN.
 
@@ -9,6 +9,7 @@ Jobs:
 3. DLQ Retry - Retry failed jobs from dead letter queue
 4. Quarantine Cleanup - Auto-resolve old low-priority quarantine items
 5. Daily Price Snapshot - Capture price state for AI/ML training (v1.7.0)
+6. GCD Import - Import comics from Grand Comics Database SQLite dump (v1.8.0)
 
 All jobs use checkpoints for crash recovery and log to DLQ on failure.
 """
@@ -902,6 +903,264 @@ async def run_daily_snapshot_job():
 
 
 # =============================================================================
+# GCD IMPORT JOB (v1.8.0 - Grand Comics Database)
+# =============================================================================
+
+async def run_gcd_import_job(
+    db_path: str = None,
+    batch_size: int = None,
+    max_records: int = None,
+):
+    """
+    Import comics from GCD SQLite database dump.
+
+    This is the primary catalog import job for GCD-Primary architecture.
+    Uses SQLite dump from comics.org/download/ (CC-BY-SA 4.0 licensed).
+
+    Args:
+        db_path: Path to SQLite dump (default from settings.GCD_DUMP_PATH)
+        batch_size: Records per batch (default from settings.GCD_IMPORT_BATCH_SIZE)
+        max_records: Limit for subset imports (0 = unlimited)
+
+    The job:
+    1. Opens GCD SQLite dump
+    2. Queries gcd_issue JOIN gcd_series JOIN gcd_publisher
+    3. Normalizes to ComicIssue schema
+    4. Upserts into comic_issues (by gcd_id)
+    5. Tracks provenance for all fields
+    6. Checkpoints every batch for crash recovery
+    """
+    from app.core.config import settings
+    from app.adapters.gcd import GCDAdapter
+
+    job_name = "gcd_import"
+    batch_id = str(uuid4())
+
+    # Get settings with defaults
+    db_path = db_path or settings.GCD_DUMP_PATH
+    batch_size = batch_size or settings.GCD_IMPORT_BATCH_SIZE
+    max_records = max_records if max_records is not None else settings.GCD_IMPORT_MAX_RECORDS
+
+    logger.info(f"[{job_name}] Starting GCD import job (batch: {batch_id})")
+    logger.info(f"[{job_name}] Config: db_path={db_path}, batch_size={batch_size}, max_records={max_records or 'unlimited'}")
+
+    # Check if GCD import is enabled
+    if not settings.GCD_IMPORT_ENABLED:
+        logger.info(f"[{job_name}] GCD import is disabled (GCD_IMPORT_ENABLED=false)")
+        return {"status": "disabled", "message": "GCD import is disabled in settings"}
+
+    async with AsyncSessionLocal() as db:
+        checkpoint = await get_or_create_checkpoint(db, job_name, "import")
+
+        if checkpoint.get("is_running"):
+            logger.warning(f"[{job_name}] Job already running, skipping")
+            return {"status": "skipped", "message": "Job already running"}
+
+        await update_checkpoint(db, job_name, is_running=True, batch_id=batch_id)
+
+        stats = {"processed": 0, "inserted": 0, "updated": 0, "errors": 0}
+
+        try:
+            # Validate SQLite file exists
+            import os
+            if not os.path.exists(db_path):
+                raise FileNotFoundError(f"GCD SQLite dump not found: {db_path}")
+
+            # Initialize adapter
+            adapter = GCDAdapter()
+
+            # Validate schema before import
+            validation = adapter.validate_schema(db_path)
+            if not validation["valid"]:
+                raise ValueError(f"GCD schema validation failed: {validation['errors']}")
+
+            logger.info(f"[{job_name}] Schema validated. Tables: {list(validation['tables'].keys())}")
+
+            # Get starting offset from checkpoint for resume
+            state_data = checkpoint.get("state_data") or {}
+            start_offset = state_data.get("offset", 0) if isinstance(state_data, dict) else 0
+
+            logger.info(f"[{job_name}] Resuming from offset {start_offset}")
+
+            # Stream records from GCD SQLite
+            for batch in adapter.import_from_sqlite(
+                db_path=db_path,
+                batch_size=batch_size,
+                offset=start_offset,
+                limit=max_records,
+            ):
+                batch_stats = {"inserted": 0, "updated": 0, "errors": 0}
+
+                for record in batch:
+                    try:
+                        gcd_id = record.get("gcd_id")
+                        if not gcd_id:
+                            batch_stats["errors"] += 1
+                            continue
+
+                        # Check if record exists (by gcd_id)
+                        existing = await db.execute(text("""
+                            SELECT id FROM comic_issues WHERE gcd_id = :gcd_id
+                        """), {"gcd_id": gcd_id})
+                        existing_row = existing.fetchone()
+
+                        if existing_row:
+                            # UPDATE existing record
+                            comic_id = existing_row.id
+                            await db.execute(text("""
+                                UPDATE comic_issues SET
+                                    gcd_series_id = :gcd_series_id,
+                                    gcd_publisher_id = :gcd_publisher_id,
+                                    issue_number = COALESCE(:issue_number, issue_number),
+                                    title = COALESCE(:story_title, title),
+                                    isbn = COALESCE(:isbn, isbn),
+                                    upc = COALESCE(:upc, upc),
+                                    page_count = COALESCE(:page_count, page_count),
+                                    updated_at = NOW()
+                                WHERE gcd_id = :gcd_id
+                            """), {
+                                "gcd_id": gcd_id,
+                                "gcd_series_id": record.get("gcd_series_id"),
+                                "gcd_publisher_id": record.get("gcd_publisher_id"),
+                                "issue_number": record.get("issue_number"),
+                                "story_title": record.get("story_title"),
+                                "isbn": record.get("isbn"),
+                                "upc": record.get("upc"),
+                                "page_count": record.get("page_count"),
+                            })
+                            batch_stats["updated"] += 1
+                        else:
+                            # INSERT new record
+                            result = await db.execute(text("""
+                                INSERT INTO comic_issues (
+                                    gcd_id, gcd_series_id, gcd_publisher_id,
+                                    issue_number, title, isbn, upc, page_count,
+                                    created_at, updated_at
+                                ) VALUES (
+                                    :gcd_id, :gcd_series_id, :gcd_publisher_id,
+                                    :issue_number, :story_title, :isbn, :upc, :page_count,
+                                    NOW(), NOW()
+                                )
+                                RETURNING id
+                            """), {
+                                "gcd_id": gcd_id,
+                                "gcd_series_id": record.get("gcd_series_id"),
+                                "gcd_publisher_id": record.get("gcd_publisher_id"),
+                                "issue_number": record.get("issue_number"),
+                                "story_title": record.get("story_title"),
+                                "isbn": record.get("isbn"),
+                                "upc": record.get("upc"),
+                                "page_count": record.get("page_count"),
+                            })
+                            new_row = result.fetchone()
+                            comic_id = new_row.id if new_row else None
+                            batch_stats["inserted"] += 1
+
+                        # Track provenance for GCD-sourced fields
+                        if comic_id:
+                            for field in ["gcd_id", "gcd_series_id", "gcd_publisher_id", "issue_number", "isbn", "upc"]:
+                                if record.get(field) is not None:
+                                    await db.execute(text("""
+                                        INSERT INTO field_provenance
+                                        (entity_type, entity_id, field_name, data_source, source_id,
+                                         license_type, requires_attribution, attribution_text, fetched_at, created_at, updated_at)
+                                        VALUES ('comic_issue', :id, :field, 'gcd', :gcd_id,
+                                                'CC-BY-SA-4.0', true, :attribution, NOW(), NOW(), NOW())
+                                        ON CONFLICT (entity_type, entity_id, field_name)
+                                        DO UPDATE SET
+                                            data_source = 'gcd',
+                                            source_id = :gcd_id,
+                                            license_type = 'CC-BY-SA-4.0',
+                                            requires_attribution = true,
+                                            attribution_text = :attribution,
+                                            fetched_at = NOW(),
+                                            updated_at = NOW()
+                                    """), {
+                                        "id": comic_id,
+                                        "field": field,
+                                        "gcd_id": str(gcd_id),
+                                        "attribution": record.get("_attribution"),
+                                    })
+
+                        stats["processed"] += 1
+
+                    except Exception as e:
+                        logger.error(f"[{job_name}] Error importing GCD record {record.get('gcd_id')}: {e}")
+                        batch_stats["errors"] += 1
+                        await add_to_dlq(
+                            db, job_name, str(e),
+                            entity_type="comic_issue",
+                            external_id=str(record.get("gcd_id")),
+                            error_type=type(e).__name__,
+                            error_trace=traceback.format_exc()[:2000],
+                            batch_id=batch_id
+                        )
+
+                # Commit batch and update checkpoint
+                await db.commit()
+
+                stats["inserted"] += batch_stats["inserted"]
+                stats["updated"] += batch_stats["updated"]
+                stats["errors"] += batch_stats["errors"]
+
+                # Update checkpoint with new offset
+                new_offset = start_offset + stats["processed"]
+                await update_checkpoint(
+                    db, job_name,
+                    processed_delta=len(batch),
+                    updated_delta=batch_stats["inserted"] + batch_stats["updated"],
+                    errors_delta=batch_stats["errors"],
+                )
+
+                # Store offset in state_data for resume
+                await db.execute(text("""
+                    UPDATE pipeline_checkpoints
+                    SET state_data = jsonb_build_object('offset', :offset)
+                    WHERE job_name = :name
+                """), {"name": job_name, "offset": new_offset})
+                await db.commit()
+
+                logger.info(
+                    f"[{job_name}] Batch complete: {len(batch)} records "
+                    f"(+{batch_stats['inserted']} new, +{batch_stats['updated']} updated, "
+                    f"{batch_stats['errors']} errors). Total: {stats['processed']:,}"
+                )
+
+                # Check if we've hit max_records limit
+                if max_records and stats["processed"] >= max_records:
+                    logger.info(f"[{job_name}] Reached max_records limit ({max_records})")
+                    break
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+            await add_to_dlq(
+                db, job_name, str(e),
+                error_type=type(e).__name__,
+                error_trace=traceback.format_exc(),
+                batch_id=batch_id
+            )
+
+        finally:
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+            )
+
+        logger.info(
+            f"[{job_name}] Complete: {stats['processed']:,} processed "
+            f"({stats['inserted']:,} new, {stats['updated']:,} updated, {stats['errors']:,} errors)"
+        )
+
+        return {
+            "status": "completed",
+            "batch_id": batch_id,
+            "stats": stats,
+        }
+
+
+# =============================================================================
 # MAIN SCHEDULER
 # =============================================================================
 
@@ -985,20 +1244,21 @@ class PipelineScheduler:
             print(f"[SCHEDULER] Next {name} run in {interval_minutes} minutes")
             await asyncio.sleep(interval_seconds)
 
-    async def run_job_now(self, job_name: str):
+    async def run_job_now(self, job_name: str, **kwargs):
         """Manually trigger a job."""
         jobs = {
             "comic_enrichment": run_comic_enrichment_job,
             "funko_price_check": run_funko_price_check_job,
             "dlq_retry": run_dlq_retry_job,
             "daily_snapshot": run_daily_snapshot_job,  # v1.7.0
+            "gcd_import": run_gcd_import_job,  # v1.8.0
         }
 
         if job_name not in jobs:
             raise ValueError(f"Unknown job: {job_name}. Available: {list(jobs.keys())}")
 
         logger.info(f"[SCHEDULER] Manual trigger: {job_name}")
-        await jobs[job_name]()
+        return await jobs[job_name](**kwargs)
 
 
 # Global scheduler instance

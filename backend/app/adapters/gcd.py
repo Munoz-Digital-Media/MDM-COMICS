@@ -1,14 +1,14 @@
 """
-Grand Comics Database (GCD) Adapter v1.0.0
+Grand Comics Database (GCD) Adapter v1.7.0
 
 Adapter for GCD - structured bibliographic metadata.
 https://comics.org/
 
 Per pipeline spec:
-- Type: Database Dump + Web Scraping (NO API)
+- Type: SQLite Database Dump (primary), Web Scraping (fallback)
 - License: CC BY-SA 4.0 - fully usable for data
 - DO NOT USE IMAGES - publisher copyright
-- Priority: P2 for bibliographic enrichment
+- Priority: P1 for catalog data (GCD-Primary architecture)
 
 Data includes:
 - Bibliographic metadata (series, issues, volumes, print runs)
@@ -18,10 +18,16 @@ Data includes:
 - Publisher data
 - Indicia information
 - ISBN/barcode data
+
+v1.7.0: Added SQLite dump import (import_from_sqlite)
+- Direct SQLite queries via sqlite3 module
+- Streaming cursor with fetchmany for memory efficiency
+- JOIN support for series/publisher denormalization
 """
 import logging
 import re
-from typing import Any, Dict, Optional, List
+import sqlite3
+from typing import Any, Dict, Optional, List, Iterator, Generator
 from bs4 import BeautifulSoup
 
 from app.core.adapter_registry import (
@@ -285,19 +291,246 @@ class GCDAdapter(DataSourceAdapter):
             "_attribution": self.config.attribution_text,
         }
 
-    def import_from_dump(self, dump_path: str):
+    def import_from_sqlite(
+        self,
+        db_path: str,
+        batch_size: int = 1000,
+        offset: int = 0,
+        limit: int = 0,
+    ) -> Generator[List[Dict[str, Any]], None, int]:
         """
-        Import data from GCD MySQL database dump.
+        Import data from GCD SQLite database dump.
 
-        GCD offers MySQL dumps at comics.org/download/ (requires free account).
+        GCD offers SQLite dumps at comics.org/download/ (requires free account).
         This is the preferred method for bulk data ingestion.
 
         Args:
-            dump_path: Path to the extracted dump files
+            db_path: Path to the SQLite database file
+            batch_size: Number of records per batch (default 1000)
+            offset: Starting record offset for resumable imports
+            limit: Maximum records to import (0 = unlimited)
 
-        TODO: Implement MySQL dump parsing and import
+        Yields:
+            Batches of normalized comic issue records
+
+        Returns:
+            Total count of records processed
+
+        Example:
+            adapter = GCDAdapter()
+            for batch in adapter.import_from_sqlite('/data/gcd/2025-12-01.db'):
+                for record in batch:
+                    # Process record
+                    pass
         """
-        raise NotImplementedError(
-            "Database dump import not yet implemented. "
-            "Download dumps from https://comics.org/download/"
-        )
+        logger.info(f"[{self.name}] Opening SQLite database: {db_path}")
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row  # Enable column access by name
+        cursor = conn.cursor()
+
+        # Get total count for progress reporting
+        cursor.execute("SELECT COUNT(*) FROM gcd_issue WHERE deleted = 0")
+        total_available = cursor.fetchone()[0]
+        logger.info(f"[{self.name}] Total non-deleted issues in GCD: {total_available:,}")
+
+        # Build query with JOINs for series and publisher data
+        # Explicitly exclude image-related columns
+        query = """
+            SELECT
+                i.id as gcd_id,
+                i.number as issue_number,
+                i.volume,
+                i.title as story_title,
+                i.isbn,
+                i.valid_isbn,
+                i.barcode,
+                i.publication_date,
+                i.key_date,
+                i.on_sale_date,
+                i.page_count,
+                i.price as cover_price,
+                i.variant_of_id,
+                i.variant_name,
+                i.series_id as gcd_series_id,
+                s.name as series_name,
+                s.sort_name as series_sort_name,
+                s.year_began as series_year_began,
+                s.year_ended as series_year_ended,
+                s.publisher_id as gcd_publisher_id,
+                p.name as publisher_name
+            FROM gcd_issue i
+            LEFT JOIN gcd_series s ON i.series_id = s.id
+            LEFT JOIN gcd_publisher p ON s.publisher_id = p.id
+            WHERE i.deleted = 0
+            ORDER BY i.id
+        """
+
+        # Add LIMIT/OFFSET if specified
+        if limit > 0:
+            query += f" LIMIT {limit}"
+        if offset > 0:
+            query += f" OFFSET {offset}"
+
+        logger.info(f"[{self.name}] Executing query with offset={offset}, limit={limit or 'unlimited'}")
+        cursor.execute(query)
+
+        records_processed = 0
+        batch = []
+
+        while True:
+            rows = cursor.fetchmany(batch_size)
+            if not rows:
+                break
+
+            for row in rows:
+                record = self._normalize_sqlite_row(dict(row))
+                batch.append(record)
+                records_processed += 1
+
+            if batch:
+                logger.debug(f"[{self.name}] Yielding batch of {len(batch)} records (total: {records_processed:,})")
+                yield batch
+                batch = []
+
+        # Yield any remaining records
+        if batch:
+            yield batch
+
+        cursor.close()
+        conn.close()
+
+        logger.info(f"[{self.name}] Import complete. Processed {records_processed:,} records")
+        return records_processed
+
+    def _normalize_sqlite_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize a SQLite row to canonical schema.
+
+        Handles NULL values and type conversions.
+        """
+        # Parse cover price - GCD stores as text like "$2.99"
+        cover_price = row.get("cover_price")
+        if cover_price and isinstance(cover_price, str):
+            # Extract numeric value from price string
+            price_match = re.search(r'[\d.]+', cover_price)
+            if price_match:
+                try:
+                    cover_price = float(price_match.group())
+                except ValueError:
+                    cover_price = None
+
+        # Parse key_date to release_date (YYYY-MM-DD format)
+        release_date = row.get("key_date")
+        if release_date and len(release_date) < 4:
+            release_date = None  # Invalid date
+
+        return {
+            # GCD identifiers
+            "gcd_id": row.get("gcd_id"),
+            "gcd_series_id": row.get("gcd_series_id"),
+            "gcd_publisher_id": row.get("gcd_publisher_id"),
+
+            # Cross-reference fields for matching
+            "isbn": row.get("isbn") or row.get("valid_isbn"),
+            "upc": row.get("barcode"),  # Map barcode to upc
+
+            # Issue metadata
+            "issue_number": row.get("issue_number"),
+            "volume": row.get("volume"),
+            "story_title": row.get("story_title"),
+            "page_count": row.get("page_count"),
+            "cover_price": cover_price,
+            "release_date": release_date,
+
+            # Variant tracking
+            "variant_of_gcd_id": row.get("variant_of_id"),
+            "variant_name": row.get("variant_name"),
+
+            # Series info (denormalized for convenience)
+            "series_name": row.get("series_name"),
+            "series_sort_name": row.get("series_sort_name"),
+            "series_year_began": row.get("series_year_began"),
+            "series_year_ended": row.get("series_year_ended"),
+
+            # Publisher info (denormalized)
+            "publisher_name": row.get("publisher_name"),
+
+            # Source tracking for FieldProvenance
+            "_source": self.name,
+            "_source_id": str(row.get("gcd_id")),
+            "_license": "CC-BY-SA-4.0",
+            "_requires_attribution": True,
+            "_attribution": self.config.attribution_text,
+        }
+
+    def get_total_count(self, db_path: str) -> int:
+        """Get total number of non-deleted issues in the GCD dump."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM gcd_issue WHERE deleted = 0")
+        count = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        return count
+
+    def validate_schema(self, db_path: str) -> Dict[str, Any]:
+        """
+        Validate that the SQLite dump has expected schema.
+
+        Returns validation results including:
+        - Whether required tables exist
+        - Required columns present
+        - Sample data for verification
+        """
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        results = {
+            "valid": True,
+            "tables": {},
+            "errors": [],
+        }
+
+        required_tables = ["gcd_issue", "gcd_series", "gcd_publisher"]
+
+        for table in required_tables:
+            try:
+                cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                count = cursor.fetchone()[0]
+
+                cursor.execute(f"PRAGMA table_info({table})")
+                columns = [col[1] for col in cursor.fetchall()]
+
+                results["tables"][table] = {
+                    "exists": True,
+                    "row_count": count,
+                    "columns": columns,
+                }
+            except sqlite3.OperationalError as e:
+                results["valid"] = False
+                results["errors"].append(f"Table {table} error: {e}")
+                results["tables"][table] = {"exists": False}
+
+        # Verify critical columns in gcd_issue
+        if results["tables"].get("gcd_issue", {}).get("exists"):
+            required_cols = ["id", "series_id", "number", "deleted"]
+            missing = [c for c in required_cols if c not in results["tables"]["gcd_issue"]["columns"]]
+            if missing:
+                results["valid"] = False
+                results["errors"].append(f"Missing columns in gcd_issue: {missing}")
+
+        cursor.close()
+        conn.close()
+
+        return results
+
+    def import_from_dump(self, dump_path: str):
+        """
+        DEPRECATED: Use import_from_sqlite() instead.
+
+        This method exists for backward compatibility.
+        """
+        logger.warning(f"[{self.name}] import_from_dump is deprecated - use import_from_sqlite")
+        # Attempt to use as SQLite path
+        return self.import_from_sqlite(dump_path)
