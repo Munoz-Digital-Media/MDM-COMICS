@@ -1,0 +1,11 @@
+# Nixpacks configuration for Railway static site deployment
+# This tells Railway how to build and serve the Vite frontend
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm"]
+
+[phases.build]
+cmds = ["npm ci", "npm run build"]
+
+[start]
+cmd = "npx serve dist -s -l 3000"
