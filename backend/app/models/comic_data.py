@@ -128,7 +128,7 @@ class ComicIssue(Base):
     page_count = Column(Integer)
     upc = Column(String(50))
     sku = Column(String(50))
-    isbn = Column(String(20))
+    isbn = Column(String(50))  # Extended from 20 for GCD ISBNs with hyphens
 
     # Description/synopsis
     description = Column(Text)

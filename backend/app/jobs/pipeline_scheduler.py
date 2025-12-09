@@ -1042,12 +1042,24 @@ async def run_gcd_import_job(
             ):
                 batch_stats = {"inserted": 0, "updated": 0, "errors": 0}
 
+                # Helper to safely truncate strings for DB columns
+                def truncate(val, max_len):
+                    if val is None:
+                        return None
+                    return str(val)[:max_len] if len(str(val)) > max_len else val
+
                 for record in batch:
                     try:
                         gcd_id = record.get("gcd_id")
                         if not gcd_id:
                             batch_stats["errors"] += 1
                             continue
+
+                        # Truncate fields to match DB column limits
+                        isbn = truncate(record.get("isbn"), 50)
+                        upc = truncate(record.get("upc"), 50)
+                        issue_number = truncate(record.get("issue_number"), 50)
+                        story_title = truncate(record.get("story_title"), 500)
 
                         # Check if record exists (by gcd_id)
                         existing = await db.execute(text("""
@@ -1073,10 +1085,10 @@ async def run_gcd_import_job(
                                 "gcd_id": gcd_id,
                                 "gcd_series_id": record.get("gcd_series_id"),
                                 "gcd_publisher_id": record.get("gcd_publisher_id"),
-                                "issue_number": record.get("issue_number"),
-                                "story_title": record.get("story_title"),
-                                "isbn": record.get("isbn"),
-                                "upc": record.get("upc"),
+                                "issue_number": issue_number,
+                                "story_title": story_title,
+                                "isbn": isbn,
+                                "upc": upc,
                                 "page_count": record.get("page_count"),
                             })
                             batch_stats["updated"] += 1
@@ -1097,10 +1109,10 @@ async def run_gcd_import_job(
                                 "gcd_id": gcd_id,
                                 "gcd_series_id": record.get("gcd_series_id"),
                                 "gcd_publisher_id": record.get("gcd_publisher_id"),
-                                "issue_number": record.get("issue_number"),
-                                "story_title": record.get("story_title"),
-                                "isbn": record.get("isbn"),
-                                "upc": record.get("upc"),
+                                "issue_number": issue_number,
+                                "story_title": story_title,
+                                "isbn": isbn,
+                                "upc": upc,
                                 "page_count": record.get("page_count"),
                             })
                             new_row = result.fetchone()
