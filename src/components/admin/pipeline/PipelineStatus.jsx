@@ -1,11 +1,16 @@
 /**
  * PipelineStatus - GCD Import Progress Tracker
  * Displays real-time progress of the GCD data import pipeline
+ *
+ * Features:
+ * - Option 1: Live Import Stats (rate, ETA, current batch)
+ * - Option 5: Data Quality Summary (metadata completeness, cover images, etc.)
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Database, RefreshCw, Loader2, CheckCircle, XCircle,
-  AlertTriangle, Play, Pause, RotateCcw
+  AlertTriangle, Play, Pause, RotateCcw, Clock, Zap,
+  Image, FileText, BookOpen, Building2, BarChart3
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 
@@ -19,6 +24,24 @@ function formatPercent(num) {
   return num.toFixed(2);
 }
 
+function formatDuration(seconds) {
+  if (!seconds || seconds <= 0) return '--';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  return `${minutes}m`;
+}
+
+function formatRate(rate) {
+  if (!rate || rate <= 0) return '--';
+  if (rate >= 1000) {
+    return `${(rate / 1000).toFixed(1)}k/s`;
+  }
+  return `${Math.round(rate)}/s`;
+}
+
 export default function PipelineStatus({ compact = false }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -26,9 +49,28 @@ export default function PipelineStatus({ compact = false }) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
+  // Option 1: Rate tracking state
+  const [importRate, setImportRate] = useState(0);
+  const lastCountRef = useRef({ count: 0, timestamp: Date.now() });
+
   const fetchStatus = useCallback(async () => {
     try {
       const data = await adminAPI.getGCDStatus();
+
+      // Calculate import rate (Option 1)
+      const now = Date.now();
+      const prevCount = lastCountRef.current.count;
+      const prevTime = lastCountRef.current.timestamp;
+      const timeDiff = (now - prevTime) / 1000; // seconds
+
+      if (data.imported_count > prevCount && timeDiff > 0) {
+        const countDiff = data.imported_count - prevCount;
+        const rate = countDiff / timeDiff;
+        setImportRate(rate);
+      }
+
+      lastCountRef.current = { count: data.imported_count, timestamp: now };
+
       setStatus(data);
       setError(null);
     } catch (err) {
@@ -107,11 +149,15 @@ export default function PipelineStatus({ compact = false }) {
 
   const checkpoint = status?.checkpoint || {};
   const settings = status?.settings || {};
+  const dataQuality = status?.data_quality || null;
   const isRunning = checkpoint.is_running;
   const totalInDump = settings.dump_total_count || 0;
   const importedCount = status?.imported_count || 0;
   const progress = totalInDump > 0 ? (importedCount / totalInDump) * 100 : 0;
   const remaining = totalInDump - importedCount;
+
+  // Option 1: Calculate ETA
+  const eta = importRate > 0 ? remaining / importRate : null;
 
   // Compact view for dashboard
   if (compact) {
@@ -162,6 +208,22 @@ export default function PipelineStatus({ compact = false }) {
             {formatPercent(progress)}%
           </span>
         </div>
+
+        {/* Compact rate/ETA when running */}
+        {isRunning && importRate > 0 && (
+          <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
+            <span className="flex items-center gap-1">
+              <Zap className="w-3 h-3 text-yellow-400" />
+              {formatRate(importRate)}
+            </span>
+            {eta && (
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3 text-blue-400" />
+                ETA: {formatDuration(eta)}
+              </span>
+            )}
+          </div>
+        )}
 
         {checkpoint.total_errors > 0 && (
           <div className="mt-2 flex items-center gap-1 text-xs text-red-400">
@@ -283,6 +345,109 @@ export default function PipelineStatus({ compact = false }) {
           </p>
         </div>
       </div>
+
+      {/* Option 1: Live Import Stats (when running) */}
+      {isRunning && (
+        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="w-4 h-4 text-yellow-400" />
+            <h4 className="text-sm font-medium text-blue-400">Live Import Stats</h4>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Import Rate</p>
+              <p className="text-lg font-bold text-white">
+                {importRate > 0 ? formatRate(importRate) : 'Calculating...'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Est. Time Remaining</p>
+              <p className="text-lg font-bold text-white">
+                {eta ? formatDuration(eta) : 'Calculating...'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Batch Size</p>
+              <p className="text-lg font-bold text-white">{formatNumber(settings.batch_size || 5000)}</p>
+            </div>
+          </div>
+          {checkpoint.last_run_started && (
+            <p className="text-xs text-zinc-500 mt-3">
+              Started: {new Date(checkpoint.last_run_started).toLocaleString()}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Option 5: Data Quality Summary (when not running or showing alongside) */}
+      {dataQuality && !isRunning && (
+        <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <BarChart3 className="w-4 h-4 text-purple-400" />
+            <h4 className="text-sm font-medium text-purple-400">Data Quality Summary</h4>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="flex items-start gap-2">
+              <Image className="w-4 h-4 text-green-400 mt-0.5" />
+              <div>
+                <p className="text-xs text-zinc-500">Cover Images</p>
+                <p className="text-sm font-semibold text-white">
+                  {dataQuality.pct_with_cover}%
+                </p>
+                <p className="text-xs text-zinc-600">
+                  {formatNumber(dataQuality.with_cover_image)} records
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2">
+              <FileText className="w-4 h-4 text-blue-400 mt-0.5" />
+              <div>
+                <p className="text-xs text-zinc-500">Descriptions</p>
+                <p className="text-sm font-semibold text-white">
+                  {dataQuality.pct_with_description}%
+                </p>
+                <p className="text-xs text-zinc-600">
+                  {formatNumber(dataQuality.with_description)} records
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2">
+              <BookOpen className="w-4 h-4 text-orange-400 mt-0.5" />
+              <div>
+                <p className="text-xs text-zinc-500">Unique Series</p>
+                <p className="text-sm font-semibold text-white">
+                  {formatNumber(dataQuality.unique_series)}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2">
+              <Building2 className="w-4 h-4 text-yellow-400 mt-0.5" />
+              <div>
+                <p className="text-xs text-zinc-500">Publishers</p>
+                <p className="text-sm font-semibold text-white">
+                  {formatNumber(dataQuality.unique_publishers)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Additional quality metrics */}
+          <div className="mt-3 pt-3 border-t border-purple-500/20 grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+            <div className="flex justify-between">
+              <span className="text-zinc-500">With ISBN:</span>
+              <span className="text-zinc-400">{dataQuality.pct_with_isbn}% ({formatNumber(dataQuality.with_isbn)})</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-zinc-500">With Cover Date:</span>
+              <span className="text-zinc-400">{formatNumber(dataQuality.with_cover_date)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-zinc-500">With Pricing:</span>
+              <span className="text-zinc-400">{dataQuality.pct_with_pricing}% ({formatNumber(dataQuality.with_pricing)})</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Error Display */}
       {checkpoint.last_error && (
