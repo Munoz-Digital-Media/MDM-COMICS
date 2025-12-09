@@ -9,15 +9,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.db import init_db
 from app.api import api_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    # Startup
-    await init_db()
+    # Startup - database auto-connects via SQLAlchemy engine
     print(f"🚀 {settings.app_name} started")
     yield
     # Shutdown
