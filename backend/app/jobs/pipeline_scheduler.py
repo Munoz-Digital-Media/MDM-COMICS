@@ -1062,8 +1062,8 @@ async def run_gcd_import_job(
                                 UPDATE comic_issues SET
                                     gcd_series_id = :gcd_series_id,
                                     gcd_publisher_id = :gcd_publisher_id,
-                                    issue_number = COALESCE(:issue_number, issue_number),
-                                    title = COALESCE(:story_title, title),
+                                    number = COALESCE(:issue_number, number),
+                                    issue_name = COALESCE(:story_title, issue_name),
                                     isbn = COALESCE(:isbn, isbn),
                                     upc = COALESCE(:upc, upc),
                                     page_count = COALESCE(:page_count, page_count),
@@ -1085,7 +1085,7 @@ async def run_gcd_import_job(
                             result = await db.execute(text("""
                                 INSERT INTO comic_issues (
                                     gcd_id, gcd_series_id, gcd_publisher_id,
-                                    issue_number, title, isbn, upc, page_count,
+                                    number, issue_name, isbn, upc, page_count,
                                     created_at, updated_at
                                 ) VALUES (
                                     :gcd_id, :gcd_series_id, :gcd_publisher_id,
@@ -1108,9 +1108,18 @@ async def run_gcd_import_job(
                             batch_stats["inserted"] += 1
 
                         # Track provenance for GCD-sourced fields
+                        # Map db column names to record field names
+                        field_map = {
+                            "gcd_id": "gcd_id",
+                            "gcd_series_id": "gcd_series_id",
+                            "gcd_publisher_id": "gcd_publisher_id",
+                            "number": "issue_number",
+                            "isbn": "isbn",
+                            "upc": "upc"
+                        }
                         if comic_id:
-                            for field in ["gcd_id", "gcd_series_id", "gcd_publisher_id", "issue_number", "isbn", "upc"]:
-                                if record.get(field) is not None:
+                            for db_field, record_field in field_map.items():
+                                if record.get(record_field) is not None:
                                     await db.execute(text("""
                                         INSERT INTO field_provenance
                                         (entity_type, entity_id, field_name, data_source, source_id,
@@ -1128,7 +1137,7 @@ async def run_gcd_import_job(
                                             updated_at = NOW()
                                     """), {
                                         "id": comic_id,
-                                        "field": field,
+                                        "field": db_field,
                                         "gcd_id": str(gcd_id),
                                         "attribution": record.get("_attribution"),
                                     })
