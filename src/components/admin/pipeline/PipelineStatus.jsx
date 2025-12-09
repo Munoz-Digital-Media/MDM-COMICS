@@ -28,10 +28,14 @@ function formatDuration(seconds) {
   if (!seconds || seconds <= 0) return '--';
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
   if (hours > 0) {
     return `${hours}h ${minutes}m`;
   }
-  return `${minutes}m`;
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+  return `${secs}s`;
 }
 
 function formatRate(rate) {
@@ -49,24 +53,37 @@ export default function PipelineStatus({ compact = false }) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Option 1: Rate tracking state
+  // Option 1: Rate tracking state with exponential moving average (EMA)
   const [importRate, setImportRate] = useState(0);
   const lastCountRef = useRef({ count: 0, timestamp: Date.now() });
+  const EMA_ALPHA = 0.3; // Smoothing factor (0.3 = 30% new, 70% old)
 
   const fetchStatus = useCallback(async () => {
     try {
       const data = await adminAPI.getGCDStatus();
 
-      // Calculate import rate (Option 1)
+      // Calculate import rate with EMA smoothing (Option 1)
       const now = Date.now();
       const prevCount = lastCountRef.current.count;
       const prevTime = lastCountRef.current.timestamp;
       const timeDiff = (now - prevTime) / 1000; // seconds
 
-      if (data.imported_count > prevCount && timeDiff > 0) {
+      if (timeDiff > 0 && prevCount > 0) {
         const countDiff = data.imported_count - prevCount;
-        const rate = countDiff / timeDiff;
-        setImportRate(rate);
+        if (countDiff > 0) {
+          // Calculate instantaneous rate
+          const instantRate = countDiff / timeDiff;
+          // Apply exponential moving average for smoother display
+          setImportRate(prevRate =>
+            prevRate > 0
+              ? EMA_ALPHA * instantRate + (1 - EMA_ALPHA) * prevRate
+              : instantRate
+          );
+        }
+        // If count hasn't changed, gradually decay the rate toward 0
+        else if (countDiff === 0) {
+          setImportRate(prevRate => prevRate * 0.9); // Decay by 10%
+        }
       }
 
       lastCountRef.current = { count: data.imported_count, timestamp: now };
