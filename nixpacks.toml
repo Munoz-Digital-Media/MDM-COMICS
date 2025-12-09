@@ -1,11 +1,19 @@
 # Nixpacks configuration for Railway static site deployment
 # This tells Railway how to build and serve the Vite frontend
 
+# Disable auto-detected providers to use our custom commands
+providers = []
+
 [phases.setup]
 nixPkgs = ["nodejs_20", "npm"]
 
+[phases.install]
+cmds = ["npm ci"]
+dependsOn = ["setup"]
+
 [phases.build]
-cmds = ["npm ci", "npm run build"]
+cmds = ["npm run build"]
+dependsOn = ["install"]
 
 [start]
 cmd = "npx serve dist -s -l $PORT"
