@@ -5,7 +5,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   DollarSign, Package, AlertTriangle, TrendingUp, TrendingDown,
-  Loader2, RefreshCw, Download, ArrowUpDown, ChevronUp, ChevronDown
+  Loader2, RefreshCw, Download, ArrowUpDown, ChevronUp, ChevronDown,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 import PriceChangeDrawer from './PriceChangeDrawer';
@@ -59,6 +60,10 @@ export default function InventorySummary() {
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedPriceChange, setSelectedPriceChange] = useState(null);
+
+  // Pagination state
+  const [pricePage, setPricePage] = useState(1);
+  const PRICE_PAGE_SIZE = 10;
 
   const fetchData = async () => {
     try {
@@ -125,6 +130,19 @@ export default function InventorySummary() {
 
     return filtered;
   }, [priceChanges, priceFilter, priceSort]);
+
+  // Paginated price changes
+  const paginatedPriceChanges = useMemo(() => {
+    const start = (pricePage - 1) * PRICE_PAGE_SIZE;
+    return filteredPriceChanges.slice(start, start + PRICE_PAGE_SIZE);
+  }, [filteredPriceChanges, pricePage]);
+
+  const totalPricePages = Math.ceil(filteredPriceChanges.length / PRICE_PAGE_SIZE);
+
+  // Reset page when filter changes
+  useEffect(() => {
+    setPricePage(1);
+  }, [priceFilter]);
 
   const handlePriceSort = (field) => {
     setPriceSort(prev => {
@@ -353,7 +371,7 @@ export default function InventorySummary() {
             </p>
           ) : (
             <div className="space-y-2 max-h-80 overflow-auto">
-              {filteredPriceChanges.map((change, idx) => (
+              {paginatedPriceChanges.map((change, idx) => (
                 <div
                   key={idx}
                   onClick={() => {
@@ -386,10 +404,32 @@ export default function InventorySummary() {
             </div>
           )}
 
-          <div className="mt-4 pt-4 border-t border-zinc-800">
+          {/* Pagination Controls */}
+          <div className="mt-4 pt-4 border-t border-zinc-800 flex items-center justify-between">
             <p className="text-xs text-zinc-500">
               {filteredPriceChanges.length} of {priceChanges.length} changes (≥10%)
             </p>
+            {totalPricePages > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPricePage(p => Math.max(1, p - 1))}
+                  disabled={pricePage === 1}
+                  className="p-1 rounded bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs text-zinc-400">
+                  {pricePage} / {totalPricePages}
+                </span>
+                <button
+                  onClick={() => setPricePage(p => Math.min(totalPricePages, p + 1))}
+                  disabled={pricePage === totalPricePages}
+                  className="p-1 rounded bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
