@@ -1,0 +1,11 @@
+# Nixpacks configuration for MDM Comics Backend
+# Ensures consistent Python version and build behavior
+
+[phases.setup]
+nixPkgs = ["python312", "gcc"]
+
+[phases.install]
+cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]
+
+[start]
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
