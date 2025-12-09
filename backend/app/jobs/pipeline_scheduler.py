@@ -1175,7 +1175,7 @@ async def run_gcd_import_job(
                 # Store offset in state_data for resume
                 await db.execute(text("""
                     UPDATE pipeline_checkpoints
-                    SET state_data = jsonb_build_object('offset', :offset::integer)
+                    SET state_data = jsonb_build_object('offset', CAST(:offset AS integer))
                     WHERE job_name = :name
                 """), {"name": job_name, "offset": new_offset})
                 await db.commit()
