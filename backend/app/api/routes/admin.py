@@ -1493,13 +1493,14 @@ async def sync_gcd_offset(
     actual_count = result.scalar() or 0
 
     # Update checkpoint with synced offset
+    # Use JSONB literal cast instead of jsonb_build_object for better compatibility
     await db.execute(text("""
         UPDATE pipeline_checkpoints
-        SET state_data = jsonb_build_object('offset', :offset::bigint),
+        SET state_data = ('{"offset": ' || :offset || '}')::jsonb,
             is_running = false,
             last_error = 'Offset synced to DB count by admin at ' || NOW()::text
         WHERE job_name = 'gcd_import'
-    """), {"offset": int(actual_count)})
+    """), {"offset": str(actual_count)})
     await db.commit()
 
     logger.info(f"GCD import offset synced to {actual_count:,} by admin {current_user.id}")
