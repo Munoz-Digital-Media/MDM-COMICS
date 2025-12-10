@@ -1,8 +1,12 @@
-# Nixpacks configuration for Railway static site deployment
-# This tells Railway how to build and serve the Vite frontend
+# =============================================================================
+# FRONTEND Nixpacks Configuration
+# =============================================================================
+# Service: MDM Comics Frontend
+# Root Directory: / (repo root)
+# Config Path: railway.json
+# =============================================================================
 
-# Disable auto-detected providers to use our custom commands
-providers = []
+providers = ["node"]
 
 [phases.setup]
 nixPkgs = ["nodejs_20"]
@@ -12,10 +16,7 @@ cmds = ["npm ci"]
 dependsOn = ["setup"]
 
 [phases.build]
-cmds = [
-    "npm run build",
-    "echo '=== Build verification ===' && ls -la dist/ && head -3 dist/index.html"
-]
+cmds = ["npm run build"]
 dependsOn = ["install"]
 
 [start]
