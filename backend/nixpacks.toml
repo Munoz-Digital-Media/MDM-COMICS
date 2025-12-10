@@ -1,8 +1,8 @@
 # Nixpacks configuration for MDM Comics Backend
 # Ensures consistent Python version and build behavior
 
-# Disable auto-detected providers to use our custom commands
-providers = []
+# Explicitly set Python provider - disable auto-detection
+providers = ["python"]
 
 [phases.setup]
 nixPkgs = ["python312Full", "gcc"]
