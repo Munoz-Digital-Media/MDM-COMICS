@@ -12,8 +12,11 @@ cmds = ["npm ci"]
 dependsOn = ["setup"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = [
+    "npm run build",
+    "echo '=== Build verification ===' && ls -la dist/ && head -3 dist/index.html"
+]
 dependsOn = ["install"]
 
 [start]
-cmd = "npx serve dist -s -l $PORT"
+cmd = "npx serve ./dist -s -l $PORT"
