@@ -3,7 +3,7 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile.cron",
-    "watchPatterns": ["**"]
+    "watchPatterns": ["backend/**"]
   },
   "deploy": {
     "startCommand": "python run_cron.py",
