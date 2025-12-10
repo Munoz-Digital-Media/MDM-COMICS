@@ -1,10 +1,10 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
+  "$comment": "FRONTEND ONLY - Do not use for backend service",
   "build": {
     "builder": "NIXPACKS",
     "nixpacksConfigPath": "nixpacks.toml",
-    "watchPatterns": ["src/**", "public/**", "index.html", "package.json", "vite.config.js", "nixpacks.toml"],
-    "buildCommand": "npm run build"
+    "watchPatterns": ["src/**", "public/**", "index.html", "package.json", "vite.config.js"]
   },
   "deploy": {
     "startCommand": "npx serve ./dist -s -l $PORT",

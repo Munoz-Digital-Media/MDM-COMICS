@@ -1,25 +1,26 @@
-# Nixpacks configuration for MDM Comics Backend
-# Ensures consistent Python version and build behavior
+# =============================================================================
+# BACKEND Nixpacks Configuration
+# =============================================================================
+# Service: MDM Comics Backend (FastAPI)
+# Root Directory: backend
+# Config Path: backend/railway.json
+# =============================================================================
 
-# Explicitly set Python provider - disable auto-detection
 providers = ["python"]
 
 [phases.setup]
 nixPkgs = ["python312Full", "gcc"]
 
-# Custom install phase (no auto-detect from Python provider)
 [phases.install]
 cmds = [
-    "python3.12 -m ensurepip --upgrade",
-    "python3.12 -m pip install --upgrade pip",
-    "python3.12 -m pip install -r requirements.txt"
+    "pip install --upgrade pip",
+    "pip install -r requirements.txt"
 ]
 dependsOn = ["setup"]
 
-# Explicit build phase - no build step needed for Python backend
 [phases.build]
-cmds = ["echo 'Python backend - no build step required'"]
+cmds = ["echo 'Backend ready'"]
 dependsOn = ["install"]
 
 [start]
-cmd = "python3.12 -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
