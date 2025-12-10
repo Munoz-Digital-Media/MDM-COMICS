@@ -16,5 +16,10 @@ cmds = [
 ]
 dependsOn = ["setup"]
 
+# Explicit build phase - no build step needed for Python backend
+[phases.build]
+cmds = ["echo 'Python backend - no build step required'"]
+dependsOn = ["install"]
+
 [start]
 cmd = "python3.12 -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
