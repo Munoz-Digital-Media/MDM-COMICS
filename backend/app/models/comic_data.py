@@ -6,7 +6,7 @@ v1.5.0: Added PriceCharting integration fields to ComicIssue
         (resolves RISK-005 schema drift from pipeline spec)
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, Table, Float, JSON, Numeric
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, Table, Float, JSON, Numeric, LargeBinary
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -144,6 +144,8 @@ class ComicIssue(Base):
     # Perceptual hash of cover image for image search (BE-003 optimization)
     # 64-bit pHash stored as hex string - indexed for efficient lookup
     cover_hash = Column(String(16), index=True)
+    cover_hash_prefix = Column(String(8), index=True)
+    cover_hash_bytes = Column(LargeBinary(8))
 
     # -------------------------------------------------------------------------
     # PriceCharting Integration (v1.5.0 - resolves RISK-005 schema drift)

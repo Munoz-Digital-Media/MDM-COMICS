@@ -6,7 +6,7 @@ Prevents overselling race conditions per constitution.json §15 (Checkout & Paym
 P2-6: Uses timezone-aware datetime
 """
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, CheckConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, CheckConstraint, JSON
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -36,6 +36,9 @@ class StockReservation(Base):
     payment_intent_id = Column(String(255), nullable=False, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    unit_price_cents = Column(Integer, nullable=False)
+    currency_code = Column(String(3), nullable=False, default="USD")
+    product_snapshot = Column(JSON)
 
     # Relationships
     user = relationship("User")

@@ -5,8 +5,8 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { API_BASE } from './api';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 const BEACON_URL = `${API_BASE}/analytics`;
 
 // Session storage key

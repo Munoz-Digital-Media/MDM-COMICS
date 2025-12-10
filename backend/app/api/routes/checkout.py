@@ -16,9 +16,10 @@ import logging
 import uuid
 import time
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update
 
@@ -36,10 +37,38 @@ router = APIRouter(prefix="/checkout", tags=["checkout"])
 
 # Initialize Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
+CHECKOUT_CURRENCY = (settings.STRIPE_CURRENCY or "usd").lower()
+RESERVATION_CURRENCY_CODE = CHECKOUT_CURRENCY.upper()
 
 # BLOCK-004: Fallback in-memory set when Redis unavailable
 # Will be used only if Redis connection fails
 _processed_webhook_events_fallback: set = set()
+
+
+def dollars_to_cents(amount: float) -> int:
+    """Convert a float dollar amount to integer cents using bankers rounding."""
+    if amount is None:
+        return 0
+    quantized = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return int(quantized * 100)
+
+
+def cents_to_dollars(amount_cents: int) -> float:
+    """Convert integer cents to float dollars."""
+    return float(Decimal(amount_cents) / Decimal(100))
+
+
+def build_product_snapshot(product: Product) -> Dict[str, Any]:
+    """Capture immutable product data for downstream order creation."""
+    return {
+        "id": product.id,
+        "name": product.name,
+        "sku": product.sku,
+        "price": product.price,
+        "image_url": product.image_url,
+        "category": product.category,
+        "subcategory": product.subcategory,
+    }
 
 
 class CheckoutItem(BaseModel):
@@ -124,19 +153,22 @@ async def create_payment_intent(
         # Reserve stock (decrement now)
         product.stock -= qty
 
-        item_total = int(product.price * 100) * qty
+        unit_price_cents = dollars_to_cents(product.price)
+        item_total = unit_price_cents * qty
         total_cents += item_total
 
         line_items.append({
             "product_id": product.id,
             "name": product.name,
             "quantity": qty,
-            "unit_price": int(product.price * 100)
+            "unit_price": unit_price_cents
         })
 
         reservations_to_create.append({
             "product_id": product.id,
-            "quantity": qty
+            "quantity": qty,
+            "unit_price_cents": unit_price_cents,
+            "product_snapshot": build_product_snapshot(product)
         })
 
     if total_cents < 50:  # Stripe minimum
@@ -146,7 +178,7 @@ async def create_payment_intent(
     try:
         intent = stripe.PaymentIntent.create(
             amount=total_cents,
-            currency="usd",
+            currency=CHECKOUT_CURRENCY,
             metadata={
                 "user_id": str(current_user.id),
                 "item_count": str(len(payload.items))
@@ -166,7 +198,10 @@ async def create_payment_intent(
             product_id=res["product_id"],
             quantity=res["quantity"],
             payment_intent_id=intent.id,
-            expires_at=expires_at
+            expires_at=expires_at,
+            unit_price_cents=res["unit_price_cents"],
+            currency_code=RESERVATION_CURRENCY_CODE,
+            product_snapshot=res["product_snapshot"]
         )
         db.add(reservation)
 
@@ -209,8 +244,6 @@ async def confirm_order(
     3. Create order from reservation data
     4. Delete reservation (stock already decremented)
     """
-    import uuid
-
     try:
         # Step 1: Verify payment with Stripe
         intent = stripe.PaymentIntent.retrieve(request.payment_intent_id)
@@ -247,6 +280,18 @@ async def confirm_order(
                 detail="Reservation expired or not found. Please try checkout again."
             )
 
+        fallback_ids = {
+            r.product_id
+            for r in reservations
+            if not r.unit_price_cents or not r.product_snapshot
+        }
+        fallback_products: Dict[int, Product] = {}
+        if fallback_ids:
+            result = await db.execute(
+                select(Product).where(Product.id.in_(list(fallback_ids)))
+            )
+            fallback_products = {prod.id: prod for prod in result.scalars().all()}
+
         # Check if any reservations are expired
         expired = [r for r in reservations if r.is_expired]
         if expired:
@@ -259,28 +304,70 @@ async def confirm_order(
         order_number = f"MDM-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
 
         # Calculate totals from reservations
-        subtotal = 0
+        subtotal_cents = 0
         order_items_data = []
 
         for reservation in reservations:
-            result = await db.execute(
-                select(Product).where(Product.id == reservation.product_id)
+            unit_price_cents = reservation.unit_price_cents
+            snapshot = reservation.product_snapshot or {}
+
+            if not unit_price_cents or unit_price_cents <= 0:
+                product = fallback_products.get(reservation.product_id)
+                if not product:
+                    logger.error(
+                        "Reservation missing pricing data for product_id=%s intent=%s",
+                        reservation.product_id,
+                        request.payment_intent_id,
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Reservation pricing data missing. Please contact support.",
+                    )
+                unit_price_cents = dollars_to_cents(product.price)
+                if not snapshot:
+                    snapshot = build_product_snapshot(product)
+            elif not snapshot:
+                product = fallback_products.get(reservation.product_id)
+                if product:
+                    snapshot = build_product_snapshot(product)
+
+            reservation_total = unit_price_cents * reservation.quantity
+            subtotal_cents += reservation_total
+            order_items_data.append({
+                "product_id": reservation.product_id,
+                "quantity": reservation.quantity,
+                "unit_price_cents": unit_price_cents,
+                "snapshot": snapshot
+            })
+
+        intent_currency = intent.currency.lower() if intent.currency else CHECKOUT_CURRENCY
+        if intent_currency != CHECKOUT_CURRENCY:
+            logger.error(
+                "Stripe currency mismatch intent=%s expected=%s received=%s",
+                request.payment_intent_id,
+                CHECKOUT_CURRENCY,
+                intent_currency,
             )
-            product = result.scalar_one_or_none()
-            if product:
-                item_total = product.price * reservation.quantity
-                subtotal += item_total
-                order_items_data.append({
-                    "product": product,
-                    "quantity": reservation.quantity
-                })
+            raise HTTPException(status_code=400, detail="Payment currency mismatch. Please retry checkout.")
+
+        if subtotal_cents != intent.amount:
+            logger.error(
+                "Amount mismatch for payment %s (expected=%s actual=%s)",
+                request.payment_intent_id,
+                subtotal_cents,
+                intent.amount,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Order amount mismatch detected. Please contact support before retrying payment.",
+            )
 
         order = Order(
             user_id=current_user.id,
             order_number=order_number,
             status="paid",
-            subtotal=subtotal,
-            total=intent.amount / 100,
+            subtotal=cents_to_dollars(subtotal_cents),
+            total=cents_to_dollars(intent.amount),
             payment_method="stripe",
             payment_id=request.payment_intent_id,
             paid_at=datetime.now(timezone.utc)
@@ -290,12 +377,13 @@ async def confirm_order(
 
         # Create order items
         for item_data in order_items_data:
+            snapshot = item_data["snapshot"] or {}
             order_item = OrderItem(
                 order_id=order.id,
-                product_id=item_data["product"].id,
-                product_name=item_data["product"].name,
-                product_sku=item_data["product"].sku,
-                price=item_data["product"].price,
+                product_id=item_data["product_id"],
+                product_name=snapshot.get("name") or f"Product #{item_data['product_id']}",
+                product_sku=snapshot.get("sku"),
+                price=cents_to_dollars(item_data["unit_price_cents"]),
                 quantity=item_data["quantity"]
             )
             db.add(order_item)

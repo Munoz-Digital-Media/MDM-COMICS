@@ -310,6 +310,18 @@ class ComicCacheService:
 
         # BE-003: Extract cover_hash from raw_data if present (for image search optimization)
         cover_hash = issue_data.get('cover_hash')
+        cover_hash_prefix = None
+        cover_hash_bytes = None
+        if cover_hash:
+            normalized_hash = cover_hash.strip().lower()
+            cover_hash = normalized_hash
+            if len(normalized_hash) >= 8:
+                cover_hash_prefix = normalized_hash[:8]
+            if len(normalized_hash) == 16:
+                try:
+                    cover_hash_bytes = bytes.fromhex(normalized_hash)
+                except ValueError:
+                    cover_hash_bytes = None
 
         stmt = insert(ComicIssue).values(
             metron_id=issue_data['id'],
@@ -329,6 +341,8 @@ class ComicCacheService:
             variant_name=issue_data.get('variant_name'),
             rating=issue_data.get('rating', {}).get('name') if isinstance(issue_data.get('rating'), dict) else issue_data.get('rating'),
             cover_hash=cover_hash,
+            cover_hash_prefix=cover_hash_prefix,
+            cover_hash_bytes=cover_hash_bytes,
             raw_data=issue_data,
             updated_at=datetime.utcnow(),
             last_fetched=datetime.utcnow()
@@ -350,6 +364,8 @@ class ComicCacheService:
                 'is_variant': issue_data.get('variant', False),
                 'variant_name': issue_data.get('variant_name'),
                 'cover_hash': cover_hash,
+                'cover_hash_prefix': cover_hash_prefix,
+                'cover_hash_bytes': cover_hash_bytes,
                 'raw_data': issue_data,
                 'updated_at': datetime.utcnow(),
                 'last_fetched': datetime.utcnow()

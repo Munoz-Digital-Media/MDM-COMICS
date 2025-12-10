@@ -8,7 +8,7 @@ import gzip
 import json
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 import hashlib
 
@@ -22,6 +22,7 @@ from app.models.analytics import (
     WebVital, ErrorEvent
 )
 from app.core.config import settings
+from app.core.monitoring import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +136,28 @@ class AnalyticsIngestService:
         except Exception:
             return None
 
+    def _parse_client_timestamp(self, value: Optional[str]) -> Tuple[datetime, bool]:
+        """Parse ISO8601 timestamps defensively."""
+        if not value:
+            metrics.increment("analytics_ingest_timestamp_parse_failures")
+            return datetime.now(timezone.utc), False
+
+        candidate = value.strip()
+        if not candidate:
+            metrics.increment("analytics_ingest_timestamp_parse_failures")
+            return datetime.now(timezone.utc), False
+
+        normalized = candidate.replace("Z", "+00:00")
+        if "+" not in normalized[-6:]:
+            normalized = f"{normalized}+00:00"
+
+        try:
+            return datetime.fromisoformat(normalized), True
+        except ValueError:
+            metrics.increment("analytics_ingest_timestamp_parse_failures")
+            logger.warning("Invalid analytics timestamp", extra={"timestamp": value})
+            return datetime.now(timezone.utc), False
+
     async def ingest_events(
         self,
         db: AsyncSession,
@@ -156,15 +179,21 @@ class AnalyticsIngestService:
             event_type = event_data.get("type", "unknown")
             event_category = event_type.split(".")[0] if "." in event_type else "custom"
 
+            client_timestamp, timestamp_valid = self._parse_client_timestamp(event_data.get("timestamp"))
+            payload = event_data.get("payload", {}) or {}
+            if not timestamp_valid:
+                payload = dict(payload)
+                payload["_timestamp_invalid"] = True
+
             event = AnalyticsEvent(
                 session_id=session_id,
                 user_id=user_id,
                 event_type=event_type,
                 event_category=event_category,
-                payload=event_data.get("payload", {}),
+                payload=payload,
                 page_url=event_data.get("page_url"),
                 page_route=event_data.get("page_route"),
-                client_timestamp=datetime.fromisoformat(event_data["timestamp"].replace("Z", "+00:00")),
+                client_timestamp=client_timestamp,
                 sequence_number=event_data.get("sequence", i),
             )
 
