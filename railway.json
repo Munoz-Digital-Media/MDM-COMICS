@@ -3,11 +3,10 @@
   "build": {
     "builder": "NIXPACKS",
     "nixpacksConfigPath": "nixpacks.toml",
-    "buildCommand": "npm ci && npm run build",
-    "watchPatterns": ["src/**", "public/**", "index.html", "package.json", "vite.config.js", "backend/**"]
+    "watchPatterns": ["src/**", "public/**", "index.html", "package.json", "vite.config.js", "nixpacks.toml"]
   },
   "deploy": {
-    "startCommand": "npx serve dist -s -l $PORT",
+    "startCommand": "npx serve ./dist -s -l $PORT",
     "healthcheckPath": "/",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",

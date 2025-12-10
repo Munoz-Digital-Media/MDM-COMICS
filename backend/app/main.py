@@ -486,7 +486,7 @@ async def health_check():
             await db.execute(text("SELECT 1"))
         health_status["database"] = "connected"
     except Exception as e:
-        health_status["database"] = f"error: {str(e)[:50]}"
+        health_status["database"] = f"error: {type(e).__name__}: {str(e)[:100]}"
         health_status["status"] = "unhealthy"
         return JSONResponse(status_code=503, content=health_status)
 
