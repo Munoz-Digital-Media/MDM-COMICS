@@ -4,11 +4,12 @@ All searches are cached to local database for data capture.
 
 P2-1: Image upload validation with magic bytes check
 """
-from typing import Optional
+from typing import Optional, List
 import io
 from fastapi import APIRouter, HTTPException, Query, Depends, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from PIL import Image
 import imagehash
 
@@ -218,46 +219,80 @@ async def search_by_image(
         # Compute perceptual hash of uploaded image
         img = Image.open(io.BytesIO(content))
         uploaded_hash = imagehash.phash(img)
-        uploaded_hash_str = str(uploaded_hash)
+        uploaded_hash_str = str(uploaded_hash).lower()
 
-        # BE-003 FIX: Query ONLY issues with cover_hash populated (uses index)
-        # This avoids full table scan of raw_data JSON
-        from sqlalchemy.orm import selectinload
+        prefix = uploaded_hash_str[:8]
 
-        result = await db.execute(
+        prefix_candidates: List[str] = []
+        if prefix and all(c in "0123456789abcdef" for c in prefix):
+            try:
+                prefix_value = int(prefix, 16)
+                prefix_candidates.append(f"{prefix_value:08x}")
+                # Include neighboring prefixes to widen the search window
+                if prefix_value > 0:
+                    prefix_candidates.append(f"{prefix_value - 1:08x}")
+                if prefix_value < 0xFFFFFFFF:
+                    prefix_candidates.append(f"{prefix_value + 1:08x}")
+            except ValueError:
+                prefix_candidates = []
+
+        query = (
             select(ComicIssue)
             .options(selectinload(ComicIssue.series))
             .where(ComicIssue.cover_hash.isnot(None))
         )
+
+        if prefix_candidates:
+            query = query.where(ComicIssue.cover_hash_prefix.in_(prefix_candidates))
+
+        # Bound the candidate set to avoid loading the entire table
+        result = await db.execute(query.limit(500))
         issues = result.scalars().all()
+
+        if not issues:
+            fallback = await db.execute(
+                select(ComicIssue)
+                .options(selectinload(ComicIssue.series))
+                .where(ComicIssue.cover_hash.isnot(None))
+                .limit(200)
+            )
+            issues = fallback.scalars().all()
+
+        uploaded_hash_int = int(uploaded_hash_str, 16)
 
         # Calculate hamming distance for each
         matches = []
         for issue in issues:
             try:
-                db_hash = imagehash.hex_to_hash(issue.cover_hash)
-                distance = db_hash - uploaded_hash
-
-                # Lower distance = better match (0 = identical)
-                # Threshold of 15 is reasonable for comic covers
-                if distance <= 15:
-                    confidence = max(0, 1 - (distance / 15))
-
-                    # Get series name from relationship (eager loaded)
-                    series_name = issue.series.name if issue.series else ""
-
-                    matches.append({
-                        "id": issue.metron_id,
-                        "issue": f"{series_name} #{issue.number}" if series_name else f"Issue #{issue.number}",
-                        "series": {"name": series_name},
-                        "number": issue.number,
-                        "image": issue.image,
-                        "cover_date": str(issue.cover_date) if issue.cover_date else None,
-                        "confidence": round(confidence, 2),
-                        "distance": distance
-                    })
-            except Exception:
+                if issue.cover_hash_bytes:
+                    db_hash_int = int.from_bytes(bytes(issue.cover_hash_bytes), "big")
+                elif issue.cover_hash:
+                    db_hash_int = int(issue.cover_hash, 16)
+                else:
+                    continue
+            except (ValueError, TypeError):
                 continue
+
+            distance = bin(uploaded_hash_int ^ db_hash_int).count("1")
+
+            # Lower distance = better match (0 = identical)
+            # Threshold of 15 is reasonable for comic covers
+            if distance <= 15:
+                confidence = max(0, 1 - (distance / 15))
+
+                # Get series name from relationship (eager loaded)
+                series_name = issue.series.name if issue.series else ""
+
+                matches.append({
+                    "id": issue.metron_id,
+                    "issue": f"{series_name} #{issue.number}" if series_name else f"Issue #{issue.number}",
+                    "series": {"name": series_name},
+                    "number": issue.number,
+                    "image": issue.image,
+                    "cover_date": str(issue.cover_date) if issue.cover_date else None,
+                    "confidence": round(confidence, 2),
+                    "distance": distance
+                })
 
         # Sort by confidence (highest first)
         matches.sort(key=lambda x: x["confidence"], reverse=True)

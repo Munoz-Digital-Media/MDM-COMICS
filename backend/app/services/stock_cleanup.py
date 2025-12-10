@@ -8,8 +8,8 @@ Per constitution.json §15: "Stock reservation before capture; fail closed."
 P2-6: Uses timezone-aware datetime
 """
 import logging
-from datetime import datetime, timezone
-from sqlalchemy import select, delete, update
+from datetime import datetime, timezone, timedelta
+from sqlalchemy import select, delete, update, func, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
@@ -99,28 +99,25 @@ async def get_reservation_stats() -> dict:
     Get current reservation statistics for monitoring.
     """
     async with AsyncSessionLocal() as db:
-        # Total active reservations
-        result = await db.execute(
-            select(StockReservation)
-        )
-        all_reservations = result.scalars().all()
-
-        total = len(all_reservations)
-        expired = sum(1 for r in all_reservations if r.is_expired)
-        active = total - expired
-
-        # Group by expiry time bucket
         now = datetime.now(timezone.utc)
-        expiring_soon = sum(
-            1 for r in all_reservations
-            if not r.is_expired and (r.expires_at - now).seconds < 300  # < 5 min
+        soon = now + timedelta(minutes=5)
+
+        stmt = select(
+            func.count(StockReservation.id),
+            func.count(StockReservation.id).filter(StockReservation.expires_at <= now),
+            func.count(StockReservation.id).filter(StockReservation.expires_at > now),
+            func.count(StockReservation.id).filter(
+                and_(StockReservation.expires_at > now, StockReservation.expires_at <= soon)
+            ),
         )
+
+        total, expired, active, expiring = (await db.execute(stmt)).one()
 
         return {
-            "total_reservations": total,
-            "active_reservations": active,
-            "expired_reservations": expired,
-            "expiring_within_5min": expiring_soon
+            "total_reservations": int(total or 0),
+            "active_reservations": int(active or 0),
+            "expired_reservations": int(expired or 0),
+            "expiring_within_5min": int(expiring or 0),
         }
 
 

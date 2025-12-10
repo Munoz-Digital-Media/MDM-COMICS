@@ -9,8 +9,26 @@
  */
 
 // Use production API in production, localhost for dev
-const API_BASE = import.meta.env.VITE_API_URL ||
-  (window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api');
+function resolveApiBase() {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+
+  if (typeof window === 'undefined') {
+    return 'http://localhost:8000/api';
+  }
+
+  const hostname = window.location.hostname;
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+
+  if (!isLocalhost && import.meta.env.PROD) {
+    throw new Error('VITE_API_URL must be configured for production deployments');
+  }
+
+  return isLocalhost ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api';
+}
+
+export const API_BASE = resolveApiBase();
 
 // CSRF token cookie name
 const CSRF_COOKIE_NAME = 'mdm_csrf_token';
