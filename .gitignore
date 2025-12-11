@@ -47,6 +47,7 @@ coverage
 
 # Corporate solutions / proprietary implementations
 implementations/
+docs/
 
 # Backend data files (generated/imported)
 mdm_comics_backend/*.csv
