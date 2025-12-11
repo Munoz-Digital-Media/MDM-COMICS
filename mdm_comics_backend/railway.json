@@ -9,6 +9,7 @@
 		]
 	},
 	"deploy": {
+		"startCommand": "python scripts/start_api.py",
 		"healthcheckPath": "/health",
 		"healthcheckTimeout": 120,
 		"restartPolicyType": "ON_FAILURE",
