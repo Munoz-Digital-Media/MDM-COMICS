@@ -54,6 +54,7 @@ mdm_comics_backend/*.csv
 mdm_comics_backend/*.json
 !mdm_comics_backend/package.json
 !mdm_comics_backend/funko_data.json
+!mdm_comics_backend/railway.json
 
 # Python
 __pycache__/
