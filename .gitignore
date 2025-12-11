@@ -49,10 +49,10 @@ coverage
 implementations/
 
 # Backend data files (generated/imported)
-backend/*.csv
-backend/*.json
-!backend/package.json
-!backend/funko_data.json
+mdm_comics_backend/*.csv
+mdm_comics_backend/*.json
+!mdm_comics_backend/package.json
+!mdm_comics_backend/funko_data.json
 
 # Python
 __pycache__/

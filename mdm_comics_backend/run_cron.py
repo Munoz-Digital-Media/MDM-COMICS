@@ -20,6 +20,15 @@ import os
 import signal
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
+
+# Ensure backend package is importable when running as a standalone service
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_PATH = REPO_ROOT / "mdm_comics_backend"
+if BACKEND_PATH.exists():
+    backend_str = str(BACKEND_PATH)
+    if backend_str not in sys.path:
+        sys.path.insert(0, backend_str)
 
 # Setup logging first
 logging.basicConfig(
