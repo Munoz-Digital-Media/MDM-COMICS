@@ -3,6 +3,7 @@
 	"build": {
 		"builder": "DOCKERFILE",
 		"dockerfilePath": "mdm_comics_backend/Dockerfile",
+		"dockerContext": "mdm_comics_backend",
 		"watchPatterns": [
 			"mdm_comics_backend/**"
 		]
