@@ -6,7 +6,7 @@
     "watchPatterns": ["mdm_comics_frontend/**"]
   },
   "deploy": {
-    "startCommand": "serve ./dist -s -l $PORT",
+    "startCommand": "serve -s ./dist -l tcp://0.0.0.0:${PORT}",
     "healthcheckPath": "/",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
