@@ -16,7 +16,7 @@ This fixes:
 """
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -33,6 +33,7 @@ from app.models.comic_data import (
     MetronAPILog,
 )
 from app.services.metron import metron_service
+from app.core.utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class ComicCacheService:
         Check local DB for matching issues that aren't stale.
         Returns None if no fresh results found (triggers Metron fetch).
         """
-        staleness_threshold = datetime.utcnow() - timedelta(hours=staleness_hours)
+        staleness_threshold = utcnow() - timedelta(hours=staleness_hours)
 
         query = (
             select(ComicIssue)
@@ -124,7 +125,7 @@ class ComicCacheService:
         staleness_hours: int = CACHE_STALENESS_HOURS
     ) -> Optional[List[ComicSeries]]:
         """Check local DB for matching series."""
-        staleness_threshold = datetime.utcnow() - timedelta(hours=staleness_hours)
+        staleness_threshold = utcnow() - timedelta(hours=staleness_hours)
 
         query = (
             select(ComicSeries)
@@ -180,7 +181,7 @@ class ComicCacheService:
             "desc": issue.description,
             "variant": issue.is_variant,
             "_cached": True,
-            "_cache_age_hours": (datetime.utcnow() - issue.last_fetched).total_seconds() / 3600 if issue.last_fetched else None
+            "_cache_age_hours": (utcnow() - issue.last_fetched).total_seconds() / 3600 if issue.last_fetched else None
         }
 
     def _series_to_dict(self, series: ComicSeries) -> Dict:
@@ -221,7 +222,7 @@ class ComicCacheService:
             founded=publisher_data.get('founded'),
             image=publisher_data.get('image'),
             raw_data=publisher_data,
-            updated_at=datetime.utcnow()
+            updated_at=utcnow()
         ).on_conflict_do_update(
             index_elements=['metron_id'],
             set_={
@@ -229,7 +230,7 @@ class ComicCacheService:
                 'founded': publisher_data.get('founded'),
                 'image': publisher_data.get('image'),
                 'raw_data': publisher_data,
-                'updated_at': datetime.utcnow()
+                'updated_at': utcnow()
             }
         ).returning(ComicPublisher)
 
@@ -261,7 +262,7 @@ class ComicCacheService:
             description=series_data.get('desc'),
             series_type=series_data.get('series_type', {}).get('name') if isinstance(series_data.get('series_type'), dict) else series_data.get('series_type'),
             raw_data=series_data,
-            updated_at=datetime.utcnow()
+            updated_at=utcnow()
         ).on_conflict_do_update(
             index_elements=['metron_id'],
             set_={
@@ -275,7 +276,7 @@ class ComicCacheService:
                 'publisher_id': publisher_id,
                 'description': series_data.get('desc'),
                 'raw_data': series_data,
-                'updated_at': datetime.utcnow()
+                'updated_at': utcnow()
             }
         ).returning(ComicSeries)
 
@@ -298,14 +299,14 @@ class ComicCacheService:
         if issue_data.get('cover_date'):
             try:
                 cover_date = datetime.strptime(issue_data['cover_date'], '%Y-%m-%d').date()
-            except:
+            except (ValueError, TypeError):
                 pass
 
         store_date = None
         if issue_data.get('store_date'):
             try:
                 store_date = datetime.strptime(issue_data['store_date'], '%Y-%m-%d').date()
-            except:
+            except (ValueError, TypeError):
                 pass
 
         # BE-003: Extract cover_hash from raw_data if present (for image search optimization)
@@ -344,8 +345,8 @@ class ComicCacheService:
             cover_hash_prefix=cover_hash_prefix,
             cover_hash_bytes=cover_hash_bytes,
             raw_data=issue_data,
-            updated_at=datetime.utcnow(),
-            last_fetched=datetime.utcnow()
+            updated_at=utcnow(),
+            last_fetched=utcnow()
         ).on_conflict_do_update(
             index_elements=['metron_id'],
             set_={
@@ -367,8 +368,8 @@ class ComicCacheService:
                 'cover_hash_prefix': cover_hash_prefix,
                 'cover_hash_bytes': cover_hash_bytes,
                 'raw_data': issue_data,
-                'updated_at': datetime.utcnow(),
-                'last_fetched': datetime.utcnow()
+                'updated_at': utcnow(),
+                'last_fetched': utcnow()
             }
         ).returning(ComicIssue)
 
@@ -388,7 +389,7 @@ class ComicCacheService:
             description=char_data.get('desc'),
             image=char_data.get('image'),
             raw_data=char_data,
-            updated_at=datetime.utcnow()
+            updated_at=utcnow()
         ).on_conflict_do_update(
             index_elements=['metron_id'],
             set_={
@@ -397,7 +398,7 @@ class ComicCacheService:
                 'description': char_data.get('desc'),
                 'image': char_data.get('image'),
                 'raw_data': char_data,
-                'updated_at': datetime.utcnow()
+                'updated_at': utcnow()
             }
         ).returning(ComicCharacter)
 
@@ -415,7 +416,7 @@ class ComicCacheService:
             description=creator_data.get('desc'),
             image=creator_data.get('image'),
             raw_data=creator_data,
-            updated_at=datetime.utcnow()
+            updated_at=utcnow()
         ).on_conflict_do_update(
             index_elements=['metron_id'],
             set_={
@@ -423,7 +424,7 @@ class ComicCacheService:
                 'description': creator_data.get('desc'),
                 'image': creator_data.get('image'),
                 'raw_data': creator_data,
-                'updated_at': datetime.utcnow()
+                'updated_at': utcnow()
             }
         ).returning(ComicCreator)
 
@@ -557,7 +558,7 @@ class ComicCacheService:
             select(ComicIssue)
             .options(selectinload(ComicIssue.series).selectinload(ComicSeries.publisher))
             .where(ComicIssue.metron_id == issue_id)
-            .where(ComicIssue.last_fetched >= datetime.utcnow() - timedelta(hours=CACHE_STALENESS_HOURS))
+            .where(ComicIssue.last_fetched >= utcnow() - timedelta(hours=CACHE_STALENESS_HOURS))
         )
         cached_issue = result.scalar_one_or_none()
 
@@ -676,7 +677,7 @@ class ComicCacheService:
         """Get publishers - cache-first."""
         # Check local cache
         if page == 1:
-            staleness_threshold = datetime.utcnow() - timedelta(hours=CACHE_STALENESS_HOURS)
+            staleness_threshold = utcnow() - timedelta(hours=CACHE_STALENESS_HOURS)
             result = await db.execute(
                 select(ComicPublisher)
                 .where(ComicPublisher.updated_at >= staleness_threshold)

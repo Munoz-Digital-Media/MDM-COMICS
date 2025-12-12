@@ -19,7 +19,7 @@ import asyncio
 import argparse
 import logging
 import sys
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -62,7 +62,7 @@ class BackfillProgress:
         self.data = {
             "last_date": last_date.isoformat(),
             "total_snapshots": stats.get("total", 0),
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }
         self.checkpoint_file.write_text(json.dumps(self.data, indent=2))
 

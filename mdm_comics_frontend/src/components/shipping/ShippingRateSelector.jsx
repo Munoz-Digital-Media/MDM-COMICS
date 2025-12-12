@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Truck, Clock, Shield, CheckCircle, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { shippingAPI } from '../../services/api';
 
@@ -104,7 +104,7 @@ export default function ShippingRateSelector({
   const [selectedRate, setSelectedRate] = useState(null);
   const [confirming, setConfirming] = useState(false);
 
-  const loadRates = async () => {
+  const loadRates = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -122,13 +122,13 @@ export default function ShippingRateSelector({
     } finally {
       setLoading(false);
     }
-  };
+  }, [destinationAddressId, orderId, packages, selectedQuoteId]);
 
   useEffect(() => {
     if (destinationAddressId) {
       loadRates();
     }
-  }, [destinationAddressId]);
+  }, [destinationAddressId, loadRates]);
 
   const handleSelectRate = (rate) => {
     setSelectedRate(rate);

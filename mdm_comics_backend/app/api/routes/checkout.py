@@ -30,6 +30,9 @@ from app.core.redis_client import is_webhook_processed, mark_webhook_processed
 from app.api.routes.auth import get_current_user
 from app.models import User, Product, Order, OrderItem, StockReservation
 from app.models.stock_reservation import RESERVATION_TTL_MINUTES
+from app.services.order_service import (
+    order_service, dollars_to_cents, cents_to_dollars, build_product_snapshot
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,32 +46,6 @@ RESERVATION_CURRENCY_CODE = CHECKOUT_CURRENCY.upper()
 # BLOCK-004: Fallback in-memory set when Redis unavailable
 # Will be used only if Redis connection fails
 _processed_webhook_events_fallback: set = set()
-
-
-def dollars_to_cents(amount: float) -> int:
-    """Convert a float dollar amount to integer cents using bankers rounding."""
-    if amount is None:
-        return 0
-    quantized = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    return int(quantized * 100)
-
-
-def cents_to_dollars(amount_cents: int) -> float:
-    """Convert integer cents to float dollars."""
-    return float(Decimal(amount_cents) / Decimal(100))
-
-
-def build_product_snapshot(product: Product) -> Dict[str, Any]:
-    """Capture immutable product data for downstream order creation."""
-    return {
-        "id": product.id,
-        "name": product.name,
-        "sku": product.sku,
-        "price": product.price,
-        "image_url": product.image_url,
-        "category": product.category,
-        "subcategory": product.subcategory,
-    }
 
 
 class CheckoutItem(BaseModel):
@@ -241,7 +218,7 @@ async def confirm_order(
     SAFE FLOW:
     1. Verify payment succeeded with Stripe
     2. Verify reservation exists and belongs to user
-    3. Create order from reservation data
+    3. Create order from reservation data (via OrderService)
     4. Delete reservation (stock already decremented)
     """
     try:
@@ -259,19 +236,14 @@ async def confirm_order(
             raise HTTPException(status_code=403, detail="Payment does not belong to this user")
 
         # Step 2: Check reservation exists
-        result = await db.execute(
-            select(StockReservation)
-            .where(StockReservation.payment_intent_id == request.payment_intent_id)
-            .where(StockReservation.user_id == current_user.id)
+        reservations = await order_service.get_reservations(
+            db, request.payment_intent_id, current_user.id
         )
-        reservations = result.scalars().all()
 
         if not reservations:
             # Check if order already exists (idempotency)
-            existing = await db.execute(
-                select(Order).where(Order.payment_id == request.payment_intent_id)
-            )
-            if existing.scalar_one_or_none():
+            existing = await order_service.check_existing_order(db, request.payment_intent_id)
+            if existing:
                 raise HTTPException(status_code=400, detail="Order already created for this payment")
 
             # No reservation and no order - reservation may have expired
@@ -280,129 +252,41 @@ async def confirm_order(
                 detail="Reservation expired or not found. Please try checkout again."
             )
 
-        fallback_ids = {
-            r.product_id
-            for r in reservations
-            if not r.unit_price_cents or not r.product_snapshot
-        }
-        fallback_products: Dict[int, Product] = {}
-        if fallback_ids:
-            result = await db.execute(
-                select(Product).where(Product.id.in_(list(fallback_ids)))
-            )
-            fallback_products = {prod.id: prod for prod in result.scalars().all()}
-
-        # Check if any reservations are expired
-        expired = [r for r in reservations if r.is_expired]
-        if expired:
-            logger.warning(
-                f"Confirming order with {len(expired)} expired reservations "
-                f"for payment {request.payment_intent_id}"
-            )
-
-        # Step 3: Create order
-        order_number = f"MDM-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
-
-        # Calculate totals from reservations
-        subtotal_cents = 0
-        order_items_data = []
-
-        for reservation in reservations:
-            unit_price_cents = reservation.unit_price_cents
-            snapshot = reservation.product_snapshot or {}
-
-            if not unit_price_cents or unit_price_cents <= 0:
-                product = fallback_products.get(reservation.product_id)
-                if not product:
-                    logger.error(
-                        "Reservation missing pricing data for product_id=%s intent=%s",
-                        reservation.product_id,
-                        request.payment_intent_id,
-                    )
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Reservation pricing data missing. Please contact support.",
-                    )
-                unit_price_cents = dollars_to_cents(product.price)
-                if not snapshot:
-                    snapshot = build_product_snapshot(product)
-            elif not snapshot:
-                product = fallback_products.get(reservation.product_id)
-                if product:
-                    snapshot = build_product_snapshot(product)
-
-            reservation_total = unit_price_cents * reservation.quantity
-            subtotal_cents += reservation_total
-            order_items_data.append({
-                "product_id": reservation.product_id,
-                "quantity": reservation.quantity,
-                "unit_price_cents": unit_price_cents,
-                "snapshot": snapshot
-            })
-
+        # Step 3: Create order using centralized OrderService
         intent_currency = intent.currency.lower() if intent.currency else CHECKOUT_CURRENCY
-        if intent_currency != CHECKOUT_CURRENCY:
-            logger.error(
-                "Stripe currency mismatch intent=%s expected=%s received=%s",
-                request.payment_intent_id,
-                CHECKOUT_CURRENCY,
-                intent_currency,
-            )
-            raise HTTPException(status_code=400, detail="Payment currency mismatch. Please retry checkout.")
-
-        if subtotal_cents != intent.amount:
-            logger.error(
-                "Amount mismatch for payment %s (expected=%s actual=%s)",
-                request.payment_intent_id,
-                subtotal_cents,
-                intent.amount,
-            )
-            raise HTTPException(
-                status_code=400,
-                detail="Order amount mismatch detected. Please contact support before retrying payment.",
-            )
-
-        order = Order(
+        result = await order_service.create_order_from_reservations(
+            db=db,
             user_id=current_user.id,
-            order_number=order_number,
-            status="paid",
-            subtotal=cents_to_dollars(subtotal_cents),
-            total=cents_to_dollars(intent.amount),
-            payment_method="stripe",
-            payment_id=request.payment_intent_id,
-            paid_at=datetime.now(timezone.utc)
+            payment_intent_id=request.payment_intent_id,
+            payment_amount_cents=intent.amount,
+            reservations=reservations,
+            currency=intent_currency,
+            expected_currency=CHECKOUT_CURRENCY,
+            validate_amount=True
         )
-        db.add(order)
-        await db.flush()
 
-        # Create order items
-        for item_data in order_items_data:
-            snapshot = item_data["snapshot"] or {}
-            order_item = OrderItem(
-                order_id=order.id,
-                product_id=item_data["product_id"],
-                product_name=snapshot.get("name") or f"Product #{item_data['product_id']}",
-                product_sku=snapshot.get("sku"),
-                price=cents_to_dollars(item_data["unit_price_cents"]),
-                quantity=item_data["quantity"]
-            )
-            db.add(order_item)
-
-        # Step 4: Delete reservations (stock was already decremented)
-        await db.execute(
-            delete(StockReservation)
-            .where(StockReservation.payment_intent_id == request.payment_intent_id)
-        )
+        if not result.success:
+            if "currency" in result.error.lower():
+                raise HTTPException(status_code=400, detail="Payment currency mismatch. Please retry checkout.")
+            elif "mismatch" in result.error.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Order amount mismatch detected. Please contact support before retrying payment."
+                )
+            elif "pricing" in result.error.lower():
+                raise HTTPException(
+                    status_code=500,
+                    detail="Reservation pricing data missing. Please contact support."
+                )
+            raise HTTPException(status_code=400, detail=result.error)
 
         await db.commit()
 
-        logger.info(f"Order {order_number} created for payment {request.payment_intent_id}")
-
         return {
-            "order_id": order.id,
-            "order_number": order_number,
+            "order_id": result.order.id,
+            "order_number": result.order_number,
             "status": "success",
-            "total": order.total
+            "total": result.order.total
         }
 
     except stripe.error.StripeError as e:
@@ -557,6 +441,9 @@ async def handle_payment_succeeded(payment_intent: dict):
 
     Creates order if not already created by confirm-order endpoint.
     This ensures orders are created even if frontend fails to call confirm-order.
+    Uses centralized OrderService to prevent logic drift.
+
+    Transaction Guard: Wraps DB operations in try/except with rollback on failure.
     """
     payment_intent_id = payment_intent["id"]
     user_id = payment_intent.get("metadata", {}).get("user_id")
@@ -566,81 +453,53 @@ async def handle_payment_succeeded(payment_intent: dict):
         return
 
     async with AsyncSessionLocal() as db:
-        # Check if order already exists (created by confirm-order endpoint)
-        existing = await db.execute(
-            select(Order).where(Order.payment_id == payment_intent_id)
-        )
-        if existing.scalar_one_or_none():
-            logger.info(f"Order already exists for payment {payment_intent_id}")
-            return
+        try:
+            # Check if order already exists (created by confirm-order endpoint)
+            existing = await order_service.check_existing_order(db, payment_intent_id)
+            if existing:
+                logger.info(f"Order already exists for payment {payment_intent_id}")
+                return
 
-        # Check for reservations
-        result = await db.execute(
-            select(StockReservation)
-            .where(StockReservation.payment_intent_id == payment_intent_id)
-        )
-        reservations = result.scalars().all()
+            # Check for reservations
+            reservations = await order_service.get_reservations(db, payment_intent_id)
 
-        if not reservations:
-            logger.warning(
-                f"Payment {payment_intent_id} succeeded but no reservations found. "
-                f"Order may have been created by confirm-order or reservations expired."
+            if not reservations:
+                logger.warning(
+                    f"Payment {payment_intent_id} succeeded but no reservations found. "
+                    f"Order may have been created by confirm-order or reservations expired."
+                )
+                return
+
+            # Create order using centralized OrderService
+            # Webhook doesn't validate amount since payment already succeeded
+            intent_currency = payment_intent.get("currency", CHECKOUT_CURRENCY).lower()
+            result = await order_service.create_order_from_reservations(
+                db=db,
+                user_id=int(user_id),
+                payment_intent_id=payment_intent_id,
+                payment_amount_cents=payment_intent["amount"],
+                reservations=reservations,
+                currency=intent_currency,
+                expected_currency=CHECKOUT_CURRENCY,
+                validate_amount=False  # Payment already verified by Stripe
             )
-            return
 
-        # Create order from reservations
-        order_number = f"MDM-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
-
-        subtotal = 0
-        order_items_data = []
-
-        for reservation in reservations:
-            product_result = await db.execute(
-                select(Product).where(Product.id == reservation.product_id)
+            if result.success:
+                await db.commit()
+                logger.info(
+                    f"Webhook created order {result.order_number} for payment {payment_intent_id}"
+                )
+            else:
+                await db.rollback()
+                logger.error(
+                    f"Webhook failed to create order for payment {payment_intent_id}: {result.error}"
+                )
+        except Exception as e:
+            await db.rollback()
+            logger.error(
+                f"Webhook transaction failed for payment {payment_intent_id}: {e}",
+                exc_info=True
             )
-            product = product_result.scalar_one_or_none()
-            if product:
-                item_total = product.price * reservation.quantity
-                subtotal += item_total
-                order_items_data.append({
-                    "product": product,
-                    "quantity": reservation.quantity
-                })
-
-        order = Order(
-            user_id=int(user_id),
-            order_number=order_number,
-            status="paid",
-            subtotal=subtotal,
-            total=payment_intent["amount"] / 100,
-            payment_method="stripe",
-            payment_id=payment_intent_id,
-            paid_at=datetime.now(timezone.utc)
-        )
-        db.add(order)
-        await db.flush()
-
-        for item_data in order_items_data:
-            order_item = OrderItem(
-                order_id=order.id,
-                product_id=item_data["product"].id,
-                product_name=item_data["product"].name,
-                product_sku=item_data["product"].sku,
-                price=item_data["product"].price,
-                quantity=item_data["quantity"]
-            )
-            db.add(order_item)
-
-        # Delete reservations
-        await db.execute(
-            delete(StockReservation)
-            .where(StockReservation.payment_intent_id == payment_intent_id)
-        )
-
-        await db.commit()
-        logger.info(
-            f"Webhook created order {order_number} for payment {payment_intent_id}"
-        )
 
 
 async def handle_payment_failed(payment_intent: dict):
@@ -648,36 +507,44 @@ async def handle_payment_failed(payment_intent: dict):
     P1-4: Handle failed payment from Stripe webhook.
 
     Releases stock reservations when payment fails.
+    Transaction Guard: Wraps DB operations in try/except with rollback on failure.
     """
     payment_intent_id = payment_intent["id"]
 
     async with AsyncSessionLocal() as db:
-        # Find reservations for this payment
-        result = await db.execute(
-            select(StockReservation)
-            .where(StockReservation.payment_intent_id == payment_intent_id)
-        )
-        reservations = result.scalars().all()
+        try:
+            # Find reservations for this payment
+            result = await db.execute(
+                select(StockReservation)
+                .where(StockReservation.payment_intent_id == payment_intent_id)
+            )
+            reservations = result.scalars().all()
 
-        if not reservations:
-            logger.info(f"No reservations to release for failed payment {payment_intent_id}")
-            return
+            if not reservations:
+                logger.info(f"No reservations to release for failed payment {payment_intent_id}")
+                return
 
-        # Restore stock
-        for reservation in reservations:
+            # Restore stock
+            for reservation in reservations:
+                await db.execute(
+                    update(Product)
+                    .where(Product.id == reservation.product_id)
+                    .values(stock=Product.stock + reservation.quantity)
+                )
+
+            # Delete reservations
             await db.execute(
-                update(Product)
-                .where(Product.id == reservation.product_id)
-                .values(stock=Product.stock + reservation.quantity)
+                delete(StockReservation)
+                .where(StockReservation.payment_intent_id == payment_intent_id)
             )
 
-        # Delete reservations
-        await db.execute(
-            delete(StockReservation)
-            .where(StockReservation.payment_intent_id == payment_intent_id)
-        )
-
-        await db.commit()
-        logger.info(
-            f"Released {len(reservations)} reservations for failed payment {payment_intent_id}"
-        )
+            await db.commit()
+            logger.info(
+                f"Released {len(reservations)} reservations for failed payment {payment_intent_id}"
+            )
+        except Exception as e:
+            await db.rollback()
+            logger.error(
+                f"Failed to release reservations for payment {payment_intent_id}: {e}",
+                exc_info=True
+            )

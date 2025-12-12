@@ -2,7 +2,7 @@
  * AdminDashboard - Overview with key metrics and quick actions
  * Phase 3: MDM Admin Console Inventory System v1.3.0
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Package, DollarSign, AlertTriangle, QrCode,
   ShoppingCart, TrendingUp, TrendingDown, RefreshCw, Loader2
@@ -67,7 +67,7 @@ export default function AdminDashboard({ onNavigate }) {
   const [lowStock, setLowStock] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchDashboard = async () => {
+  const fetchDashboard = useCallback(async () => {
     try {
       setError(null);
       const [dashData, lowStockData] = await Promise.all([
@@ -83,11 +83,11 @@ export default function AdminDashboard({ onNavigate }) {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchDashboard();
-  }, []);
+  }, [fetchDashboard]);
 
   const handleRefresh = () => {
     setRefreshing(true);

@@ -12,7 +12,7 @@ Run: railway run python scripts/check_ml_data.py
 import asyncio
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -25,7 +25,7 @@ async def check_database():
     print("=" * 60)
     print("ML/Newsletter/Social Data Pipeline Status Check")
     print("=" * 60)
-    print(f"Timestamp: {datetime.utcnow().isoformat()}")
+    print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
     print()
 
     async with AsyncSessionLocal() as db:

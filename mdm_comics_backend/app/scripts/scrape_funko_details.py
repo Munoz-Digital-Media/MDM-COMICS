@@ -108,7 +108,7 @@ async def scrape_product_details(client: httpx.AsyncClient, url: str) -> Dict[st
                         brand = data.get("brand", {})
                         if isinstance(brand, dict):
                             details["license"] = brand.get("name")
-            except:
+            except (json.JSONDecodeError, TypeError, AttributeError):
                 pass
 
         return details

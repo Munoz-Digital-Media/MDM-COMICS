@@ -259,11 +259,10 @@ export default function ProductList() {
     fetchProducts();
   }, [fetchProducts]);
 
-  // Debounced search
+  // Debounced search - resets offset on search change
   useEffect(() => {
     const timer = setTimeout(() => {
       setOffset(0);
-      fetchProducts();
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);

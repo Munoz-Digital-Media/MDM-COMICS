@@ -37,7 +37,7 @@ def parse_cents_to_dollars(value: str) -> float | None:
     try:
         cents = int(value)
         return round(cents / 100, 2)
-    except:
+    except (ValueError, TypeError):
         return None
 
 
@@ -103,7 +103,9 @@ async def ensure_comic_issues_columns():
                 await conn.execute(text(
                     f"ALTER TABLE comic_issues ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
                 ))
-            except:
+            except Exception as e:
+                # Column may already exist with different type - log and continue
+                print(f"Note: Could not add column {col_name}: {e}")
                 pass
 
     print("comic_issues table ready!")
@@ -178,7 +180,7 @@ async def import_comics():
                 if rd_str:
                     try:
                         release_date = datetime.strptime(rd_str, '%Y-%m-%d').date()
-                    except:
+                    except (ValueError, TypeError):
                         pass
 
                 if pc_id in existing_ids:
