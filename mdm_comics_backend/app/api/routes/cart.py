@@ -3,7 +3,7 @@ Cart routes
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
@@ -156,13 +156,9 @@ async def clear_cart(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Clear entire cart"""
-    result = await db.execute(
-        select(CartItem).where(CartItem.user_id == user.id)
+    """Clear entire cart using bulk delete (performance optimization)"""
+    # Use bulk delete instead of N+1 pattern
+    await db.execute(
+        delete(CartItem).where(CartItem.user_id == user.id)
     )
-    items = result.scalars().all()
-    
-    for item in items:
-        await db.delete(item)
-    
     await db.commit()
