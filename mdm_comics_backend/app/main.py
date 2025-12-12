@@ -131,9 +131,14 @@ async def import_funkos_if_needed():
 
         # BE-007 FIX: Get all existing handles for content-based reconciliation
         # This replaces the count-based check that could miss new items
-        existing_result = await db.execute(select(Funko.handle))
-        existing_handles = set(row[0] for row in existing_result.fetchall())
-        logger.info(f"Found {len(existing_handles)} existing Funko handles in database")
+        try:
+            existing_result = await db.execute(select(Funko.handle))
+            existing_handles = set(row[0] for row in existing_result.fetchall())
+            logger.info(f"Found {len(existing_handles)} existing Funko handles in database")
+        except Exception as e:
+            # Table doesn't exist yet - will be created by migrations
+            logger.warning(f"Funkos table not available (run migrations): {e}")
+            return
 
         # Calculate how many new items we need to import
         file_handles = set(item.get('handle', '') for item in data if item.get('handle'))
