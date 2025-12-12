@@ -1,9 +1,13 @@
 """
 Cart routes
+
+v1.7.1: Fixed stock race condition with pessimistic locking
+v1.7.2: Optimized subtotal calculation using SQL aggregation
 """
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
@@ -21,20 +25,28 @@ async def get_cart(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get current user's cart"""
+    """Get current user's cart with SQL-optimized subtotal calculation"""
+    # Fetch cart items with eager loading
     result = await db.execute(
         select(CartItem)
         .where(CartItem.user_id == user.id)
         .options(selectinload(CartItem.product))
     )
     items = result.scalars().all()
-    
-    subtotal = sum(item.product.price * item.quantity for item in items)
+
+    # Calculate subtotal in SQL for precision and performance
+    subtotal_result = await db.execute(
+        select(func.coalesce(func.sum(CartItem.quantity * Product.price), Decimal("0.00")))
+        .join(Product, CartItem.product_id == Product.id)
+        .where(CartItem.user_id == user.id)
+    )
+    subtotal = subtotal_result.scalar() or Decimal("0.00")
+
     item_count = sum(item.quantity for item in items)
-    
+
     return CartResponse(
         items=items,
-        subtotal=round(subtotal, 2),
+        subtotal=round(float(subtotal), 2),
         item_count=item_count
     )
 
@@ -45,24 +57,22 @@ async def add_to_cart(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Add item to cart"""
-    # Check product exists and has stock
-    result = await db.execute(select(Product).where(Product.id == item_data.product_id))
+    """Add item to cart with pessimistic locking to prevent overselling"""
+    # Acquire FOR UPDATE lock on product to prevent race condition
+    result = await db.execute(
+        select(Product)
+        .where(Product.id == item_data.product_id)
+        .with_for_update()  # Pessimistic lock prevents concurrent overselling
+    )
     product = result.scalar_one_or_none()
-    
+
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
-    
-    if product.stock < item_data.quantity:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Only {product.stock} items in stock"
-        )
-    
-    # Check if already in cart
+
+    # Check if already in cart (while holding product lock)
     result = await db.execute(
         select(CartItem).where(
             CartItem.user_id == user.id,
@@ -70,15 +80,18 @@ async def add_to_cart(
         )
     )
     existing = result.scalar_one_or_none()
-    
+
+    # Calculate total requested quantity
+    total_requested = item_data.quantity + (existing.quantity if existing else 0)
+
+    if total_requested > product.stock:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Only {product.stock} items in stock"
+        )
+
     if existing:
-        new_qty = existing.quantity + item_data.quantity
-        if new_qty > product.stock:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot add more. Only {product.stock} in stock"
-            )
-        existing.quantity = new_qty
+        existing.quantity = total_requested
     else:
         cart_item = CartItem(
             user_id=user.id,
@@ -86,9 +99,9 @@ async def add_to_cart(
             quantity=item_data.quantity
         )
         db.add(cart_item)
-    
+
     await db.commit()
-    
+
     return {"message": "Item added to cart"}
 
 
@@ -99,33 +112,41 @@ async def update_cart_item(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update cart item quantity"""
+    """Update cart item quantity with pessimistic locking"""
+    # First get the cart item to find the product_id
     result = await db.execute(
         select(CartItem)
         .where(CartItem.id == item_id, CartItem.user_id == user.id)
-        .options(selectinload(CartItem.product))
     )
     item = result.scalar_one_or_none()
-    
+
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cart item not found"
         )
-    
-    if update_data.quantity > item.product.stock:
+
+    # Lock the product to prevent race condition during stock check
+    product_result = await db.execute(
+        select(Product)
+        .where(Product.id == item.product_id)
+        .with_for_update()
+    )
+    product = product_result.scalar_one()
+
+    if update_data.quantity > product.stock:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Only {item.product.stock} items in stock"
+            detail=f"Only {product.stock} items in stock"
         )
-    
+
     if update_data.quantity <= 0:
         await db.delete(item)
     else:
         item.quantity = update_data.quantity
-    
+
     await db.commit()
-    
+
     return {"message": "Cart updated"}
 
 

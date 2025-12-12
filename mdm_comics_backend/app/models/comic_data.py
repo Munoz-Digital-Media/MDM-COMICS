@@ -5,10 +5,10 @@ Stores ALL data points from Metron API for internal use
 v1.5.0: Added PriceCharting integration fields to ComicIssue
         (resolves RISK-005 schema drift from pipeline spec)
 """
-from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, Table, Float, JSON, Numeric, LargeBinary
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+from app.core.utils import utcnow
 
 
 # Many-to-many association tables
@@ -49,8 +49,8 @@ class ComicPublisher(Base):
     raw_data = Column(JSON)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
     series = relationship("ComicSeries", back_populates="publisher")
@@ -84,8 +84,8 @@ class ComicSeries(Base):
     raw_data = Column(JSON)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
     issues = relationship("ComicIssue", back_populates="series")
@@ -169,8 +169,8 @@ class ComicIssue(Base):
     raw_data = Column(JSON)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     last_fetched = Column(DateTime)  # When we last pulled from Metron
 
     # Relationships
@@ -195,8 +195,8 @@ class ComicCharacter(Base):
     raw_data = Column(JSON)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
     issues = relationship("ComicIssue", secondary=issue_characters, back_populates="characters")
@@ -218,8 +218,8 @@ class ComicCreator(Base):
     raw_data = Column(JSON)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
     issues = relationship("ComicIssue", secondary=issue_creators, back_populates="creators")
@@ -239,8 +239,8 @@ class ComicArc(Base):
     raw_data = Column(JSON)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
     issues = relationship("ComicIssue", secondary=issue_arcs, back_populates="arcs")
@@ -262,4 +262,4 @@ class MetronAPILog(Base):
     ip_address = Column(String(50))
 
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)

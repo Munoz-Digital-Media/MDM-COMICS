@@ -42,7 +42,7 @@ def parse_price(price_str: str) -> float | None:
         return None
     try:
         return float(price_str.replace('$', '').replace(',', '').strip())
-    except:
+    except (ValueError, TypeError):
         return None
 
 
@@ -121,7 +121,9 @@ async def add_price_columns():
             await conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_funkos_pricecharting_id ON funkos(pricecharting_id)"
             ))
-        except:
+        except Exception as e:
+            # Index may already exist
+            print(f"Note: Could not create index: {e}")
             pass
 
     print("Price columns ready!")
@@ -200,7 +202,7 @@ async def import_pricecharting():
             if rd_str:
                 try:
                     release_date = datetime.strptime(rd_str, '%Y-%m-%d').date()
-                except:
+                except (ValueError, TypeError):
                     pass
 
             # Update the record

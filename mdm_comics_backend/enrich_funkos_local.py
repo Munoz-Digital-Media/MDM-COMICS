@@ -15,7 +15,7 @@ import re
 import os
 import logging
 from urllib.parse import quote_plus
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -175,7 +175,7 @@ async def enrich_batch(batch_size: int = 50, delay: float = 1.5) -> tuple[int, i
                                 "product_type": details["product_type"],
                                 "box_number": details["box_number"],
                                 "funko_url": details["funko_url"],
-                                "updated_at": datetime.utcnow(),
+                                "updated_at": datetime.now(timezone.utc),
                                 "id": funko_id
                             })
                             enriched += 1
@@ -184,7 +184,7 @@ async def enrich_batch(batch_size: int = 50, delay: float = 1.5) -> tuple[int, i
                             # Mark as attempted (empty string to avoid re-processing)
                             await db.execute(text("""
                                 UPDATE funkos SET category = '', updated_at = :updated_at WHERE id = :id
-                            """), {"updated_at": datetime.utcnow(), "id": funko_id})
+                            """), {"updated_at": datetime.now(timezone.utc), "id": funko_id})
                             failed += 1
                             logger.warning(f"✗ {title[:50]} - No data found on page")
                     else:

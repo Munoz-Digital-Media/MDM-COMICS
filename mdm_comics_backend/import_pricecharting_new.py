@@ -37,7 +37,7 @@ def parse_price(price_str: str) -> float | None:
         return None
     try:
         return float(price_str.replace('$', '').replace(',', '').strip())
-    except:
+    except (ValueError, TypeError):
         return None
 
 
@@ -178,7 +178,7 @@ async def import_new_funkos():
                 if rd_str:
                     try:
                         release_date = datetime.strptime(rd_str, '%Y-%m-%d').date()
-                    except:
+                    except (ValueError, TypeError):
                         pass
 
                 # Insert the record

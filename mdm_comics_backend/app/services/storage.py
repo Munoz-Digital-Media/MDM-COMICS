@@ -7,7 +7,7 @@ Supports AWS S3, Cloudflare R2, MinIO, and other S3-compatible services.
 import logging
 import hashlib
 import mimetypes
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, BinaryIO, Tuple
 from dataclasses import dataclass
 
@@ -97,7 +97,7 @@ class StorageService:
         """Generate unique key for uploaded file."""
         # Hash content for uniqueness
         content_hash = hashlib.md5(content).hexdigest()[:8]
-        timestamp = datetime.utcnow().strftime('%Y%m%d')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d')
 
         # Clean filename
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_').lower()

@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useEffect, lazy, Suspense, memo } from "react";
-  import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Database, Shield, Loader2, QrCode } from "lucide-react";
+import React, { useState, useMemo, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+  import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Package, CreditCard, Truck, User, LogOut, Database, Shield, Loader2, QrCode } from "lucide-react";
   import { authAPI } from "./services/api";
   import { useProducts } from "./hooks/useProducts";
   import ComicSearch from "./components/ComicSearch";
   import FunkoSearch from "./components/FunkoSearch";
   import ErrorBoundary from "./components/ErrorBoundary";
+  import ProductCard from "./components/ProductCard";
   // Phase 3: Use new full-page AdminLayout instead of modal-based AdminConsole
 // Phase 5: Lazy load admin to reduce initial bundle size
 const AdminLayout = lazy(() => import("./components/admin/AdminLayout"));
@@ -27,86 +28,6 @@ import AboutContact from "./components/AboutContact";
 
   // P3-12: UNDER_CONSTRUCTION flag is now fetched from API via /api/config
   // This allows toggling via environment variable without rebuilding frontend
-
-  // ============================================================================
-  // PRODUCT CARD COMPONENT
-  // ============================================================================
-  const ProductCard = memo(({ product, index, addToCart }) => (
-    <div
-      className="product-card bg-zinc-900 rounded-xl border border-zinc-800 fade-up"
-      style={{ animationDelay: `${0.05 * index}s` }}
-    >
-      {/* Product Image - responsive height */}
-      <div className="relative h-32 sm:h-36 md:h-40 bg-zinc-800 rounded-t-xl overflow-hidden">
-        <img
-          src={product.image}
-          alt={product.name}
-          className="w-full h-full object-cover"
-          onError={(e) => {
-            e.target.onerror = null;
-            e.target.src = `https://placehold.co/400x500/27272a/f59e0b?text=${encodeURIComponent(product.category === 'comics' ? '📚' : '🎭')}`;
-          }}
-        />
-        {/* Badges - compact */}
-        <div className="absolute top-1.5 sm:top-2 left-1.5 sm:left-2 flex flex-col gap-1">
-          {product.featured && (
-            <span className="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-orange-500 rounded-full text-[9px] sm:text-[10px] font-bold text-white shadow-lg">
-              ⭐ FEATURED
-            </span>
-          )}
-          {product.stock <= 5 && (
-            <span className="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-red-600 rounded-full text-[9px] sm:text-[10px] font-bold text-white shadow-lg">
-              🔥 {product.stock} left
-            </span>
-          )}
-        </div>
-        {/* Sale badge - top right */}
-        {product.originalPrice && (
-          <div className="absolute top-1.5 sm:top-2 right-1.5 sm:right-2">
-            <span className="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-green-600 rounded-full text-[9px] sm:text-[10px] font-bold text-white shadow-lg">
-              SALE
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Product Info */}
-      <div className="p-2 sm:p-3">
-        <p className="text-[9px] sm:text-[10px] text-orange-500 font-semibold mb-0.5">{product.subcategory}</p>
-        <h3 className="font-bold text-xs sm:text-sm text-white mb-1 line-clamp-2 leading-tight">{product.name}</h3>
-        <p className="text-zinc-500 text-[10px] sm:text-xs mb-2 line-clamp-1">{product.description}</p>
-
-        {/* Rating */}
-        <div className="flex items-center gap-1 mb-2">
-          <Star className="w-3 h-3 fill-orange-500 text-orange-500" />
-          <span className="text-[10px] sm:text-xs text-zinc-400">{product.rating}</span>
-        </div>
-
-        {/* Price & Add to Cart */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <span className="text-base sm:text-lg font-bold text-white">${product.price}</span>
-            {product.originalPrice && (
-              <span className="ml-1 text-[10px] sm:text-xs text-zinc-500 line-through">
-                ${product.originalPrice}
-              </span>
-            )}
-          </div>
-          <button
-            onClick={() => addToCart(product)}
-            disabled={product.stock === 0}
-            className={`p-2.5 sm:p-2 rounded-lg transition-all flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center ${
-              product.stock === 0
-                ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-                : "bg-orange-500 text-white hover:shadow-lg hover:shadow-orange-500/25 active:scale-95"
-            }`}
-          >
-            <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
-        </div>
-      </div>
-    </div>
-  ));
 
   // ============================================================================
   // MAIN APP COMPONENT
@@ -176,20 +97,37 @@ import AboutContact from "./components/AboutContact";
         });
     }, []);
 
-    // Show notification
-    const showNotification = (message, type = "success") => {
-      setNotification({ message, type });
-      setTimeout(() => setNotification(null), 3000);
-    };
+    // Ref to track notification timeout for cleanup
+    const notificationTimeoutRef = useRef(null);
 
-    // Cart operations - using functional updaters to prevent stale closure bugs
+    // Show notification with proper cleanup to prevent memory leaks
+    const showNotification = useCallback((message, type = "success") => {
+      // Clear any existing timeout to prevent stale updates
+      if (notificationTimeoutRef.current) {
+        clearTimeout(notificationTimeoutRef.current);
+      }
+      setNotification({ message, type });
+      notificationTimeoutRef.current = setTimeout(() => setNotification(null), 3000);
+    }, []);
+
+    // Cleanup notification timeout on unmount
+    useEffect(() => {
+      return () => {
+        if (notificationTimeoutRef.current) {
+          clearTimeout(notificationTimeoutRef.current);
+        }
+      };
+    }, []);
+
+    // Cart operations - wrapped in useCallback for stable references (fixes ProductCard memoization)
     // Per constitution_ui.json §6: "Every action returns feedback state; critical flows persist"
-    const addToCart = (product) => {
+    const addToCart = useCallback((product) => {
       setCart(prevCart => {
         const existing = prevCart.find(item => item.id === product.id);
         if (existing) {
           if (existing.quantity >= product.stock) {
             // Can't add more - show notification but return unchanged cart
+            // Use setTimeout(0) to escape the setState batching
             setTimeout(() => showNotification("Max stock reached", "error"), 0);
             return prevCart;
           }
@@ -203,7 +141,7 @@ import AboutContact from "./components/AboutContact";
         setTimeout(() => showNotification(`${product.name} added to cart`), 0);
         return [...prevCart, { ...product, quantity: 1 }];
       });
-    };
+    }, [showNotification]);
 
     const updateQuantity = (productId, newQuantity) => {
       setCart(prevCart => {
@@ -310,6 +248,26 @@ import AboutContact from "./components/AboutContact";
 
       return filtered;
     }, [products, selectedCategory, searchQuery, sortBy]);
+
+    // Memoized category products - eliminates duplicate filtering across home page sections
+    const categorizedProducts = useMemo(() => ({
+      comics: products.filter(p => p.category === "bagged-boarded" || p.category === "comics"),
+      graded: products.filter(p => p.category === "graded"),
+      funko: products.filter(p => p.category === "funko"),
+      supplies: products.filter(p => p.category === "supplies"),
+    }), [products]);
+
+    // Helper to get category products with optional sorting
+    const getCategoryProducts = useCallback((category, count = 5) => {
+      const categoryProducts = category === "bagged-boarded"
+        ? categorizedProducts.comics
+        : categorizedProducts[category] || [];
+
+      // Sort by featured first, then return requested count
+      return [...categoryProducts]
+        .sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0))
+        .slice(0, count);
+    }, [categorizedProducts]);
 
     // ============================================================================
     // RENDER
@@ -569,7 +527,7 @@ import AboutContact from "./components/AboutContact";
                 </div>
               )}
 
-              {/* Bagged & Boarded Books Section */}
+              {/* Bagged & Boarded Books Section - uses memoized categorizedProducts */}
               {!productsLoading && (
                 <section className="mb-12">
                   <div className="flex items-center justify-between mb-4">
@@ -585,14 +543,14 @@ import AboutContact from "./components/AboutContact";
                     </a>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {products.filter(p => p.category === "bagged-boarded" || p.category === "comics").slice(0, 5).map((product, index) => (
+                    {getCategoryProducts("bagged-boarded", 5).map((product, index) => (
                       <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
                     ))}
                   </div>
                 </section>
               )}
 
-              {/* Graded Books Section */}
+              {/* Graded Books Section - uses memoized categorizedProducts */}
               {!productsLoading && (
                 <section className="mb-12">
                   <div className="flex items-center justify-between mb-4">
@@ -608,14 +566,14 @@ import AboutContact from "./components/AboutContact";
                     </a>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {products.filter(p => p.category === "graded").slice(0, 5).map((product, index) => (
+                    {getCategoryProducts("graded", 5).map((product, index) => (
                       <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
                     ))}
                   </div>
                 </section>
               )}
 
-              {/* Funko POPs Section */}
+              {/* Funko POPs Section - uses memoized categorizedProducts */}
               {!productsLoading && (
                 <section className="mb-12">
                   <div className="flex items-center justify-between mb-4">
@@ -631,14 +589,14 @@ import AboutContact from "./components/AboutContact";
                     </a>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {products.filter(p => p.category === "funko").slice(0, 5).map((product, index) => (
+                    {getCategoryProducts("funko", 5).map((product, index) => (
                       <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
                     ))}
                   </div>
                 </section>
               )}
 
-              {/* Supplies Section */}
+              {/* Supplies Section - uses memoized categorizedProducts */}
               {!productsLoading && (
                 <section className="mb-12">
                   <div className="flex items-center justify-between mb-4">
@@ -654,7 +612,7 @@ import AboutContact from "./components/AboutContact";
                     </a>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {products.filter(p => p.category === "supplies").slice(0, 5).map((product, index) => (
+                    {getCategoryProducts("supplies", 5).map((product, index) => (
                       <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
                     ))}
                   </div>
@@ -714,10 +672,9 @@ import AboutContact from "./components/AboutContact";
                   {selectedCategory === "comics" && "📚 COMIC BOOKS"}
                 </h2>
                 <p className="text-zinc-500 mt-2">
-                  {products.filter(p =>
-                    selectedCategory === "bagged-boarded"
-                      ? (p.category === "bagged-boarded" || p.category === "comics")
-                      : p.category === selectedCategory
+                  {(selectedCategory === "bagged-boarded"
+                    ? categorizedProducts.comics
+                    : categorizedProducts[selectedCategory] || []
                   ).length} items
                 </p>
               </div>
@@ -757,14 +714,13 @@ import AboutContact from "./components/AboutContact";
                 </div>
               </div>
 
-              {/* Products Grid - 5 columns */}
+              {/* Products Grid - 5 columns - uses memoized categorizedProducts */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {products
-                  .filter(p =>
-                    selectedCategory === "bagged-boarded"
-                      ? (p.category === "bagged-boarded" || p.category === "comics")
-                      : p.category === selectedCategory
+                {(selectedCategory === "bagged-boarded"
+                    ? categorizedProducts.comics
+                    : categorizedProducts[selectedCategory] || []
                   )
+                  .slice() // Create copy before sorting
                   .sort((a, b) => {
                     switch (sortBy) {
                       case "price-low": return a.price - b.price;
@@ -1002,22 +958,54 @@ import AboutContact from "./components/AboutContact";
           />
         )}
 
-        {/* Admin Console - Phase 3: Full-page layout */}
+        {/* Admin Console - Phase 3: Full-page layout with ErrorBoundary */}
         {isAdminOpen && (
-          <AdminLayout
-            onClose={() => setIsAdminOpen(false)}
-          />
+          <ErrorBoundary
+            fallback={
+              <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col items-center justify-center gap-4">
+                <p className="text-red-400">Failed to load admin console</p>
+                <button
+                  onClick={() => setIsAdminOpen(false)}
+                  className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600"
+                >
+                  Close
+                </button>
+              </div>
+            }
+          >
+            <Suspense fallback={
+              <div className="fixed inset-0 z-50 bg-zinc-950 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
+              </div>
+            }>
+              <AdminLayout onClose={() => setIsAdminOpen(false)} />
+            </Suspense>
+          </ErrorBoundary>
         )}
 
-        {/* Mobile Scanner - Phase 4: PWA with offline support */}
+        {/* Mobile Scanner - Phase 4: PWA with offline support and ErrorBoundary */}
         {isScannerOpen && (
-          <Suspense fallback={
-            <div className="fixed inset-0 z-50 bg-zinc-950 flex items-center justify-center">
-              <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
-            </div>
-          }>
-            <ScannerApp onClose={() => setIsScannerOpen(false)} />
-          </Suspense>
+          <ErrorBoundary
+            fallback={
+              <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col items-center justify-center gap-4">
+                <p className="text-red-400">Failed to load scanner</p>
+                <button
+                  onClick={() => setIsScannerOpen(false)}
+                  className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600"
+                >
+                  Close
+                </button>
+              </div>
+            }
+          >
+            <Suspense fallback={
+              <div className="fixed inset-0 z-50 bg-zinc-950 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
+              </div>
+            }>
+              <ScannerApp onClose={() => setIsScannerOpen(false)} />
+            </Suspense>
+          </ErrorBoundary>
         )}
 
         {/* Auth Modal */}

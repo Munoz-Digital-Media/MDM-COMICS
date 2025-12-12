@@ -1,11 +1,11 @@
 """
 Grade estimation models
 """
-from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, JSON
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.utils import utcnow
 
 
 class GradeRequest(Base):
@@ -45,7 +45,7 @@ class GradeRequest(Base):
     model_version = Column(String)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     completed_at = Column(DateTime)
 
     # Relationships

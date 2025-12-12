@@ -202,11 +202,10 @@ export default function OrderList() {
     fetchOrders();
   }, [fetchOrders]);
 
-  // Debounced search
+  // Debounced search - resets offset on search change
   useEffect(() => {
     const timer = setTimeout(() => {
       setOffset(0);
-      fetchOrders();
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);

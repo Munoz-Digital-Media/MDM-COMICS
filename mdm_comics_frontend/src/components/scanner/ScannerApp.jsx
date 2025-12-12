@@ -70,11 +70,14 @@ export default function ScannerApp({ onClose, embedded = false }) {
     updateStats();
   }, [updateStats]);
 
-  // Auto-sync when online
+  // Auto-sync when online - intentionally uses isOnline as primary trigger
+  // handleSync is stable (defined below), queueStats.pending and isSyncing are
+  // checked inside the effect but not as dependencies to avoid sync loops
   useEffect(() => {
     if (isOnline && queueStats.pending > 0 && !isSyncing) {
       handleSync();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnline]);
 
   // Show notification

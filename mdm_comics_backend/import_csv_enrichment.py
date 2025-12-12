@@ -35,7 +35,7 @@ def parse_list_field(value: str) -> list:
         return []
     try:
         return ast.literal_eval(value)
-    except:
+    except (ValueError, SyntaxError):
         return []
 
 

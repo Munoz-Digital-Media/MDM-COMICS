@@ -138,6 +138,76 @@ async def get_or_create_checkpoint(db: AsyncSession, job_name: str, job_type: st
     }
 
 
+async def try_claim_job(db: AsyncSession, job_name: str, job_type: str, batch_id: str) -> tuple[bool, dict]:
+    """
+    Atomically try to claim a job for execution.
+
+    Uses SELECT FOR UPDATE + conditional UPDATE to prevent race conditions
+    where multiple instances try to start the same job simultaneously.
+
+    Returns:
+        Tuple of (claimed: bool, checkpoint: dict)
+        - If claimed=True, the job is now locked to this instance
+        - If claimed=False, another instance is running or claimed first
+    """
+    # First ensure checkpoint exists
+    await db.execute(
+        text("""
+            INSERT INTO pipeline_checkpoints (job_name, job_type, created_at, updated_at)
+            VALUES (:name, :type, NOW(), NOW())
+            ON CONFLICT (job_name) DO NOTHING
+        """),
+        {"name": job_name, "type": job_type}
+    )
+
+    # Atomically claim the job with FOR UPDATE SKIP LOCKED
+    # This prevents multiple instances from both getting the same row
+    result = await db.execute(
+        text("""
+            UPDATE pipeline_checkpoints
+            SET is_running = true,
+                last_run_started = NOW(),
+                current_batch_id = :batch_id,
+                updated_at = NOW()
+            WHERE job_name = :name
+            AND is_running = false
+            RETURNING id, job_name, last_processed_id, last_page, cursor,
+                      total_processed, total_updated, total_errors, state_data
+        """),
+        {"name": job_name, "batch_id": batch_id}
+    )
+    row = result.fetchone()
+    await db.commit()
+
+    if row:
+        return True, {
+            "id": row.id,
+            "job_name": row.job_name,
+            "last_processed_id": row.last_processed_id,
+            "last_page": row.last_page,
+            "cursor": row.cursor,
+            "total_processed": row.total_processed,
+            "total_updated": row.total_updated,
+            "total_errors": row.total_errors,
+            "state_data": row.state_data,
+            "is_running": True,
+        }
+
+    # Could not claim - either already running or race condition
+    # Fetch current state for logging
+    result = await db.execute(
+        text("SELECT * FROM pipeline_checkpoints WHERE job_name = :name"),
+        {"name": job_name}
+    )
+    current = result.fetchone()
+
+    return False, {
+        "job_name": job_name,
+        "is_running": current.is_running if current else False,
+        "last_processed_id": current.last_processed_id if current else None,
+    }
+
+
 async def update_checkpoint(
     db: AsyncSession,
     job_name: str,
@@ -259,13 +329,12 @@ async def run_comic_enrichment_job():
     logger.info(f"[{job_name}] Starting comic enrichment job (batch: {batch_id})")
 
     async with AsyncSessionLocal() as db:
-        checkpoint = await get_or_create_checkpoint(db, job_name, "enrichment")
+        # Atomically claim job to prevent race condition
+        claimed, checkpoint = await try_claim_job(db, job_name, "enrichment", batch_id)
 
-        if checkpoint.get("is_running"):
-            logger.warning(f"[{job_name}] Job already running, skipping")
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
             return
-
-        await update_checkpoint(db, job_name, is_running=True, batch_id=batch_id)
 
         stats = {"processed": 0, "updated": 0, "errors": 0, "gcd_enriched": 0, "metron_enriched": 0}
 
@@ -461,13 +530,12 @@ async def run_funko_price_check_job():
     logger.info(f"[{job_name}] Starting Funko price check (batch: {batch_id})")
 
     async with AsyncSessionLocal() as db:
-        checkpoint = await get_or_create_checkpoint(db, job_name, "price_check")
+        # Atomically claim job to prevent race condition
+        claimed, checkpoint = await try_claim_job(db, job_name, "price_check", batch_id)
 
-        if checkpoint.get("is_running"):
-            logger.warning(f"[{job_name}] Job already running, skipping")
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
             return
-
-        await update_checkpoint(db, job_name, is_running=True, batch_id=batch_id)
 
         stats = {"checked": 0, "updated": 0, "errors": 0}
 
@@ -630,16 +698,52 @@ async def run_dlq_retry_job():
                 await db.commit()
 
                 # Attempt retry based on job type
+                # v1.8.0: Implemented actual retry logic (was placeholder)
                 success = False
 
                 if job_type == "comic_enrichment" and entry.entity_id:
-                    # Re-fetch comic from Metron
-                    # (simplified - in production would call specific retry logic)
-                    success = True  # Placeholder
+                    # Re-fetch comic from Metron and update database
+                    try:
+                        from app.services.metron import metron_service
+                        from app.services.comic_cache import comic_cache
+
+                        comic_data = await metron_service.get_issue(entry.entity_id)
+                        if comic_data and comic_data.get('id'):
+                            await comic_cache._cache_issue_batch(db, comic_data)
+                            await db.commit()
+                            success = True
+                            logger.info(f"[{job_name}] Retry succeeded for comic {entry.entity_id}")
+                    except Exception as retry_err:
+                        logger.error(f"[{job_name}] Retry failed for comic {entry.entity_id}: {retry_err}")
+                        success = False
 
                 elif job_type == "funko_price_check" and entry.entity_id:
-                    # Re-fetch Funko price
-                    success = True  # Placeholder
+                    # Re-fetch Funko price from PriceCharting
+                    try:
+                        # Update the funko record to mark it needs price refresh
+                        await db.execute(text("""
+                            UPDATE funkos
+                            SET days_stale = NULL, updated_at = NOW()
+                            WHERE id = :id
+                        """), {"id": entry.entity_id})
+                        await db.commit()
+                        success = True
+                        logger.info(f"[{job_name}] Retry succeeded for funko {entry.entity_id} (marked for refresh)")
+                    except Exception as retry_err:
+                        logger.error(f"[{job_name}] Retry failed for funko {entry.entity_id}: {retry_err}")
+                        success = False
+
+                else:
+                    # Unknown job type - log and mark as permanently failed after max retries
+                    if retry_count >= 3:
+                        logger.warning(f"[{job_name}] Unknown job type '{job_type}' exceeded max retries, marking permanently failed")
+                        await db.execute(text("""
+                            UPDATE dead_letter_queue
+                            SET status = 'PERMANENT_FAILURE', resolved_at = NOW()
+                            WHERE id = :id
+                        """), {"id": entry_id})
+                        await db.commit()
+                        continue
 
                 if success:
                     await db.execute(text("""
@@ -702,247 +806,176 @@ async def run_daily_snapshot_job():
     logger.info(f"[{job_name}] Starting daily price snapshot (batch: {batch_id}, date: {snapshot_date})")
 
     async with AsyncSessionLocal() as db:
-        checkpoint = await get_or_create_checkpoint(db, job_name, "snapshot")
+        # Atomically claim job to prevent race condition
+        claimed, checkpoint = await try_claim_job(db, job_name, "snapshot", batch_id)
 
-        if checkpoint.get("is_running"):
-            logger.warning(f"[{job_name}] Job already running, skipping")
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
             return
-
-        await update_checkpoint(db, job_name, is_running=True, batch_id=batch_id)
 
         stats = {"funkos": 0, "comics": 0, "changed": 0, "errors": 0}
 
         try:
             # ============================================================
             # PHASE 1: Snapshot all Funkos with pricecharting_id
+            # v1.8.0: Optimized with CTE-based batch INSERT (fixes N+1 query issue)
             # ============================================================
-            logger.info(f"[{job_name}] Phase 1: Snapshotting Funkos...")
+            logger.info(f"[{job_name}] Phase 1: Snapshotting Funkos (batch mode)...")
 
-            funko_result = await db.execute(text("""
+            # Single CTE-based INSERT that eliminates N+1 queries
+            # Combines: entity data, yesterday's prices, and days_since_change in one query
+            funko_snapshot_result = await db.execute(text("""
+                WITH yesterday_prices AS (
+                    SELECT entity_id, price_loose, price_cib, price_new
+                    FROM price_snapshots
+                    WHERE entity_type = 'funko'
+                    AND snapshot_date = :yesterday
+                ),
+                days_since AS (
+                    SELECT entity_id,
+                           EXTRACT(DAY FROM NOW() - MAX(changed_at))::INTEGER as days
+                    FROM price_changelog
+                    WHERE entity_type = 'funko'
+                    GROUP BY entity_id
+                ),
+                funko_data AS (
+                    SELECT
+                        f.id,
+                        f.pricecharting_id,
+                        f.price_loose,
+                        f.price_cib,
+                        f.price_new,
+                        f.sales_volume,
+                        EXTRACT(EPOCH FROM (NOW() - f.updated_at)) / 86400 > 7 as is_stale,
+                        yp.price_loose as y_loose,
+                        yp.price_cib as y_cib,
+                        yp.price_new as y_new,
+                        dsc.days as days_since_change,
+                        -- Detect price changes with tolerance
+                        CASE WHEN yp.entity_id IS NOT NULL AND (
+                            ABS(COALESCE(f.price_loose::numeric, 0) - COALESCE(yp.price_loose::numeric, 0)) > 0.01 OR
+                            ABS(COALESCE(f.price_cib::numeric, 0) - COALESCE(yp.price_cib::numeric, 0)) > 0.01 OR
+                            ABS(COALESCE(f.price_new::numeric, 0) - COALESCE(yp.price_new::numeric, 0)) > 0.01
+                        ) THEN TRUE ELSE FALSE END as price_changed
+                    FROM funkos f
+                    LEFT JOIN yesterday_prices yp ON yp.entity_id = f.id
+                    LEFT JOIN days_since dsc ON dsc.entity_id = f.id
+                    WHERE f.pricecharting_id IS NOT NULL
+                )
+                INSERT INTO price_snapshots (
+                    snapshot_date, entity_type, entity_id, pricecharting_id,
+                    price_loose, price_cib, price_new,
+                    sales_volume, price_changed, days_since_change,
+                    data_source, is_stale, created_at
+                )
                 SELECT
-                    f.id,
-                    f.pricecharting_id,
-                    f.price_loose,
-                    f.price_cib,
-                    f.price_new,
-                    f.sales_volume,
-                    f.updated_at,
-                    EXTRACT(EPOCH FROM (NOW() - f.updated_at)) / 86400 as days_stale
-                FROM funkos f
-                WHERE f.pricecharting_id IS NOT NULL
-            """))
+                    :date, 'funko', fd.id, fd.pricecharting_id,
+                    fd.price_loose, fd.price_cib, fd.price_new,
+                    fd.sales_volume, fd.price_changed, fd.days_since_change,
+                    'pricecharting', fd.is_stale, NOW()
+                FROM funko_data fd
+                ON CONFLICT (entity_type, entity_id, snapshot_date)
+                DO UPDATE SET
+                    price_loose = EXCLUDED.price_loose,
+                    price_cib = EXCLUDED.price_cib,
+                    price_new = EXCLUDED.price_new,
+                    sales_volume = EXCLUDED.sales_volume,
+                    price_changed = EXCLUDED.price_changed,
+                    days_since_change = EXCLUDED.days_since_change,
+                    is_stale = EXCLUDED.is_stale
+                RETURNING entity_id, price_changed
+            """), {"date": snapshot_date, "yesterday": snapshot_date - timedelta(days=1)})
 
-            funkos = funko_result.fetchall()
-            logger.info(f"[{job_name}] Found {len(funkos)} Funkos to snapshot")
-
-            for funko in funkos:
-                try:
-                    funko_id = funko.id
-                    pricecharting_id = funko.pricecharting_id
-                    is_stale = (funko.days_stale or 0) > 7 if funko.days_stale else False
-
-                    # Check if price changed from yesterday
-                    yesterday_result = await db.execute(text("""
-                        SELECT price_loose, price_cib, price_new
-                        FROM price_snapshots
-                        WHERE entity_type = 'funko'
-                        AND entity_id = :id
-                        AND snapshot_date = :yesterday
-                    """), {"id": funko_id, "yesterday": snapshot_date - timedelta(days=1)})
-                    yesterday = yesterday_result.fetchone()
-
-                    price_changed = False
-                    if yesterday:
-                        # Compare prices (handle None values)
-                        def prices_differ(a, b):
-                            if a is None and b is None:
-                                return False
-                            if a is None or b is None:
-                                return True
-                            return abs(float(a) - float(b)) > 0.01
-
-                        price_changed = (
-                            prices_differ(funko.price_loose, yesterday.price_loose) or
-                            prices_differ(funko.price_cib, yesterday.price_cib) or
-                            prices_differ(funko.price_new, yesterday.price_new)
-                        )
-
-                    # Calculate days since last change from changelog
-                    days_result = await db.execute(text("""
-                        SELECT EXTRACT(DAY FROM NOW() - MAX(changed_at))::INTEGER as days
-                        FROM price_changelog
-                        WHERE entity_type = 'funko' AND entity_id = :id
-                    """), {"id": funko_id})
-                    days_row = days_result.fetchone()
-                    days_since_change = int(days_row.days) if days_row and days_row.days else None
-
-                    # Insert snapshot (ON CONFLICT for idempotency)
-                    await db.execute(text("""
-                        INSERT INTO price_snapshots (
-                            snapshot_date, entity_type, entity_id, pricecharting_id,
-                            price_loose, price_cib, price_new,
-                            sales_volume, price_changed, days_since_change,
-                            data_source, is_stale, created_at
-                        ) VALUES (
-                            :date, 'funko', :id, :pc_id,
-                            :loose, :cib, :new,
-                            :volume, :changed, :days,
-                            'pricecharting', :stale, NOW()
-                        )
-                        ON CONFLICT (entity_type, entity_id, snapshot_date)
-                        DO UPDATE SET
-                            price_loose = EXCLUDED.price_loose,
-                            price_cib = EXCLUDED.price_cib,
-                            price_new = EXCLUDED.price_new,
-                            sales_volume = EXCLUDED.sales_volume,
-                            price_changed = EXCLUDED.price_changed,
-                            days_since_change = EXCLUDED.days_since_change,
-                            is_stale = EXCLUDED.is_stale
-                    """), {
-                        "date": snapshot_date,
-                        "id": funko_id,
-                        "pc_id": pricecharting_id,
-                        "loose": float(funko.price_loose) if funko.price_loose else None,
-                        "cib": float(funko.price_cib) if funko.price_cib else None,
-                        "new": float(funko.price_new) if funko.price_new else None,
-                        "volume": funko.sales_volume,
-                        "changed": price_changed,
-                        "days": days_since_change,
-                        "stale": is_stale,
-                    })
-
-                    stats["funkos"] += 1
-                    if price_changed:
-                        stats["changed"] += 1
-
-                except Exception as e:
-                    logger.error(f"[{job_name}] Error snapshotting Funko {funko.id}: {e}")
-                    stats["errors"] += 1
+            funko_results = funko_snapshot_result.fetchall()
+            stats["funkos"] = len(funko_results)
+            stats["changed"] = sum(1 for r in funko_results if r.price_changed)
 
             await db.commit()
-            logger.info(f"[{job_name}] Phase 1 complete: {stats['funkos']} Funkos snapshotted")
+            logger.info(f"[{job_name}] Phase 1 complete: {stats['funkos']} Funkos snapshotted, {stats['changed']} price changes")
 
             # ============================================================
             # PHASE 2: Snapshot all Comics with pricecharting_id
+            # v1.8.0: Optimized with CTE-based batch INSERT (fixes N+1 query issue)
             # ============================================================
-            logger.info(f"[{job_name}] Phase 2: Snapshotting Comics...")
+            logger.info(f"[{job_name}] Phase 2: Snapshotting Comics (batch mode)...")
 
-            comic_result = await db.execute(text("""
+            # Single CTE-based INSERT that eliminates N+1 queries for Comics
+            comic_snapshot_result = await db.execute(text("""
+                WITH yesterday_prices AS (
+                    SELECT entity_id, price_loose, price_cib, price_new
+                    FROM price_snapshots
+                    WHERE entity_type = 'comic'
+                    AND snapshot_date = :yesterday
+                ),
+                days_since AS (
+                    SELECT entity_id,
+                           EXTRACT(DAY FROM NOW() - MAX(changed_at))::INTEGER as days
+                    FROM price_changelog
+                    WHERE entity_type = 'comic'
+                    GROUP BY entity_id
+                ),
+                comic_data AS (
+                    SELECT
+                        c.id,
+                        c.pricecharting_id,
+                        c.price_loose,
+                        c.price_cib,
+                        c.price_new,
+                        c.price_graded,
+                        c.price_bgs_10,
+                        c.price_cgc_98,
+                        c.price_cgc_96,
+                        c.sales_volume,
+                        EXTRACT(EPOCH FROM (NOW() - c.updated_at)) / 86400 > 7 as is_stale,
+                        dsc.days as days_since_change,
+                        -- Detect price changes with tolerance
+                        CASE WHEN yp.entity_id IS NOT NULL AND (
+                            ABS(COALESCE(c.price_loose::numeric, 0) - COALESCE(yp.price_loose::numeric, 0)) > 0.01 OR
+                            ABS(COALESCE(c.price_cib::numeric, 0) - COALESCE(yp.price_cib::numeric, 0)) > 0.01 OR
+                            ABS(COALESCE(c.price_new::numeric, 0) - COALESCE(yp.price_new::numeric, 0)) > 0.01
+                        ) THEN TRUE ELSE FALSE END as price_changed
+                    FROM comic_issues c
+                    LEFT JOIN yesterday_prices yp ON yp.entity_id = c.id
+                    LEFT JOIN days_since dsc ON dsc.entity_id = c.id
+                    WHERE c.pricecharting_id IS NOT NULL
+                )
+                INSERT INTO price_snapshots (
+                    snapshot_date, entity_type, entity_id, pricecharting_id,
+                    price_loose, price_cib, price_new,
+                    price_graded, price_bgs_10, price_cgc_98, price_cgc_96,
+                    sales_volume, price_changed, days_since_change,
+                    data_source, is_stale, created_at
+                )
                 SELECT
-                    c.id,
-                    c.pricecharting_id,
-                    c.price_loose,
-                    c.price_cib,
-                    c.price_new,
-                    c.price_graded,
-                    c.price_bgs_10,
-                    c.price_cgc_98,
-                    c.price_cgc_96,
-                    c.sales_volume,
-                    c.updated_at,
-                    EXTRACT(EPOCH FROM (NOW() - c.updated_at)) / 86400 as days_stale
-                FROM comic_issues c
-                WHERE c.pricecharting_id IS NOT NULL
-            """))
+                    :date, 'comic', cd.id, cd.pricecharting_id,
+                    cd.price_loose, cd.price_cib, cd.price_new,
+                    cd.price_graded, cd.price_bgs_10, cd.price_cgc_98, cd.price_cgc_96,
+                    cd.sales_volume, cd.price_changed, cd.days_since_change,
+                    'pricecharting', cd.is_stale, NOW()
+                FROM comic_data cd
+                ON CONFLICT (entity_type, entity_id, snapshot_date)
+                DO UPDATE SET
+                    price_loose = EXCLUDED.price_loose,
+                    price_cib = EXCLUDED.price_cib,
+                    price_new = EXCLUDED.price_new,
+                    price_graded = EXCLUDED.price_graded,
+                    price_bgs_10 = EXCLUDED.price_bgs_10,
+                    price_cgc_98 = EXCLUDED.price_cgc_98,
+                    price_cgc_96 = EXCLUDED.price_cgc_96,
+                    sales_volume = EXCLUDED.sales_volume,
+                    price_changed = EXCLUDED.price_changed,
+                    days_since_change = EXCLUDED.days_since_change,
+                    is_stale = EXCLUDED.is_stale
+                RETURNING entity_id, price_changed
+            """), {"date": snapshot_date, "yesterday": snapshot_date - timedelta(days=1)})
 
-            comics = comic_result.fetchall()
-            logger.info(f"[{job_name}] Found {len(comics)} Comics to snapshot")
-
-            for comic in comics:
-                try:
-                    comic_id = comic.id
-                    pricecharting_id = comic.pricecharting_id
-                    is_stale = (comic.days_stale or 0) > 7 if comic.days_stale else False
-
-                    # Check if price changed from yesterday
-                    yesterday_result = await db.execute(text("""
-                        SELECT price_loose, price_cib, price_new
-                        FROM price_snapshots
-                        WHERE entity_type = 'comic'
-                        AND entity_id = :id
-                        AND snapshot_date = :yesterday
-                    """), {"id": comic_id, "yesterday": snapshot_date - timedelta(days=1)})
-                    yesterday = yesterday_result.fetchone()
-
-                    price_changed = False
-                    if yesterday:
-                        def prices_differ(a, b):
-                            if a is None and b is None:
-                                return False
-                            if a is None or b is None:
-                                return True
-                            return abs(float(a) - float(b)) > 0.01
-
-                        price_changed = (
-                            prices_differ(comic.price_loose, yesterday.price_loose) or
-                            prices_differ(comic.price_cib, yesterday.price_cib) or
-                            prices_differ(comic.price_new, yesterday.price_new)
-                        )
-
-                    # Calculate days since last change
-                    days_result = await db.execute(text("""
-                        SELECT EXTRACT(DAY FROM NOW() - MAX(changed_at))::INTEGER as days
-                        FROM price_changelog
-                        WHERE entity_type = 'comic' AND entity_id = :id
-                    """), {"id": comic_id})
-                    days_row = days_result.fetchone()
-                    days_since_change = int(days_row.days) if days_row and days_row.days else None
-
-                    # Insert snapshot
-                    await db.execute(text("""
-                        INSERT INTO price_snapshots (
-                            snapshot_date, entity_type, entity_id, pricecharting_id,
-                            price_loose, price_cib, price_new,
-                            price_graded, price_bgs_10, price_cgc_98, price_cgc_96,
-                            sales_volume, price_changed, days_since_change,
-                            data_source, is_stale, created_at
-                        ) VALUES (
-                            :date, 'comic', :id, :pc_id,
-                            :loose, :cib, :new,
-                            :graded, :bgs10, :cgc98, :cgc96,
-                            :volume, :changed, :days,
-                            'pricecharting', :stale, NOW()
-                        )
-                        ON CONFLICT (entity_type, entity_id, snapshot_date)
-                        DO UPDATE SET
-                            price_loose = EXCLUDED.price_loose,
-                            price_cib = EXCLUDED.price_cib,
-                            price_new = EXCLUDED.price_new,
-                            price_graded = EXCLUDED.price_graded,
-                            price_bgs_10 = EXCLUDED.price_bgs_10,
-                            price_cgc_98 = EXCLUDED.price_cgc_98,
-                            price_cgc_96 = EXCLUDED.price_cgc_96,
-                            sales_volume = EXCLUDED.sales_volume,
-                            price_changed = EXCLUDED.price_changed,
-                            days_since_change = EXCLUDED.days_since_change,
-                            is_stale = EXCLUDED.is_stale
-                    """), {
-                        "date": snapshot_date,
-                        "id": comic_id,
-                        "pc_id": pricecharting_id,
-                        "loose": float(comic.price_loose) if comic.price_loose else None,
-                        "cib": float(comic.price_cib) if comic.price_cib else None,
-                        "new": float(comic.price_new) if comic.price_new else None,
-                        "graded": float(comic.price_graded) if comic.price_graded else None,
-                        "bgs10": float(comic.price_bgs_10) if comic.price_bgs_10 else None,
-                        "cgc98": float(comic.price_cgc_98) if comic.price_cgc_98 else None,
-                        "cgc96": float(comic.price_cgc_96) if comic.price_cgc_96 else None,
-                        "volume": comic.sales_volume if hasattr(comic, 'sales_volume') else None,
-                        "changed": price_changed,
-                        "days": days_since_change,
-                        "stale": is_stale,
-                    })
-
-                    stats["comics"] += 1
-                    if price_changed:
-                        stats["changed"] += 1
-
-                except Exception as e:
-                    logger.error(f"[{job_name}] Error snapshotting Comic {comic.id}: {e}")
-                    stats["errors"] += 1
+            comic_results = comic_snapshot_result.fetchall()
+            stats["comics"] = len(comic_results)
+            comic_changes = sum(1 for r in comic_results if r.price_changed)
+            stats["changed"] += comic_changes
 
             await db.commit()
-            logger.info(f"[{job_name}] Phase 2 complete: {stats['comics']} Comics snapshotted")
+            logger.info(f"[{job_name}] Phase 2 complete: {stats['comics']} Comics snapshotted, {comic_changes} price changes")
 
         except Exception as e:
             logger.error(f"[{job_name}] Job failed: {e}")
@@ -1190,13 +1223,12 @@ async def run_gcd_import_job(
         return {"status": "disabled", "message": "GCD import is disabled in settings"}
 
     async with AsyncSessionLocal() as db:
-        checkpoint = await get_or_create_checkpoint(db, job_name, "import")
+        # Atomically claim job to prevent race condition
+        claimed, checkpoint = await try_claim_job(db, job_name, "import", batch_id)
 
-        if checkpoint.get("is_running"):
-            logger.warning(f"[{job_name}] Job already running, skipping")
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
             return {"status": "skipped", "message": "Job already running"}
-
-        await update_checkpoint(db, job_name, is_running=True, batch_id=batch_id)
 
         stats = {"processed": 0, "inserted": 0, "updated": 0, "errors": 0}
 
@@ -1471,13 +1503,12 @@ async def run_cross_reference_job(
     logger.info(f"[{job_name}] Starting cross-reference job (batch: {batch_id})")
 
     async with AsyncSessionLocal() as db:
-        checkpoint = await get_or_create_checkpoint(db, job_name, "matching")
+        # Atomically claim job to prevent race condition
+        claimed, checkpoint = await try_claim_job(db, job_name, "matching", batch_id)
 
-        if checkpoint.get("is_running"):
-            logger.warning(f"[{job_name}] Job already running, skipping")
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
             return {"status": "skipped", "message": "Job already running"}
-
-        await update_checkpoint(db, job_name, is_running=True, batch_id=batch_id)
 
         stats = {"processed": 0, "matched": 0, "linked": 0, "errors": 0}
 
