@@ -6,7 +6,7 @@ Updated for UPS Shipping Integration v1.28.0:
 - Added shipments relationship
 - Added shipment_rates relationship
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Text, JSON
 from sqlalchemy.orm import relationship
 
@@ -45,8 +45,8 @@ class Order(Base):
     notes = Column(Text)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     paid_at = Column(DateTime)
     shipped_at = Column(DateTime)
     delivered_at = Column(DateTime)

@@ -1,11 +1,13 @@
-import React, { useState, useMemo, useEffect, lazy, Suspense } from "react";
+import React, { useState, useMemo, useEffect, lazy, Suspense, memo } from "react";
   import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Star, Package, CreditCard, Truck, User, LogOut, Database, Shield, Loader2, QrCode } from "lucide-react";
   import { authAPI } from "./services/api";
   import { useProducts } from "./hooks/useProducts";
   import ComicSearch from "./components/ComicSearch";
   import FunkoSearch from "./components/FunkoSearch";
+  import ErrorBoundary from "./components/ErrorBoundary";
   // Phase 3: Use new full-page AdminLayout instead of modal-based AdminConsole
-import AdminLayout from "./components/admin/AdminLayout";
+// Phase 5: Lazy load admin to reduce initial bundle size
+const AdminLayout = lazy(() => import("./components/admin/AdminLayout"));
 // Phase 4: Lazy load scanner to avoid bundle bloat
 const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
   import CheckoutForm, { OrderSuccess } from "./components/CheckoutForm";
@@ -29,7 +31,7 @@ import AboutContact from "./components/AboutContact";
   // ============================================================================
   // PRODUCT CARD COMPONENT
   // ============================================================================
-  const ProductCard = ({ product, index, addToCart }) => (
+  const ProductCard = memo(({ product, index, addToCart }) => (
     <div
       className="product-card bg-zinc-900 rounded-xl border border-zinc-800 fade-up"
       style={{ animationDelay: `${0.05 * index}s` }}
@@ -104,7 +106,7 @@ import AboutContact from "./components/AboutContact";
         </div>
       </div>
     </div>
-  );
+  ));
 
   // ============================================================================
   // MAIN APP COMPONENT
