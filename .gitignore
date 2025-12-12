@@ -71,3 +71,6 @@ nul
 
 # Local assets (comic book covers, product images, etc.)
 assets/
+
+# Claude Code local settings (may contain credentials)
+.claude/settings.local.json
