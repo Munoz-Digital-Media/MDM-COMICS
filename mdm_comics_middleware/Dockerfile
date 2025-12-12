@@ -13,4 +13,4 @@ COPY mdm_comics_middleware/app app
 ENV PORT=4100
 EXPOSE 4100
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4100"]
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
