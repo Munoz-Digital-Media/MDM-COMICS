@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     # Database - NO DEFAULT (will fail if not set)
     DATABASE_URL: str
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def convert_database_url(cls, v):
+        """Convert Railway's postgres:// URL to asyncpg format."""
+        if not v:
+            return v
+        # Railway provides postgres:// or postgresql://, but we need postgresql+asyncpg://
+        if v.startswith("postgres://"):
+            v = v.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif v.startswith("postgresql://") and "+asyncpg" not in v:
+            v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
+
     # Auth - NO DEFAULT SECRET KEY (will fail if not set)
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
