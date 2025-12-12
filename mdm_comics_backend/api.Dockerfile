@@ -18,6 +18,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
+# Ensure Python can import the project package.
+ENV PYTHONPATH=/app
 # Railway sets PORT env var
 ENV PORT=8000
 EXPOSE 8000
