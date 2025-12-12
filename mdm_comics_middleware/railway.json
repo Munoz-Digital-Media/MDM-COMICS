@@ -2,7 +2,7 @@
 	"$schema": "https://railway.com/railway.schema.json",
 	"build": {
 		"builder": "DOCKERFILE",
-		"dockerfilePath": "mdm_comics_middleware/Dockerfile",
+		"dockerfilePath": "Dockerfile",
 		"dockerContext": "mdm_comics_middleware",
 		"watchPatterns": ["mdm_comics_middleware/**"]
 	},
