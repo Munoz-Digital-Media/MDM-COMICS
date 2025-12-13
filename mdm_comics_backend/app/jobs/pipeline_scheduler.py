@@ -522,7 +522,7 @@ async def run_funko_price_check_job():
     Quick price check for Funkos with PriceCharting IDs.
 
     This is a FAST job that runs frequently to catch price changes.
-    Full sync is done by price_sync_daily.py
+    Full sync is done by run_full_price_sync_job() daily.
     """
     job_name = "funko_price_check"
     batch_id = str(uuid4())
@@ -548,13 +548,12 @@ async def run_funko_price_check_job():
                 return
 
             async with get_pricecharting_client() as client:
-                # Get Funkos with pricecharting_id, ordered by last check
+                # Get ALL Funkos with pricecharting_id, ordered by last check
                 result = await db.execute(text("""
                     SELECT id, pricecharting_id, price_loose, title
                     FROM funkos
                     WHERE pricecharting_id IS NOT NULL
                     ORDER BY updated_at ASC NULLS FIRST
-                    LIMIT 50
                 """))
 
                 funkos = result.fetchall()
@@ -634,6 +633,302 @@ async def run_funko_price_check_job():
             )
 
         logger.info(f"[{job_name}] Complete: {stats['checked']} checked, {stats['updated']} price changes, {stats['errors']} errors")
+
+
+# =============================================================================
+# FULL PRICE SYNC JOB (Daily - All Funkos + Comics)
+# =============================================================================
+
+async def run_full_price_sync_job():
+    """
+    Full daily price sync for ALL Funkos and Comics.
+
+    This job runs once daily and processes the ENTIRE database,
+    syncing prices from PriceCharting for every entity with a pricecharting_id.
+
+    Key features:
+    - No record limit - processes ALL records
+    - Logs all price changes to price_changelog for AI training
+    - Commits in batches for progress visibility
+    - Tracks error details for debugging
+    """
+    from decimal import Decimal
+
+    job_name = "full_price_sync"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting FULL price sync (batch: {batch_id})")
+
+    async with AsyncSessionLocal() as db:
+        # Atomically claim job to prevent race condition
+        claimed, checkpoint = await try_claim_job(db, job_name, "price_sync", batch_id)
+
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
+            return {"status": "skipped", "message": "Job already running"}
+
+        stats = {
+            "funkos_checked": 0, "funkos_updated": 0, "funko_errors": 0,
+            "comics_checked": 0, "comics_updated": 0, "comic_errors": 0,
+            "total_changes": 0
+        }
+
+        try:
+            import os
+            pc_token = os.getenv("PRICECHARTING_API_TOKEN")
+            if not pc_token:
+                logger.error(f"[{job_name}] PRICECHARTING_API_TOKEN not set")
+                await update_checkpoint(db, job_name, is_running=False, last_error="Missing API token")
+                return {"status": "error", "message": "Missing API token"}
+
+            async with get_pricecharting_client() as client:
+                # ============================================================
+                # PHASE 1: Sync ALL Funkos
+                # ============================================================
+                logger.info(f"[{job_name}] Phase 1: Syncing ALL Funko prices...")
+
+                result = await db.execute(text("""
+                    SELECT id, pricecharting_id, price_loose, price_cib, price_new, title
+                    FROM funkos
+                    WHERE pricecharting_id IS NOT NULL
+                    ORDER BY updated_at ASC
+                """))
+                funkos = result.fetchall()
+                logger.info(f"[{job_name}] Found {len(funkos)} Funkos to sync")
+
+                for funko in funkos:
+                    funko_id, pc_id, old_loose, old_cib, old_new, title = funko
+
+                    try:
+                        response = await client.get(
+                            "https://www.pricecharting.com/api/product",
+                            params={"t": pc_token, "id": pc_id}
+                        )
+
+                        if response.status_code != 200:
+                            stats["funko_errors"] += 1
+                            continue
+
+                        data = response.json()
+                        changes = []
+
+                        # Parse prices (cents to dollars)
+                        def parse_price(val):
+                            if val is None:
+                                return None
+                            try:
+                                return round(int(val) / 100, 2)
+                            except (ValueError, TypeError):
+                                return None
+
+                        new_loose = parse_price(data.get("loose-price"))
+                        new_cib = parse_price(data.get("cib-price"))
+                        new_new = parse_price(data.get("new-price"))
+
+                        # Check for changes
+                        price_fields = [
+                            ("price_loose", old_loose, new_loose),
+                            ("price_cib", old_cib, new_cib),
+                            ("price_new", old_new, new_new),
+                        ]
+
+                        for field_name, old_val, new_val in price_fields:
+                            if new_val is None:
+                                continue
+                            old_float = float(old_val) if old_val else 0
+                            if abs(old_float - new_val) > 0.01:
+                                change_pct = None
+                                if old_float > 0:
+                                    change_pct = round(((new_val - old_float) / old_float) * 100, 2)
+                                changes.append({
+                                    "field": field_name,
+                                    "old": old_float,
+                                    "new": new_val,
+                                    "pct": change_pct
+                                })
+
+                        if changes:
+                            # Log changes to changelog
+                            for change in changes:
+                                await db.execute(text("""
+                                    INSERT INTO price_changelog
+                                    (entity_type, entity_id, entity_name, field_name, old_value, new_value, change_pct, data_source, reason, sync_batch_id)
+                                    VALUES ('funko', :id, :name, :field, :old, :new, :pct, 'pricecharting', 'daily_sync', :batch)
+                                    ON CONFLICT DO NOTHING
+                                """), {
+                                    "id": funko_id,
+                                    "name": title[:200] if title else None,
+                                    "field": change["field"],
+                                    "old": change["old"],
+                                    "new": change["new"],
+                                    "pct": change["pct"],
+                                    "batch": batch_id
+                                })
+                                stats["total_changes"] += 1
+
+                            # Update funko record
+                            await db.execute(text("""
+                                UPDATE funkos SET
+                                    price_loose = COALESCE(:new_loose, price_loose),
+                                    price_cib = COALESCE(:new_cib, price_cib),
+                                    price_new = COALESCE(:new_new, price_new),
+                                    updated_at = NOW()
+                                WHERE id = :id
+                            """), {
+                                "id": funko_id,
+                                "new_loose": new_loose,
+                                "new_cib": new_cib,
+                                "new_new": new_new
+                            })
+                            stats["funkos_updated"] += 1
+
+                        stats["funkos_checked"] += 1
+
+                        # Commit every 100 records
+                        if stats["funkos_checked"] % 100 == 0:
+                            await db.commit()
+                            logger.info(f"[{job_name}] Funko progress: {stats['funkos_checked']} checked, {stats['funkos_updated']} updated")
+
+                    except Exception as e:
+                        stats["funko_errors"] += 1
+                        logger.warning(f"[{job_name}] Error syncing Funko {pc_id}: {e}")
+
+                await db.commit()
+                logger.info(f"[{job_name}] Phase 1 complete: {stats['funkos_checked']} Funkos checked, {stats['funkos_updated']} updated")
+
+                # ============================================================
+                # PHASE 2: Sync ALL Comics
+                # ============================================================
+                logger.info(f"[{job_name}] Phase 2: Syncing ALL Comic prices...")
+
+                result = await db.execute(text("""
+                    SELECT id, pricecharting_id, price_loose, price_cib, price_new, price_graded, issue_name
+                    FROM comic_issues
+                    WHERE pricecharting_id IS NOT NULL
+                    ORDER BY updated_at ASC
+                """))
+                comics = result.fetchall()
+                logger.info(f"[{job_name}] Found {len(comics)} Comics to sync")
+
+                for comic in comics:
+                    comic_id, pc_id, old_loose, old_cib, old_new, old_graded, title = comic
+
+                    try:
+                        response = await client.get(
+                            "https://www.pricecharting.com/api/product",
+                            params={"t": pc_token, "id": pc_id}
+                        )
+
+                        if response.status_code != 200:
+                            stats["comic_errors"] += 1
+                            continue
+
+                        data = response.json()
+                        changes = []
+
+                        new_loose = parse_price(data.get("loose-price"))
+                        new_cib = parse_price(data.get("cib-price"))
+                        new_new = parse_price(data.get("new-price"))
+                        new_graded = parse_price(data.get("graded-price"))
+
+                        price_fields = [
+                            ("price_loose", old_loose, new_loose),
+                            ("price_cib", old_cib, new_cib),
+                            ("price_new", old_new, new_new),
+                            ("price_graded", old_graded, new_graded),
+                        ]
+
+                        for field_name, old_val, new_val in price_fields:
+                            if new_val is None:
+                                continue
+                            old_float = float(old_val) if old_val else 0
+                            if abs(old_float - new_val) > 0.01:
+                                change_pct = None
+                                if old_float > 0:
+                                    change_pct = round(((new_val - old_float) / old_float) * 100, 2)
+                                changes.append({
+                                    "field": field_name,
+                                    "old": old_float,
+                                    "new": new_val,
+                                    "pct": change_pct
+                                })
+
+                        if changes:
+                            for change in changes:
+                                await db.execute(text("""
+                                    INSERT INTO price_changelog
+                                    (entity_type, entity_id, entity_name, field_name, old_value, new_value, change_pct, data_source, reason, sync_batch_id)
+                                    VALUES ('comic', :id, :name, :field, :old, :new, :pct, 'pricecharting', 'daily_sync', :batch)
+                                    ON CONFLICT DO NOTHING
+                                """), {
+                                    "id": comic_id,
+                                    "name": title[:200] if title else None,
+                                    "field": change["field"],
+                                    "old": change["old"],
+                                    "new": change["new"],
+                                    "pct": change["pct"],
+                                    "batch": batch_id
+                                })
+                                stats["total_changes"] += 1
+
+                            await db.execute(text("""
+                                UPDATE comic_issues SET
+                                    price_loose = COALESCE(:new_loose, price_loose),
+                                    price_cib = COALESCE(:new_cib, price_cib),
+                                    price_new = COALESCE(:new_new, price_new),
+                                    price_graded = COALESCE(:new_graded, price_graded),
+                                    updated_at = NOW()
+                                WHERE id = :id
+                            """), {
+                                "id": comic_id,
+                                "new_loose": new_loose,
+                                "new_cib": new_cib,
+                                "new_new": new_new,
+                                "new_graded": new_graded
+                            })
+                            stats["comics_updated"] += 1
+
+                        stats["comics_checked"] += 1
+
+                        if stats["comics_checked"] % 100 == 0:
+                            await db.commit()
+                            logger.info(f"[{job_name}] Comic progress: {stats['comics_checked']} checked, {stats['comics_updated']} updated")
+
+                    except Exception as e:
+                        stats["comic_errors"] += 1
+                        logger.warning(f"[{job_name}] Error syncing Comic {pc_id}: {e}")
+
+                await db.commit()
+                logger.info(f"[{job_name}] Phase 2 complete: {stats['comics_checked']} Comics checked, {stats['comics_updated']} updated")
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+        finally:
+            total_checked = stats["funkos_checked"] + stats["comics_checked"]
+            total_updated = stats["funkos_updated"] + stats["comics_updated"]
+            total_errors = stats["funko_errors"] + stats["comic_errors"]
+
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=total_checked,
+                updated_delta=total_updated,
+                errors_delta=total_errors
+            )
+
+        logger.info(
+            f"[{job_name}] COMPLETE: {stats['funkos_checked']} Funkos + {stats['comics_checked']} Comics checked, "
+            f"{stats['funkos_updated']} + {stats['comics_updated']} updated, {stats['total_changes']} price changes logged"
+        )
+
+        return {
+            "status": "completed",
+            "batch_id": batch_id,
+            "stats": stats
+        }
 
 
 # =============================================================================
@@ -1686,6 +1981,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("cross_reference", run_cross_reference_job, interval_minutes=60)),
             # v1.9.0: Self-healing job - detects and restarts stalled jobs automatically
             asyncio.create_task(self._run_job_loop("self_healing", run_self_healing_job, interval_minutes=SELF_HEAL_CHECK_INTERVAL_MINUTES)),
+            # v1.9.3: Full price sync - processes ENTIRE DB daily for PriceCharting prices
+            asyncio.create_task(self._run_job_loop("full_price_sync", run_full_price_sync_job, interval_minutes=1440)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -1695,6 +1992,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - daily_snapshot: every 24 hours (AI/ML data)")
         print("[SCHEDULER]   - cross_reference: every 60 minutes (GCD-Primary linking)")
         print(f"[SCHEDULER]   - self_healing: every {SELF_HEAL_CHECK_INTERVAL_MINUTES} minutes (auto-restart stalled jobs)")
+        print("[SCHEDULER]   - full_price_sync: every 24 hours (ALL Funkos + Comics)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -1737,6 +2035,7 @@ class PipelineScheduler:
             "gcd_import": run_gcd_import_job,  # v1.8.0
             "cross_reference": run_cross_reference_job,  # v1.8.0 - GCD-Primary
             "self_healing": run_self_healing_job,  # v1.9.0 - Auto-restart stalled jobs
+            "full_price_sync": run_full_price_sync_job,  # v1.9.3 - Full daily price sync
         }
 
         if job_name not in jobs:
