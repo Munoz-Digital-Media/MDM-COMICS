@@ -1666,40 +1666,11 @@ async def run_gcd_import_job(
                             comic_id = new_row.id if new_row else None
                             batch_stats["inserted"] += 1
 
-                        # Track provenance for GCD-sourced fields
-                        # Map db column names to record field names
-                        field_map = {
-                            "gcd_id": "gcd_id",
-                            "gcd_series_id": "gcd_series_id",
-                            "gcd_publisher_id": "gcd_publisher_id",
-                            "number": "issue_number",
-                            "isbn": "isbn",
-                            "upc": "upc"
-                        }
-                        if comic_id:
-                            for db_field, record_field in field_map.items():
-                                if record.get(record_field) is not None:
-                                    await db.execute(text("""
-                                        INSERT INTO field_provenance
-                                        (entity_type, entity_id, field_name, data_source, source_id,
-                                         license_type, requires_attribution, attribution_text, fetched_at, created_at, updated_at)
-                                        VALUES ('comic_issue', :id, :field, 'gcd', :gcd_id,
-                                                'CC-BY-SA-4.0', true, :attribution, NOW(), NOW(), NOW())
-                                        ON CONFLICT (entity_type, entity_id, field_name)
-                                        DO UPDATE SET
-                                            data_source = 'gcd',
-                                            source_id = :gcd_id,
-                                            license_type = 'CC-BY-SA-4.0',
-                                            requires_attribution = true,
-                                            attribution_text = :attribution,
-                                            fetched_at = NOW(),
-                                            updated_at = NOW()
-                                    """), {
-                                        "id": comic_id,
-                                        "field": db_field,
-                                        "gcd_id": str(gcd_id),
-                                        "attribution": record.get("_attribution"),
-                                    })
+                        # v1.10.1: Skip per-field provenance during bulk import
+                        # Provenance tracking was doing 6 DB operations per record,
+                        # reducing throughput from ~500/s to ~7/s.
+                        # GCD provenance is implicit - all gcd_* fields come from GCD.
+                        # Can backfill provenance table later if needed.
 
                         stats["processed"] += 1
 
