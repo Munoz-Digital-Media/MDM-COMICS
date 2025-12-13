@@ -1348,14 +1348,19 @@ async def trigger_gcd_import(
 
     logger.info(f"GCD import triggered by admin {current_user.id}: max_records={request.max_records}")
 
-    # Run the job (this will check GCD_IMPORT_ENABLED setting)
-    result = await run_gcd_import_job(
+    # Fire-and-forget: run job in background, return immediately
+    # This prevents gateway timeout on long-running imports
+    asyncio.create_task(run_gcd_import_job(
         db_path=request.db_path,
         batch_size=request.batch_size,
         max_records=request.max_records,
-    )
+    ))
 
-    return result
+    return {
+        "status": "started",
+        "message": f"GCD import started in background (max_records={request.max_records}, batch_size={request.batch_size})",
+        "check_status": "/api/admin/pipeline/gcd/status"
+    }
 
 
 @router.get("/pipeline/gcd/status")
