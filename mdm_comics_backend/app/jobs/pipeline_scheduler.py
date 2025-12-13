@@ -963,6 +963,302 @@ async def run_full_price_sync_job():
 
 
 # =============================================================================
+# PRICECHARTING MATCHING JOB (v1.10.3 - Discover & link pricecharting_id)
+# =============================================================================
+
+async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int = 0):
+    """
+    Find and link PriceCharting IDs for BOTH Funkos AND Comics.
+
+    This job searches PriceCharting by UPC/title to discover matching
+    products and populates the pricecharting_id field. Once set, the
+    full_price_sync job can fetch current prices, and changes are logged
+    to price_changelog for ML training.
+
+    Process:
+    PHASE 1 - Funkos:
+    1. Find Funkos without pricecharting_id (prioritize those with UPC)
+    2. Search PriceCharting API by UPC or title
+    3. Update pricecharting_id for confirmed matches
+
+    PHASE 2 - Comics:
+    1. Find comics without pricecharting_id (prioritize those with UPC/ISBN)
+    2. Search PriceCharting API by UPC, ISBN, or title
+    3. Update pricecharting_id for confirmed matches
+
+    Args:
+        batch_size: Number of records per batch (default 100)
+        max_records: Limit total (0 = unlimited)
+
+    Constitution Compliance:
+        - constitution_cyberSec.json: Rate-limited API access, circuit breaker
+        - constitution_db.json: Batch commits, checkpoint management
+    """
+    job_name = "pricecharting_matching"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting PriceCharting matching for Funkos + Comics (batch: {batch_id})")
+
+    async with AsyncSessionLocal() as db:
+        # Atomically claim job
+        claimed, checkpoint = await try_claim_job(db, job_name, "matching", batch_id)
+
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
+            return {"status": "skipped", "message": "Job already running"}
+
+        stats = {
+            "funkos_processed": 0, "funkos_matched": 0,
+            "comics_processed": 0, "comics_matched": 0,
+            "errors": 0
+        }
+
+        try:
+            import os
+            pc_token = os.getenv("PRICECHARTING_API_TOKEN")
+            if not pc_token:
+                logger.error(f"[{job_name}] PRICECHARTING_API_TOKEN not set - see https://www.pricecharting.com/api")
+                await update_checkpoint(db, job_name, is_running=False, last_error="Missing PRICECHARTING_API_TOKEN")
+                return {"status": "error", "message": "Missing API token"}
+
+            # Get checkpoint state
+            state_data = checkpoint.get("state_data") or {}
+            funko_last_id = state_data.get("funko_last_id", 0) if isinstance(state_data, dict) else 0
+            comic_last_id = state_data.get("comic_last_id", 0) if isinstance(state_data, dict) else 0
+            phase = state_data.get("phase", "funkos") if isinstance(state_data, dict) else "funkos"
+
+            async with get_pricecharting_client() as client:
+
+                # =============================================================
+                # PHASE 1: Match Funkos
+                # =============================================================
+                if phase == "funkos":
+                    logger.info(f"[{job_name}] PHASE 1: Matching Funkos (from id={funko_last_id})")
+
+                    while True:
+                        result = await db.execute(text("""
+                            SELECT id, title, upc
+                            FROM funkos
+                            WHERE pricecharting_id IS NULL
+                              AND id > :last_id
+                            ORDER BY
+                              CASE WHEN upc IS NOT NULL THEN 0 ELSE 1 END,
+                              id
+                            LIMIT :limit
+                        """), {"last_id": funko_last_id, "limit": batch_size})
+
+                        funkos = result.fetchall()
+
+                        if not funkos:
+                            logger.info(f"[{job_name}] Funkos phase complete, switching to Comics")
+                            phase = "comics"
+                            break
+
+                        logger.info(f"[{job_name}] Processing {len(funkos)} Funkos")
+
+                        for funko in funkos:
+                            funko_id = funko.id
+                            funko_last_id = funko_id
+                            stats["funkos_processed"] += 1
+
+                            try:
+                                pc_id = None
+                                match_method = None
+
+                                # Method 1: UPC lookup (most reliable)
+                                if funko.upc and len(str(funko.upc)) >= 10:
+                                    response = await client.get(
+                                        "https://www.pricecharting.com/api/products",
+                                        params={"t": pc_token, "upc": str(funko.upc)}
+                                    )
+                                    if response.status_code == 200:
+                                        data = response.json()
+                                        products = data.get("products", [])
+                                        if products and len(products) == 1:
+                                            pc_id = products[0].get("id")
+                                            match_method = "upc"
+
+                                # Method 2: Title search for Funko Pop
+                                if not pc_id and funko.title:
+                                    search_query = f"Funko Pop {funko.title}"[:100]
+                                    response = await client.get(
+                                        "https://www.pricecharting.com/api/products",
+                                        params={"t": pc_token, "q": search_query}
+                                    )
+                                    if response.status_code == 200:
+                                        data = response.json()
+                                        products = data.get("products", [])
+                                        # Find best match
+                                        for prod in products[:5]:
+                                            prod_name = prod.get("product-name", "").lower()
+                                            if funko.title and funko.title.lower() in prod_name:
+                                                if "funko" in prod_name or "pop" in prod_name:
+                                                    pc_id = prod.get("id")
+                                                    match_method = "title"
+                                                    break
+
+                                if pc_id:
+                                    await db.execute(text("""
+                                        UPDATE funkos
+                                        SET pricecharting_id = :pc_id, updated_at = NOW()
+                                        WHERE id = :id
+                                    """), {"id": funko_id, "pc_id": pc_id})
+                                    stats["funkos_matched"] += 1
+                                    logger.debug(f"[{job_name}] Matched Funko {funko_id} -> PC:{pc_id} via {match_method}")
+
+                            except Exception as e:
+                                stats["errors"] += 1
+                                logger.warning(f"[{job_name}] Error matching Funko {funko_id}: {e}")
+
+                        # Commit and checkpoint
+                        await db.commit()
+                        await db.execute(text("""
+                            UPDATE pipeline_checkpoints
+                            SET state_data = jsonb_build_object(
+                                'phase', 'funkos',
+                                'funko_last_id', CAST(:funko_id AS integer),
+                                'comic_last_id', CAST(:comic_id AS integer)
+                            )
+                            WHERE job_name = :name
+                        """), {"name": job_name, "funko_id": funko_last_id, "comic_id": comic_last_id})
+                        await db.commit()
+
+                        logger.info(f"[{job_name}] Funko batch: {stats['funkos_processed']} processed, {stats['funkos_matched']} matched")
+
+                        if max_records and (stats["funkos_processed"] + stats["comics_processed"]) >= max_records:
+                            break
+
+                # =============================================================
+                # PHASE 2: Match Comics
+                # =============================================================
+                if phase == "comics":
+                    logger.info(f"[{job_name}] PHASE 2: Matching Comics (from id={comic_last_id})")
+
+                    while True:
+                        result = await db.execute(text("""
+                            SELECT id, upc, isbn, issue_name, number
+                            FROM comic_issues
+                            WHERE pricecharting_id IS NULL
+                              AND id > :last_id
+                            ORDER BY
+                              CASE WHEN upc IS NOT NULL THEN 0 ELSE 1 END,
+                              id
+                            LIMIT :limit
+                        """), {"last_id": comic_last_id, "limit": batch_size})
+
+                        comics = result.fetchall()
+
+                        if not comics:
+                            logger.info(f"[{job_name}] Comics phase complete")
+                            break
+
+                        logger.info(f"[{job_name}] Processing {len(comics)} Comics")
+
+                        for comic in comics:
+                            comic_id = comic.id
+                            comic_last_id = comic_id
+                            stats["comics_processed"] += 1
+
+                            try:
+                                pc_id = None
+                                match_method = None
+
+                                # Method 1: UPC lookup
+                                if comic.upc and len(comic.upc) >= 10:
+                                    response = await client.get(
+                                        "https://www.pricecharting.com/api/products",
+                                        params={"t": pc_token, "upc": comic.upc}
+                                    )
+                                    if response.status_code == 200:
+                                        data = response.json()
+                                        products = data.get("products", [])
+                                        if products and len(products) == 1:
+                                            pc_id = products[0].get("id")
+                                            match_method = "upc"
+
+                                # Method 2: Title search with console filter
+                                if not pc_id and comic.issue_name:
+                                    search_query = comic.issue_name
+                                    if comic.number:
+                                        search_query = f"{comic.issue_name} #{comic.number}"
+
+                                    response = await client.get(
+                                        "https://www.pricecharting.com/api/products",
+                                        params={
+                                            "t": pc_token,
+                                            "q": search_query[:100],
+                                            "console-name": "Comics"
+                                        }
+                                    )
+                                    if response.status_code == 200:
+                                        data = response.json()
+                                        products = data.get("products", [])
+                                        for prod in products[:5]:
+                                            prod_name = prod.get("product-name", "").lower()
+                                            if comic.issue_name and comic.issue_name.lower() in prod_name:
+                                                if comic.number and f"#{comic.number}" in prod_name:
+                                                    pc_id = prod.get("id")
+                                                    match_method = "title_exact"
+                                                    break
+
+                                if pc_id:
+                                    await db.execute(text("""
+                                        UPDATE comic_issues
+                                        SET pricecharting_id = :pc_id, updated_at = NOW()
+                                        WHERE id = :id
+                                    """), {"id": comic_id, "pc_id": pc_id})
+                                    stats["comics_matched"] += 1
+                                    logger.debug(f"[{job_name}] Matched Comic {comic_id} -> PC:{pc_id} via {match_method}")
+
+                            except Exception as e:
+                                stats["errors"] += 1
+                                logger.warning(f"[{job_name}] Error matching Comic {comic_id}: {e}")
+
+                        # Commit and checkpoint
+                        await db.commit()
+                        await db.execute(text("""
+                            UPDATE pipeline_checkpoints
+                            SET state_data = jsonb_build_object(
+                                'phase', 'comics',
+                                'funko_last_id', CAST(:funko_id AS integer),
+                                'comic_last_id', CAST(:comic_id AS integer)
+                            )
+                            WHERE job_name = :name
+                        """), {"name": job_name, "funko_id": funko_last_id, "comic_id": comic_last_id})
+                        await db.commit()
+
+                        logger.info(f"[{job_name}] Comic batch: {stats['comics_processed']} processed, {stats['comics_matched']} matched")
+
+                        if max_records and (stats["funkos_processed"] + stats["comics_processed"]) >= max_records:
+                            break
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+        finally:
+            total_processed = stats["funkos_processed"] + stats["comics_processed"]
+            total_matched = stats["funkos_matched"] + stats["comics_matched"]
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=total_processed,
+                updated_delta=total_matched,
+                errors_delta=stats["errors"],
+            )
+
+    logger.info(
+        f"[{job_name}] COMPLETE: "
+        f"Funkos {stats['funkos_processed']}/{stats['funkos_matched']} matched, "
+        f"Comics {stats['comics_processed']}/{stats['comics_matched']} matched, "
+        f"{stats['errors']} errors"
+    )
+
+    return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
 # DLQ RETRY JOB
 # =============================================================================
 
@@ -1634,6 +1930,10 @@ async def run_gcd_import_job(
                         issue_number = truncate(record.get("issue_number"), 50)
                         story_title = truncate(record.get("story_title"), 500)
 
+                        # v1.10.3: Map cover_date and price from GCD data
+                        release_date = record.get("release_date")  # GCD key_date
+                        cover_price = record.get("cover_price")    # GCD price
+
                         # Check if record exists (by gcd_id)
                         existing = await db.execute(text("""
                             SELECT id FROM comic_issues WHERE gcd_id = :gcd_id
@@ -1652,6 +1952,8 @@ async def run_gcd_import_job(
                                     isbn = COALESCE(:isbn, isbn),
                                     upc = COALESCE(:upc, upc),
                                     page_count = COALESCE(:page_count, page_count),
+                                    cover_date = COALESCE(:cover_date, cover_date),
+                                    price = COALESCE(:price, price),
                                     updated_at = NOW()
                                 WHERE gcd_id = :gcd_id
                             """), {
@@ -1663,6 +1965,8 @@ async def run_gcd_import_job(
                                 "isbn": isbn,
                                 "upc": upc,
                                 "page_count": record.get("page_count"),
+                                "cover_date": release_date,
+                                "price": cover_price,
                             })
                             batch_stats["updated"] += 1
                         else:
@@ -1671,10 +1975,12 @@ async def run_gcd_import_job(
                                 INSERT INTO comic_issues (
                                     gcd_id, gcd_series_id, gcd_publisher_id,
                                     number, issue_name, isbn, upc, page_count,
+                                    cover_date, price,
                                     created_at, updated_at
                                 ) VALUES (
                                     :gcd_id, :gcd_series_id, :gcd_publisher_id,
                                     :issue_number, :story_title, :isbn, :upc, :page_count,
+                                    :cover_date, :price,
                                     NOW(), NOW()
                                 )
                                 RETURNING id
@@ -1687,6 +1993,8 @@ async def run_gcd_import_job(
                                 "isbn": isbn,
                                 "upc": upc,
                                 "page_count": record.get("page_count"),
+                                "cover_date": release_date,
+                                "price": cover_price,
                             })
                             new_row = result.fetchone()
                             comic_id = new_row.id if new_row else None
@@ -2334,7 +2642,8 @@ async def run_multi_source_enrichment_job(
 
     stats = {
         "processed": 0,
-        "enriched": 0,
+        "descriptions_enriched": 0,
+        "covers_enriched": 0,
         "failed": 0,
         "by_source": {},
     }
@@ -2356,13 +2665,15 @@ async def run_multi_source_enrichment_job(
                     f"remaining={status.remaining_today}, healthy={status.is_healthy}"
                 )
 
-            # Find comics needing enrichment
+            # Find comics needing enrichment (missing description OR cover image)
             last_id = checkpoint.get("last_processed_id", 0)
             result = await db.execute(text("""
-                SELECT id, metron_id, gcd_id, comicvine_id, series_id, description
+                SELECT id, metron_id, gcd_id, comicvine_id, series_id,
+                       description, image, issue_name, number
                 FROM comic_issues
                 WHERE (
                     description IS NULL OR description = ''
+                    OR image IS NULL OR image = ''
                 )
                 AND id > :last_id
                 ORDER BY id
@@ -2381,84 +2692,112 @@ async def run_multi_source_enrichment_job(
             for comic in comics:
                 comic_id = comic.id
                 stats["processed"] += 1
+                needs_description = not comic.description
+                needs_cover = not comic.image
 
                 try:
-                    # Try to fetch description using rotator
-                    async def fetch_description(adapter):
-                        # Try by metron_id first, then search
-                        if comic.metron_id and adapter.name == "metron":
-                            data = await adapter.fetch_by_id(str(comic.metron_id))
-                        elif comic.comicvine_id and adapter.name == "comicvine":
-                            data = await adapter.fetch_by_id(str(comic.comicvine_id))
-                        else:
-                            # Would need to search - skip for now
+                    # ===========================================================
+                    # PHASE A: Fetch Description (if needed)
+                    # ===========================================================
+                    if needs_description:
+                        async def fetch_description(adapter):
+                            # Try by metron_id first, then search
+                            if comic.metron_id and adapter.name == "metron":
+                                data = await adapter.fetch_by_id(str(comic.metron_id))
+                            elif comic.comicvine_id and adapter.name == "comicvine":
+                                data = await adapter.fetch_by_id(str(comic.comicvine_id))
+                            else:
+                                return {}
+                            if data:
+                                return adapter.normalize(data)
                             return {}
 
-                        if data:
-                            return adapter.normalize(data)
-                        return {}
-
-                    result = await source_rotator.fetch_with_fallback(
-                        db,
-                        capability=SourceCapability.DESCRIPTIONS,
-                        fetch_func=fetch_description,
-                        required_fields={"description"},
-                    )
-
-                    if result.success and result.data.get("description"):
-                        # Update comic with enriched data
-                        await db.execute(text("""
-                            UPDATE comic_issues
-                            SET description = COALESCE(:description, description),
-                                enrichment_source = :source,
-                                last_enrichment_attempt = NOW(),
-                                updated_at = NOW()
-                            WHERE id = :id
-                        """), {
-                            "id": comic_id,
-                            "description": result.data.get("description"),
-                            "source": result.source_name,
-                        })
-
-                        stats["enriched"] += 1
-                        stats["by_source"][result.source_name] = (
-                            stats["by_source"].get(result.source_name, 0) + 1
+                        desc_result = await source_rotator.fetch_with_fallback(
+                            db,
+                            capability=SourceCapability.DESCRIPTIONS,
+                            fetch_func=fetch_description,
+                            required_fields={"description"},
                         )
 
-                        # Log attempt
-                        attempt = EnrichmentAttempt(
-                            entity_type="comic_issue",
-                            entity_id=comic_id,
-                            source_name=result.source_name,
-                            success=True,
-                            data_fields_returned=list(result.fields_populated),
-                            response_time_ms=result.response_time_ms,
-                        )
-                        db.add(attempt)
+                        if desc_result.success and desc_result.data.get("description"):
+                            await db.execute(text("""
+                                UPDATE comic_issues
+                                SET description = :description,
+                                    enrichment_source = :source,
+                                    updated_at = NOW()
+                                WHERE id = :id AND (description IS NULL OR description = '')
+                            """), {
+                                "id": comic_id,
+                                "description": desc_result.data["description"][:5000],
+                                "source": desc_result.source_name,
+                            })
+                            stats["descriptions_enriched"] += 1
+                            stats["by_source"][desc_result.source_name] = stats["by_source"].get(desc_result.source_name, 0) + 1
 
+                    # ===========================================================
+                    # PHASE B: Fetch Cover Image (if needed)
+                    # ===========================================================
+                    if needs_cover:
+                        async def fetch_cover(adapter):
+                            # Try by existing IDs first
+                            if comic.metron_id and adapter.name == "metron":
+                                data = await adapter.fetch_by_id(str(comic.metron_id))
+                            elif comic.comicvine_id and adapter.name == "comicvine":
+                                data = await adapter.fetch_by_id(str(comic.comicvine_id))
+                            elif adapter.name in ("comicbookrealm", "mycomicshop"):
+                                # Scrapers need search - try by title
+                                if comic.issue_name:
+                                    search_query = comic.issue_name
+                                    if comic.number:
+                                        search_query = f"{comic.issue_name} #{comic.number}"
+                                    result = await adapter.fetch_page(q=search_query)
+                                    if result.success and result.records:
+                                        return adapter.normalize(result.records[0])
+                                return {}
+                            else:
+                                return {}
+                            if data:
+                                return adapter.normalize(data)
+                            return {}
+
+                        cover_result = await source_rotator.fetch_with_fallback(
+                            db,
+                            capability=SourceCapability.COVERS,
+                            fetch_func=fetch_cover,
+                            required_fields={"cover_image_url"},
+                        )
+
+                        if cover_result.success and cover_result.data.get("cover_image_url"):
+                            await db.execute(text("""
+                                UPDATE comic_issues
+                                SET image = :image_url,
+                                    enrichment_source = :source,
+                                    updated_at = NOW()
+                                WHERE id = :id AND (image IS NULL OR image = '')
+                            """), {
+                                "id": comic_id,
+                                "image_url": cover_result.data["cover_image_url"],
+                                "source": cover_result.source_name,
+                            })
+                            stats["covers_enriched"] += 1
+                            stats["by_source"][cover_result.source_name] = stats["by_source"].get(cover_result.source_name, 0) + 1
+
+                    # Track if we enriched anything
+                    if stats["descriptions_enriched"] > 0 or stats["covers_enriched"] > 0:
+                        pass  # Success tracked above
                     else:
-                        # Log failed attempt
-                        await db.execute(text("""
-                            UPDATE comic_issues
-                            SET last_enrichment_attempt = NOW()
-                            WHERE id = :id
-                        """), {"id": comic_id})
-
-                        attempt = EnrichmentAttempt(
-                            entity_type="comic_issue",
-                            entity_id=comic_id,
-                            source_name=result.source_name or "none",
-                            success=False,
-                            error_message=result.error,
-                        )
-                        db.add(attempt)
+                        stats["failed"] += 1
 
                 except Exception as e:
-                    logger.error(f"[{job_name}] Error enriching {comic_id}: {e}")
                     stats["failed"] += 1
+                    logger.warning(f"[{job_name}] Error enriching comic {comic_id}: {e}")
+
+                # Commit periodically
+                if stats["processed"] % 50 == 0:
+                    await db.commit()
 
                 # Update checkpoint periodically
-                if stats["processed"] % 10 == 0:
+                if stats["processed"] % 100 == 0:
                     await db.execute(text("""
                         UPDATE pipeline_checkpoints
                         SET state_data = jsonb_build_object('last_processed_id', :last_id),
@@ -2480,11 +2819,12 @@ async def run_multi_source_enrichment_job(
             await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
 
         finally:
+            total_enriched = stats["descriptions_enriched"] + stats["covers_enriched"]
             await update_checkpoint(
                 db, job_name,
                 is_running=False,
                 processed_delta=stats["processed"],
-                updated_delta=stats["enriched"],
+                updated_delta=total_enriched,
                 errors_delta=stats["failed"],
             )
 
@@ -2492,10 +2832,164 @@ async def run_multi_source_enrichment_job(
     rotator_stats = source_rotator.get_stats()
     logger.info(
         f"[{job_name}] COMPLETE: {stats['processed']} processed, "
-        f"{stats['enriched']} enriched, {stats['failed']} failed. "
-        f"By source: {stats['by_source']}"
+        f"{stats['descriptions_enriched']} descriptions, {stats['covers_enriched']} covers, "
+        f"{stats['failed']} failed. By source: {stats['by_source']}"
     )
     logger.info(f"[{job_name}] Rotator stats: {rotator_stats}")
+
+    return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
+# COVER DATE BACKFILL JOB (v1.10.3 - Populate cover_date from GCD)
+# =============================================================================
+
+async def run_cover_date_backfill_job(batch_size: int = 5000, max_records: int = 0):
+    """
+    Backfill cover_date and price for comics imported from GCD.
+
+    This job reads from the GCD SQLite dump and updates existing records
+    that are missing cover_date values. Works for any number of records.
+
+    Args:
+        batch_size: Number of records to process per batch (default 5000)
+        max_records: Limit total records (0 = unlimited, processes all)
+
+    Constitution Compliance:
+        - constitution_db.json: Batch updates with checkpointing
+        - constitution_data_hygiene.json: Source validation
+    """
+    from app.adapters.gcd import GCDAdapter, ensure_gcd_dump_exists
+
+    job_name = "cover_date_backfill"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting cover_date backfill (batch: {batch_id})")
+
+    async with AsyncSessionLocal() as db:
+        # Atomically claim job
+        claimed, checkpoint = await try_claim_job(db, job_name, "backfill", batch_id)
+
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
+            return {"status": "skipped", "message": "Job already running"}
+
+        stats = {"processed": 0, "updated": 0, "skipped": 0, "errors": 0}
+
+        try:
+            # Ensure GCD SQLite dump exists
+            db_path = await ensure_gcd_dump_exists()
+            if not db_path:
+                raise Exception("GCD SQLite dump not available")
+
+            # Get starting offset from checkpoint
+            state_data = checkpoint.get("state_data") or {}
+            start_offset = state_data.get("offset", 0) if isinstance(state_data, dict) else 0
+
+            logger.info(f"[{job_name}] Resuming from offset {start_offset:,}")
+
+            # Initialize GCD adapter
+            adapter = GCDAdapter()
+
+            # Process batches from GCD dump
+            current_offset = start_offset
+            for batch in adapter.import_from_sqlite(db_path, offset=start_offset, limit=batch_size):
+                if not batch:
+                    break
+
+                batch_updated = 0
+                batch_skipped = 0
+
+                for record in batch:
+                    gcd_id = record.get("gcd_id")
+                    release_date = record.get("release_date")
+                    cover_price = record.get("cover_price")
+
+                    if not gcd_id:
+                        stats["errors"] += 1
+                        continue
+
+                    # Skip if no date/price to update
+                    if not release_date and not cover_price:
+                        batch_skipped += 1
+                        continue
+
+                    try:
+                        # Update only cover_date and price where they're NULL
+                        result = await db.execute(text("""
+                            UPDATE comic_issues
+                            SET cover_date = COALESCE(cover_date, :cover_date),
+                                price = COALESCE(price, :price),
+                                updated_at = NOW()
+                            WHERE gcd_id = :gcd_id
+                              AND (cover_date IS NULL OR price IS NULL)
+                        """), {
+                            "gcd_id": gcd_id,
+                            "cover_date": release_date,
+                            "price": cover_price,
+                        })
+
+                        if result.rowcount > 0:
+                            batch_updated += 1
+                        else:
+                            batch_skipped += 1
+
+                    except Exception as e:
+                        logger.warning(f"[{job_name}] Error updating gcd_id={gcd_id}: {e}")
+                        stats["errors"] += 1
+
+                stats["processed"] += len(batch)
+                stats["updated"] += batch_updated
+                stats["skipped"] += batch_skipped
+                current_offset += len(batch)
+
+                # Commit batch and update checkpoint
+                await db.commit()
+
+                await db.execute(text("""
+                    UPDATE pipeline_checkpoints
+                    SET state_data = jsonb_build_object('offset', CAST(:offset AS integer)),
+                        processed = COALESCE(processed, 0) + :processed,
+                        updated = COALESCE(updated, 0) + :updated
+                    WHERE job_name = :name
+                """), {
+                    "name": job_name,
+                    "offset": current_offset,
+                    "processed": len(batch),
+                    "updated": batch_updated,
+                })
+                await db.commit()
+
+                logger.info(
+                    f"[{job_name}] Batch complete: {len(batch)} processed, "
+                    f"{batch_updated} updated, {batch_skipped} skipped. "
+                    f"Total: {stats['processed']:,}"
+                )
+
+                # Check max records
+                if max_records and stats["processed"] >= max_records:
+                    logger.info(f"[{job_name}] Reached max_records ({max_records})")
+                    break
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+        finally:
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=stats["processed"],
+                updated_delta=stats["updated"],
+                errors_delta=stats["errors"],
+            )
+
+    logger.info(
+        f"[{job_name}] COMPLETE: {stats['processed']:,} processed, "
+        f"{stats['updated']:,} updated, {stats['skipped']:,} skipped, "
+        f"{stats['errors']} errors"
+    )
 
     return {"status": "completed", "batch_id": batch_id, "stats": stats}
 
@@ -2551,6 +3045,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("self_healing", run_self_healing_job, interval_minutes=SELF_HEAL_CHECK_INTERVAL_MINUTES)),
             # v1.9.3: Full price sync - processes ENTIRE DB daily for PriceCharting prices
             asyncio.create_task(self._run_job_loop("full_price_sync", run_full_price_sync_job, interval_minutes=1440)),
+            # v1.10.3: PriceCharting matching - discovers pricecharting_id for Funkos + Comics
+            asyncio.create_task(self._run_job_loop("pricecharting_matching", run_pricecharting_matching_job, interval_minutes=60)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -2561,6 +3057,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - cross_reference: every 60 minutes (GCD-Primary linking)")
         print(f"[SCHEDULER]   - self_healing: every {SELF_HEAL_CHECK_INTERVAL_MINUTES} minutes (auto-restart stalled jobs)")
         print("[SCHEDULER]   - full_price_sync: every 24 hours (ALL Funkos + Comics)")
+        print("[SCHEDULER]   - pricecharting_matching: every 60 minutes (Discover PC IDs)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -2607,6 +3104,8 @@ class PipelineScheduler:
             "cover_hash_backfill": run_cover_hash_backfill_job,  # v1.9.4 - Generate cover hashes for image search
             "image_acquisition": run_image_acquisition_job,  # v1.9.5 - Download covers to S3
             "multi_source_enrichment": run_multi_source_enrichment_job,  # v1.10.0 - Multi-source with rotator
+            "cover_date_backfill": run_cover_date_backfill_job,  # v1.10.3 - Backfill cover_date from GCD
+            "pricecharting_matching": run_pricecharting_matching_job,  # v1.10.3 - Discover pricecharting_id
         }
 
         if job_name not in jobs:
