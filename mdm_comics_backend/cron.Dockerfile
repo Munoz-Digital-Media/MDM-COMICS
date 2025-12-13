@@ -8,11 +8,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install backend dependencies so cron jobs can reuse the same app modules
-COPY requirements.txt .
+COPY mdm_comics_backend/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy backend application and cron runner
-COPY . .
+COPY mdm_comics_backend/ .
 
 CMD ["python", "run_cron.py"]
