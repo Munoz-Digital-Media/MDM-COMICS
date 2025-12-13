@@ -66,9 +66,6 @@ venv/
 .venv/
 ENV/
 
-# Null file (Windows artifact)
-nul
-
 # Local assets (comic book covers, product images, etc.)
 assets/
 
