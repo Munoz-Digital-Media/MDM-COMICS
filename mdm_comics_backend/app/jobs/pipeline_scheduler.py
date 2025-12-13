@@ -2198,10 +2198,14 @@ async def run_gcd_import_job(
         stats = {"processed": 0, "inserted": 0, "updated": 0, "errors": 0}
 
         try:
-            # Validate SQLite file exists
+            # v1.10.4: Ensure GCD dump exists (download from S3 if needed)
+            from app.adapters.gcd import ensure_gcd_dump_exists
             import os
+
             if not os.path.exists(db_path):
-                raise FileNotFoundError(f"GCD SQLite dump not found: {db_path}")
+                logger.info(f"[{job_name}] GCD dump not found at {db_path}, attempting S3 download...")
+                if not ensure_gcd_dump_exists():
+                    raise FileNotFoundError(f"GCD SQLite dump not found and S3 download failed: {db_path}")
 
             # Initialize adapter
             adapter = GCDAdapter()
