@@ -3398,6 +3398,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("pricecharting_matching", run_pricecharting_matching_job, interval_minutes=60)),
             # v1.10.3: Comprehensive enrichment - ALL sources, ALL fields, PARALLEL
             asyncio.create_task(self._run_job_loop("comprehensive_enrichment", run_comprehensive_enrichment_job, interval_minutes=30)),
+            # v1.10.4: GCD Import - runs every 60 min until complete (~170k remaining)
+            asyncio.create_task(self._run_job_loop("gcd_import", run_gcd_import_job, interval_minutes=60)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -3410,6 +3412,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - full_price_sync: every 24 hours (ALL Funkos + Comics)")
         print("[SCHEDULER]   - pricecharting_matching: every 60 minutes (Discover PC IDs)")
         print("[SCHEDULER]   - comprehensive_enrichment: every 30 minutes (ALL sources, parallel)")
+        print("[SCHEDULER]   - gcd_import: every 60 minutes (finish remaining ~170k records)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
