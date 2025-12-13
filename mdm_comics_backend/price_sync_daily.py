@@ -217,13 +217,12 @@ async def sync_funko_prices(
     """
     stats = {"checked": 0, "updated": 0, "changes": 0, "errors": 0}
 
-    # Get Funkos with pricecharting_id
+    # Get ALL Funkos with pricecharting_id (no limit - process entire DB)
     result = await db.execute(text("""
         SELECT id, title, pricecharting_id, price_loose, price_cib, price_new
         FROM funkos
         WHERE pricecharting_id IS NOT NULL
         ORDER BY updated_at ASC
-        LIMIT 500
     """))
     funkos = result.fetchall()
 
@@ -339,14 +338,13 @@ async def sync_comic_prices(
     """
     stats = {"checked": 0, "updated": 0, "changes": 0, "errors": 0}
 
-    # Get Comics with pricecharting_id
+    # Get ALL Comics with pricecharting_id (no limit - process entire DB)
     result = await db.execute(text("""
         SELECT id, issue_name, pricecharting_id,
                price_loose, price_cib, price_new, price_graded
         FROM comic_issues
         WHERE pricecharting_id IS NOT NULL
         ORDER BY updated_at ASC
-        LIMIT 500
     """))
     comics = result.fetchall()
 

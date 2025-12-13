@@ -46,6 +46,7 @@ def get_status(base_url: str, token: str) -> dict:
 
 def trigger_import(base_url: str, token: str, max_records: int = 0, batch_size: int = 1000) -> dict:
     """Trigger GCD import job."""
+    # Use longer timeout - imports can take several minutes
     response = httpx.post(
         f"{base_url}/api/admin/pipeline/gcd/import",
         headers={
@@ -53,7 +54,7 @@ def trigger_import(base_url: str, token: str, max_records: int = 0, batch_size: 
             "Content-Type": "application/json",
         },
         json={"max_records": max_records, "batch_size": batch_size},
-        timeout=60.0,
+        timeout=600.0,  # 10 minutes for large imports
     )
     response.raise_for_status()
     return response.json()
@@ -100,8 +101,8 @@ def main():
 
         if checkpoint:
             print(f"  Is running: {checkpoint.get('is_running')}")
-            print(f"  Current offset: {checkpoint.get('current_offset', 0):,}")
-            print(f"  Total processed: {checkpoint.get('total_processed', 0):,}")
+            print(f"  Current offset: {checkpoint.get('current_offset') or 0:,}")
+            print(f"  Total processed: {checkpoint.get('total_processed') or 0:,}")
             if checkpoint.get('last_error'):
                 print(f"  Last error: {checkpoint.get('last_error')}")
     except httpx.HTTPStatusError as e:
