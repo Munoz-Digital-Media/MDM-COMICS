@@ -1,5 +1,5 @@
 """
-Pipeline Job Scheduler v1.9.5
+Pipeline Job Scheduler v1.10.0
 
 Automated data acquisition jobs that ACTUALLY RUN.
 
@@ -14,6 +14,7 @@ Jobs:
 8. Full Price Sync - Process entire DB for PriceCharting prices (v1.9.3)
 9. Cover Hash Backfill - Generate perceptual hashes for image search (v1.9.4)
 10. Image Acquisition - Download covers to S3, generate thumbnails+hashes (v1.9.5)
+11. Multi-Source Enrichment - Rotate between Metron/ComicVine with failover (v1.10.0)
 
 All jobs use checkpoints for crash recovery and log to DLQ on failure.
 
@@ -2241,6 +2242,208 @@ async def run_image_acquisition_job(batch_size: int = 100, max_records: int = 0)
 
 
 # =============================================================================
+# MULTI-SOURCE ENRICHMENT JOB (v1.10.0)
+# =============================================================================
+
+async def run_multi_source_enrichment_job(
+    batch_size: int = 100,
+    max_records: int = 0,
+):
+    """
+    Enrich comics using the multi-source rotator.
+
+    v1.10.0 - Multi-Source Enrichment:
+    - Uses source rotator for intelligent failover
+    - Tries Metron first, falls back to Comic Vine
+    - Tracks quota usage across sources
+    - Logs enrichment attempts for debugging
+
+    Args:
+        batch_size: Records to process per batch
+        max_records: Max total records (0 = unlimited)
+    """
+    from app.services.source_rotator import source_rotator, SourceCapability
+    from app.services.quota_tracker import quota_tracker
+    from app.models.source_quota import EnrichmentAttempt
+    from app.adapters.comicvine_adapter import create_comicvine_adapter
+
+    job_name = "multi_source_enrichment"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting multi-source enrichment (batch: {batch_id})")
+
+    # Initialize Comic Vine adapter if not already registered
+    await create_comicvine_adapter()
+
+    stats = {
+        "processed": 0,
+        "enriched": 0,
+        "failed": 0,
+        "by_source": {},
+    }
+
+    async with AsyncSessionLocal() as db:
+        # Atomically claim job
+        claimed, checkpoint = await try_claim_job(db, job_name, "enrichment", batch_id)
+
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running, skipping")
+            return {"status": "skipped"}
+
+        try:
+            # Log source statuses
+            statuses = await source_rotator.get_all_statuses(db)
+            for name, status in statuses.items():
+                logger.info(
+                    f"[{job_name}] Source {name}: "
+                    f"remaining={status.remaining_today}, healthy={status.is_healthy}"
+                )
+
+            # Find comics needing enrichment
+            last_id = checkpoint.get("last_processed_id", 0)
+            result = await db.execute(text("""
+                SELECT id, metron_id, gcd_id, comicvine_id, series_id, description
+                FROM comic_issues
+                WHERE (
+                    description IS NULL OR description = ''
+                )
+                AND id > :last_id
+                ORDER BY id
+                LIMIT :batch_size
+            """), {"last_id": last_id, "batch_size": batch_size})
+
+            comics = result.fetchall()
+
+            if not comics:
+                logger.info(f"[{job_name}] No comics need enrichment")
+                await update_checkpoint(db, job_name, is_running=False)
+                return {"status": "completed", "stats": stats}
+
+            logger.info(f"[{job_name}] Found {len(comics)} comics to enrich")
+
+            for comic in comics:
+                comic_id = comic.id
+                stats["processed"] += 1
+
+                try:
+                    # Try to fetch description using rotator
+                    async def fetch_description(adapter):
+                        # Try by metron_id first, then search
+                        if comic.metron_id and adapter.name == "metron":
+                            data = await adapter.fetch_by_id(str(comic.metron_id))
+                        elif comic.comicvine_id and adapter.name == "comicvine":
+                            data = await adapter.fetch_by_id(str(comic.comicvine_id))
+                        else:
+                            # Would need to search - skip for now
+                            return {}
+
+                        if data:
+                            return adapter.normalize(data)
+                        return {}
+
+                    result = await source_rotator.fetch_with_fallback(
+                        db,
+                        capability=SourceCapability.DESCRIPTIONS,
+                        fetch_func=fetch_description,
+                        required_fields={"description"},
+                    )
+
+                    if result.success and result.data.get("description"):
+                        # Update comic with enriched data
+                        await db.execute(text("""
+                            UPDATE comic_issues
+                            SET description = COALESCE(:description, description),
+                                enrichment_source = :source,
+                                last_enrichment_attempt = NOW(),
+                                updated_at = NOW()
+                            WHERE id = :id
+                        """), {
+                            "id": comic_id,
+                            "description": result.data.get("description"),
+                            "source": result.source_name,
+                        })
+
+                        stats["enriched"] += 1
+                        stats["by_source"][result.source_name] = (
+                            stats["by_source"].get(result.source_name, 0) + 1
+                        )
+
+                        # Log attempt
+                        attempt = EnrichmentAttempt(
+                            entity_type="comic_issue",
+                            entity_id=comic_id,
+                            source_name=result.source_name,
+                            success=True,
+                            data_fields_returned=list(result.fields_populated),
+                            response_time_ms=result.response_time_ms,
+                        )
+                        db.add(attempt)
+
+                    else:
+                        # Log failed attempt
+                        await db.execute(text("""
+                            UPDATE comic_issues
+                            SET last_enrichment_attempt = NOW()
+                            WHERE id = :id
+                        """), {"id": comic_id})
+
+                        attempt = EnrichmentAttempt(
+                            entity_type="comic_issue",
+                            entity_id=comic_id,
+                            source_name=result.source_name or "none",
+                            success=False,
+                            error_message=result.error,
+                        )
+                        db.add(attempt)
+
+                except Exception as e:
+                    logger.error(f"[{job_name}] Error enriching {comic_id}: {e}")
+                    stats["failed"] += 1
+
+                # Update checkpoint periodically
+                if stats["processed"] % 10 == 0:
+                    await db.execute(text("""
+                        UPDATE pipeline_checkpoints
+                        SET state_data = jsonb_build_object('last_processed_id', :last_id),
+                            updated_at = NOW()
+                        WHERE job_name = :name
+                    """), {"name": job_name, "last_id": comic_id})
+                    await db.commit()
+
+                # Check max records
+                if max_records and stats["processed"] >= max_records:
+                    logger.info(f"[{job_name}] Reached max_records ({max_records})")
+                    break
+
+            await db.commit()
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+        finally:
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=stats["processed"],
+                updated_delta=stats["enriched"],
+                errors_delta=stats["failed"],
+            )
+
+    # Log rotator stats
+    rotator_stats = source_rotator.get_stats()
+    logger.info(
+        f"[{job_name}] COMPLETE: {stats['processed']} processed, "
+        f"{stats['enriched']} enriched, {stats['failed']} failed. "
+        f"By source: {stats['by_source']}"
+    )
+    logger.info(f"[{job_name}] Rotator stats: {rotator_stats}")
+
+    return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
 # MAIN SCHEDULER
 # =============================================================================
 
@@ -2346,6 +2549,7 @@ class PipelineScheduler:
             "full_price_sync": run_full_price_sync_job,  # v1.9.3 - Full daily price sync
             "cover_hash_backfill": run_cover_hash_backfill_job,  # v1.9.4 - Generate cover hashes for image search
             "image_acquisition": run_image_acquisition_job,  # v1.9.5 - Download covers to S3
+            "multi_source_enrichment": run_multi_source_enrichment_job,  # v1.10.0 - Multi-source with rotator
         }
 
         if job_name not in jobs:

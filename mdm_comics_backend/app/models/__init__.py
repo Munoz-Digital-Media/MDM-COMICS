@@ -104,6 +104,19 @@ except ImportError as e:
     QuarantineReason = None
     FieldProvenance = None
 
+# Multi-Source Enrichment v1.10.0
+try:
+    from app.models.source_quota import (
+        SourceQuota,
+        EnrichmentAttempt,
+        GradingTrainingExample,
+    )
+except ImportError as e:
+    print(f"Warning: Could not import source_quota models: {e}")
+    SourceQuota = None
+    EnrichmentAttempt = None
+    GradingTrainingExample = None
+
 __all__ = [
     "User",
     "Product",
@@ -188,4 +201,8 @@ __all__ = [
     "BrandAsset",
     "BrandAssetVersion",
     "DEFAULT_SITE_SETTINGS",
+    # Multi-Source Enrichment v1.10.0
+    "SourceQuota",
+    "EnrichmentAttempt",
+    "GradingTrainingExample",
 ]
