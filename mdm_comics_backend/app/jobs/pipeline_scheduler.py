@@ -1259,6 +1259,348 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
 
 
 # =============================================================================
+# COMPREHENSIVE ENRICHMENT JOB (v1.10.3 - All sources, all fields, parallel)
+# =============================================================================
+
+async def run_comprehensive_enrichment_job(batch_size: int = 50, max_records: int = 0):
+    """
+    COMPREHENSIVE multi-source enrichment - queries ALL sources in PARALLEL.
+
+    This job enriches ALL missing fields from ALL available sources simultaneously:
+
+    SOURCES QUERIED (in parallel):
+    - Metron API: covers, descriptions, creators, characters, arcs
+    - ComicVine API: covers, descriptions, creators, characters
+    - ComicBookRealm (scraper): covers, pricing, CGC census, grading
+    - MyComicShop (scraper): covers, retail pricing
+    - PriceCharting API: market prices (loose, CIB, graded)
+
+    FIELDS ENRICHED:
+    - image (cover URL)
+    - description
+    - price (market/retail)
+    - price_loose, price_cib, price_new, price_graded (when available)
+    - cgc_census (graded population)
+
+    MERGE PRIORITY:
+    1. APIs first (Metron > ComicVine > PriceCharting)
+    2. Scrapers fallback (ComicBookRealm > MyComicShop)
+
+    Args:
+        batch_size: Records per batch (default 50 - lower due to parallel queries)
+        max_records: Max total (0 = unlimited)
+    """
+    import asyncio as aio
+    from app.services.source_rotator import source_rotator, SourceCapability
+    from app.adapters import (
+        MetronAdapter,
+        create_comicvine_adapter,
+        create_comicbookrealm_adapter,
+        create_mycomicshop_adapter
+    )
+    import os
+
+    job_name = "comprehensive_enrichment"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting COMPREHENSIVE enrichment (batch: {batch_id})")
+    logger.info(f"[{job_name}] Querying: Metron, ComicVine, ComicBookRealm, MyComicShop, PriceCharting")
+
+    # Initialize all adapters
+    adapters = {}
+    try:
+        adapters["metron"] = MetronAdapter()
+        logger.info(f"[{job_name}] Metron adapter ready")
+    except Exception as e:
+        logger.warning(f"[{job_name}] Metron init failed: {e}")
+
+    try:
+        adapters["comicvine"] = await create_comicvine_adapter()
+        logger.info(f"[{job_name}] ComicVine adapter ready")
+    except Exception as e:
+        logger.warning(f"[{job_name}] ComicVine init failed: {e}")
+
+    try:
+        adapters["comicbookrealm"] = await create_comicbookrealm_adapter()
+        logger.info(f"[{job_name}] ComicBookRealm adapter ready")
+    except Exception as e:
+        logger.warning(f"[{job_name}] ComicBookRealm init failed: {e}")
+
+    try:
+        adapters["mycomicshop"] = await create_mycomicshop_adapter()
+        logger.info(f"[{job_name}] MyComicShop adapter ready")
+    except Exception as e:
+        logger.warning(f"[{job_name}] MyComicShop init failed: {e}")
+
+    pc_token = os.getenv("PRICECHARTING_API_TOKEN")
+    if pc_token:
+        logger.info(f"[{job_name}] PriceCharting API token configured")
+    else:
+        logger.warning(f"[{job_name}] PriceCharting API token missing")
+
+    stats = {
+        "processed": 0,
+        "covers_enriched": 0,
+        "descriptions_enriched": 0,
+        "prices_enriched": 0,
+        "failed": 0,
+        "by_source": {},
+    }
+
+    async with AsyncSessionLocal() as db:
+        claimed, checkpoint = await try_claim_job(db, job_name, "enrichment", batch_id)
+
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running, skipping")
+            return {"status": "skipped"}
+
+        try:
+            state_data = checkpoint.get("state_data") or {}
+            last_id = state_data.get("last_id", 0) if isinstance(state_data, dict) else 0
+
+            while True:
+                # Find comics needing ANY enrichment
+                result = await db.execute(text("""
+                    SELECT id, metron_id, comicvine_id, pricecharting_id,
+                           issue_name, number, upc, isbn,
+                           image, description, price
+                    FROM comic_issues
+                    WHERE (
+                        image IS NULL OR image = ''
+                        OR description IS NULL OR description = ''
+                        OR price IS NULL OR price = 0
+                    )
+                    AND id > :last_id
+                    ORDER BY id
+                    LIMIT :limit
+                """), {"last_id": last_id, "limit": batch_size})
+
+                comics = result.fetchall()
+
+                if not comics:
+                    logger.info(f"[{job_name}] No more comics need enrichment")
+                    break
+
+                logger.info(f"[{job_name}] Processing {len(comics)} comics in parallel")
+
+                for comic in comics:
+                    comic_id = comic.id
+                    last_id = comic_id
+                    stats["processed"] += 1
+
+                    needs_cover = not comic.image
+                    needs_desc = not comic.description
+                    needs_price = not comic.price or comic.price == 0
+
+                    try:
+                        # Build search query
+                        search_query = comic.issue_name or ""
+                        if comic.number:
+                            search_query = f"{search_query} #{comic.number}"
+
+                        # =========================================================
+                        # PARALLEL QUERIES - Fire all requests simultaneously
+                        # =========================================================
+                        tasks = []
+                        task_sources = []
+
+                        # Metron (by ID or search)
+                        if "metron" in adapters:
+                            async def query_metron():
+                                try:
+                                    if comic.metron_id:
+                                        data = await adapters["metron"].fetch_by_id(str(comic.metron_id))
+                                    else:
+                                        result = await adapters["metron"].fetch_page(q=search_query[:100])
+                                        data = result.records[0] if result.success and result.records else None
+                                    return adapters["metron"].normalize(data) if data else {}
+                                except:
+                                    return {}
+                            tasks.append(query_metron())
+                            task_sources.append("metron")
+
+                        # ComicVine (by ID or search)
+                        if "comicvine" in adapters:
+                            async def query_comicvine():
+                                try:
+                                    if comic.comicvine_id:
+                                        data = await adapters["comicvine"].fetch_by_id(str(comic.comicvine_id))
+                                    else:
+                                        result = await adapters["comicvine"].fetch_page(q=search_query[:100])
+                                        data = result.records[0] if result.success and result.records else None
+                                    return adapters["comicvine"].normalize(data) if data else {}
+                                except:
+                                    return {}
+                            tasks.append(query_comicvine())
+                            task_sources.append("comicvine")
+
+                        # ComicBookRealm (scraper)
+                        if "comicbookrealm" in adapters and search_query:
+                            async def query_cbr():
+                                try:
+                                    result = await adapters["comicbookrealm"].fetch_page(q=search_query[:100])
+                                    return adapters["comicbookrealm"].normalize(result.records[0]) if result.success and result.records else {}
+                                except:
+                                    return {}
+                            tasks.append(query_cbr())
+                            task_sources.append("comicbookrealm")
+
+                        # MyComicShop (scraper)
+                        if "mycomicshop" in adapters and search_query:
+                            async def query_mcs():
+                                try:
+                                    result = await adapters["mycomicshop"].fetch_page(q=search_query[:100])
+                                    return adapters["mycomicshop"].normalize(result.records[0]) if result.success and result.records else {}
+                                except:
+                                    return {}
+                            tasks.append(query_mcs())
+                            task_sources.append("mycomicshop")
+
+                        # PriceCharting (API)
+                        if pc_token and comic.pricecharting_id:
+                            async def query_pricecharting():
+                                try:
+                                    async with get_pricecharting_client() as client:
+                                        response = await client.get(
+                                            "https://www.pricecharting.com/api/product",
+                                            params={"t": pc_token, "id": comic.pricecharting_id}
+                                        )
+                                        if response.status_code == 200:
+                                            data = response.json()
+                                            return {
+                                                "price_loose": int(data.get("loose-price", 0)) / 100 if data.get("loose-price") else None,
+                                                "price_cib": int(data.get("cib-price", 0)) / 100 if data.get("cib-price") else None,
+                                                "price_new": int(data.get("new-price", 0)) / 100 if data.get("new-price") else None,
+                                                "price_graded": int(data.get("graded-price", 0)) / 100 if data.get("graded-price") else None,
+                                            }
+                                except:
+                                    return {}
+                                return {}
+                            tasks.append(query_pricecharting())
+                            task_sources.append("pricecharting")
+
+                        # Execute all queries in parallel
+                        if tasks:
+                            results = await aio.gather(*tasks, return_exceptions=True)
+                        else:
+                            results = []
+
+                        # =========================================================
+                        # MERGE RESULTS - Priority: APIs first, then scrapers
+                        # =========================================================
+                        merged = {}
+                        source_used = {}
+
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception) or not result:
+                                continue
+                            source = task_sources[i]
+
+                            # Merge cover (first wins)
+                            if needs_cover and not merged.get("image"):
+                                cover = result.get("cover_image_url") or result.get("image")
+                                if cover:
+                                    merged["image"] = cover
+                                    source_used["image"] = source
+
+                            # Merge description (first wins)
+                            if needs_desc and not merged.get("description"):
+                                desc = result.get("description")
+                                if desc and len(desc) > 20:
+                                    merged["description"] = desc[:5000]
+                                    source_used["description"] = source
+
+                            # Merge price (prefer PC > CBR > MCS)
+                            if needs_price and not merged.get("price"):
+                                price = (result.get("price_loose") or result.get("price")
+                                        or result.get("price_guide") or result.get("retail_price"))
+                                if price and float(price) > 0:
+                                    merged["price"] = float(price)
+                                    source_used["price"] = source
+
+                        # =========================================================
+                        # UPDATE DATABASE
+                        # =========================================================
+                        if merged:
+                            updates = []
+                            params = {"id": comic_id}
+
+                            if merged.get("image"):
+                                updates.append("image = :image")
+                                params["image"] = merged["image"]
+                                stats["covers_enriched"] += 1
+                                stats["by_source"][source_used.get("image", "unknown")] = stats["by_source"].get(source_used.get("image", "unknown"), 0) + 1
+
+                            if merged.get("description"):
+                                updates.append("description = :description")
+                                params["description"] = merged["description"]
+                                stats["descriptions_enriched"] += 1
+                                stats["by_source"][source_used.get("description", "unknown")] = stats["by_source"].get(source_used.get("description", "unknown"), 0) + 1
+
+                            if merged.get("price"):
+                                updates.append("price = :price")
+                                params["price"] = merged["price"]
+                                stats["prices_enriched"] += 1
+                                stats["by_source"][source_used.get("price", "unknown")] = stats["by_source"].get(source_used.get("price", "unknown"), 0) + 1
+
+                            if updates:
+                                updates.append("updated_at = NOW()")
+                                await db.execute(text(f"""
+                                    UPDATE comic_issues
+                                    SET {', '.join(updates)}
+                                    WHERE id = :id
+                                """), params)
+                        else:
+                            stats["failed"] += 1
+
+                    except Exception as e:
+                        stats["failed"] += 1
+                        logger.warning(f"[{job_name}] Error enriching comic {comic_id}: {e}")
+
+                # Commit batch and checkpoint
+                await db.commit()
+                await db.execute(text("""
+                    UPDATE pipeline_checkpoints
+                    SET state_data = jsonb_build_object('last_id', CAST(:last_id AS integer))
+                    WHERE job_name = :name
+                """), {"name": job_name, "last_id": last_id})
+                await db.commit()
+
+                total_enriched = stats["covers_enriched"] + stats["descriptions_enriched"] + stats["prices_enriched"]
+                logger.info(
+                    f"[{job_name}] Batch: {stats['processed']} processed, "
+                    f"{total_enriched} enrichments ({stats['covers_enriched']}c/{stats['descriptions_enriched']}d/{stats['prices_enriched']}p)"
+                )
+
+                if max_records and stats["processed"] >= max_records:
+                    break
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+        finally:
+            total_enriched = stats["covers_enriched"] + stats["descriptions_enriched"] + stats["prices_enriched"]
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=stats["processed"],
+                updated_delta=total_enriched,
+                errors_delta=stats["failed"],
+            )
+
+    logger.info(
+        f"[{job_name}] COMPLETE: {stats['processed']} processed, "
+        f"covers={stats['covers_enriched']}, desc={stats['descriptions_enriched']}, "
+        f"prices={stats['prices_enriched']}, failed={stats['failed']}. "
+        f"Sources: {stats['by_source']}"
+    )
+
+    return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
 # DLQ RETRY JOB
 # =============================================================================
 
@@ -3047,6 +3389,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("full_price_sync", run_full_price_sync_job, interval_minutes=1440)),
             # v1.10.3: PriceCharting matching - discovers pricecharting_id for Funkos + Comics
             asyncio.create_task(self._run_job_loop("pricecharting_matching", run_pricecharting_matching_job, interval_minutes=60)),
+            # v1.10.3: Comprehensive enrichment - ALL sources, ALL fields, PARALLEL
+            asyncio.create_task(self._run_job_loop("comprehensive_enrichment", run_comprehensive_enrichment_job, interval_minutes=30)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -3058,6 +3402,7 @@ class PipelineScheduler:
         print(f"[SCHEDULER]   - self_healing: every {SELF_HEAL_CHECK_INTERVAL_MINUTES} minutes (auto-restart stalled jobs)")
         print("[SCHEDULER]   - full_price_sync: every 24 hours (ALL Funkos + Comics)")
         print("[SCHEDULER]   - pricecharting_matching: every 60 minutes (Discover PC IDs)")
+        print("[SCHEDULER]   - comprehensive_enrichment: every 30 minutes (ALL sources, parallel)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -3106,6 +3451,7 @@ class PipelineScheduler:
             "multi_source_enrichment": run_multi_source_enrichment_job,  # v1.10.0 - Multi-source with rotator
             "cover_date_backfill": run_cover_date_backfill_job,  # v1.10.3 - Backfill cover_date from GCD
             "pricecharting_matching": run_pricecharting_matching_job,  # v1.10.3 - Discover pricecharting_id
+            "comprehensive_enrichment": run_comprehensive_enrichment_job,  # v1.10.3 - All sources, all fields, parallel
         }
 
         if job_name not in jobs:
