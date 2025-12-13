@@ -1598,3 +1598,121 @@ async def validate_gcd_dump(
     validation = adapter.validate_schema(settings.GCD_DUMP_PATH)
 
     return validation
+
+
+# ----- Multi-Source Enrichment (v1.10.0) -----
+
+class MSERequest(BaseModel):
+    """Multi-Source Enrichment job request."""
+    batch_size: int = Field(default=100, ge=1, le=1000, description="Records per batch")
+    max_records: int = Field(default=0, ge=0, description="Max records (0=unlimited)")
+
+
+@router.post("/pipeline/mse/run")
+async def trigger_mse_job(
+    request: MSERequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Trigger multi-source enrichment job.
+
+    Uses source rotator to fetch descriptions from Metron/Comic Vine with failover.
+    """
+    import asyncio
+    from app.jobs.pipeline_scheduler import run_multi_source_enrichment_job
+
+    # Check if already running
+    result = await db.execute(text("""
+        SELECT is_running FROM pipeline_checkpoints
+        WHERE job_name = 'multi_source_enrichment'
+    """))
+    row = result.fetchone()
+    if row and row[0]:
+        raise HTTPException(
+            status_code=409,
+            detail="Multi-source enrichment job is already running"
+        )
+
+    # Run in background
+    async def run_job():
+        try:
+            await run_multi_source_enrichment_job(
+                batch_size=request.batch_size,
+                max_records=request.max_records,
+            )
+        except Exception as e:
+            logger.error(f"MSE job failed: {e}")
+
+    # Keep task reference to prevent GC
+    if not hasattr(trigger_mse_job, '_tasks'):
+        trigger_mse_job._tasks = set()
+    trigger_mse_job._tasks = {t for t in trigger_mse_job._tasks if not t.done()}
+    task = asyncio.create_task(run_job())
+    trigger_mse_job._tasks.add(task)
+
+    return {
+        "status": "started",
+        "message": f"MSE job started (batch_size={request.batch_size}, max_records={request.max_records})",
+        "check_status": "/api/admin/pipeline/mse/status"
+    }
+
+
+@router.get("/pipeline/mse/status")
+async def get_mse_status(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get multi-source enrichment job status."""
+    # Get checkpoint
+    result = await db.execute(text("""
+        SELECT job_name, is_running, total_processed, total_updated, total_errors,
+               last_run_started, last_run_completed, last_error, state_data
+        FROM pipeline_checkpoints
+        WHERE job_name = 'multi_source_enrichment'
+    """))
+    row = result.fetchone()
+
+    checkpoint = None
+    if row:
+        checkpoint = {
+            "is_running": row[1],
+            "total_processed": row[2],
+            "total_enriched": row[3],
+            "total_errors": row[4],
+            "last_run_started": row[5].isoformat() if row[5] else None,
+            "last_run_completed": row[6].isoformat() if row[6] else None,
+            "last_error": row[7],
+            "state_data": row[8],
+        }
+
+    # Get source quotas
+    result = await db.execute(text("""
+        SELECT source_name, requests_today, daily_limit, is_healthy, circuit_state
+        FROM source_quotas
+        ORDER BY source_name
+    """))
+    quotas = [
+        {
+            "source": row[0],
+            "requests_today": row[1],
+            "daily_limit": row[2],
+            "remaining": row[2] - row[1],
+            "is_healthy": row[3],
+            "circuit_state": row[4],
+        }
+        for row in result.fetchall()
+    ]
+
+    # Count comics needing enrichment
+    result = await db.execute(text("""
+        SELECT COUNT(*) FROM comic_issues
+        WHERE description IS NULL OR description = ''
+    """))
+    needs_enrichment = result.scalar()
+
+    return {
+        "checkpoint": checkpoint,
+        "source_quotas": quotas,
+        "comics_needing_enrichment": needs_enrichment,
+    }
