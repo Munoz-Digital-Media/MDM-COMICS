@@ -14,6 +14,7 @@ const REPLAY_URL = `${API_BASE}/analytics/beacon/replay`;
 let stopRecordingFn = null;
 let eventBuffer = [];
 let chunkIndex = 0;
+let flushIntervalId = null;  // FE-001: Track interval for cleanup
 const CHUNK_SIZE = 100; // Events per chunk
 const CHUNK_INTERVAL = 10000; // 10 seconds
 
@@ -71,15 +72,17 @@ function startRecording() {
     collectFonts: true,
   });
 
-  // Set up periodic flush
-  setInterval(() => {
+  // FE-001: Set up periodic flush with tracked interval ID for cleanup
+  flushIntervalId = setInterval(() => {
     if (eventBuffer.length > 0) {
       flushReplayChunk(sessionId, hasErrors);
       hasErrors = false;
     }
   }, CHUNK_INTERVAL);
 
-  console.debug('Session replay started');
+  if (import.meta.env.DEV) {
+    console.debug('Session replay started');
+  }
 }
 
 /**
@@ -141,8 +144,15 @@ async function compressData(data) {
 
 /**
  * Stop recording
+ * FE-001: Now properly cleans up interval to prevent memory leaks
  */
 function stopRecording() {
+  // FE-001: Clear the flush interval first
+  if (flushIntervalId) {
+    clearInterval(flushIntervalId);
+    flushIntervalId = null;
+  }
+
   if (stopRecordingFn) {
     stopRecordingFn();
     stopRecordingFn = null;

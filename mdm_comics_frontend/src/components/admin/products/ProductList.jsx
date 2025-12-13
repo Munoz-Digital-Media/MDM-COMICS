@@ -274,7 +274,8 @@ export default function ProductList() {
       await adminAPI.deleteProduct(null, product.id);
       fetchProducts();
     } catch (err) {
-      alert('Failed to delete: ' + err.message);
+      // MED-007: Use error state instead of alert()
+      setError('Failed to delete: ' + err.message);
     }
   };
 
@@ -283,7 +284,8 @@ export default function ProductList() {
       await adminAPI.restoreProduct(product.id);
       fetchProducts();
     } catch (err) {
-      alert('Failed to restore: ' + err.message);
+      // MED-007: Use error state instead of alert()
+      setError('Failed to restore: ' + err.message);
     }
   };
 

@@ -17,7 +17,7 @@ from typing import List, Optional
 from sqlalchemy import select, and_, or_, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import async_session_maker
+from app.core.database import AsyncSessionLocal
 from app.models.shipment import Shipment, ShipmentRate, ShipmentStatus, TrackingEvent
 from app.models.address import Address, AddressValidationStatus
 from app.models.order import Order
@@ -101,7 +101,7 @@ class ShippingJobRunner:
 
     async def _run_tracking_sync(self):
         """Run a single tracking sync cycle."""
-        async with async_session_maker() as db:
+        async with AsyncSessionLocal() as db:
             try:
                 # Get shipments needing tracking update
                 shipments = await self._get_shipments_for_tracking(db)
@@ -224,7 +224,7 @@ class ShippingJobRunner:
 
     async def _run_rate_cleanup(self):
         """Run a single rate cleanup cycle."""
-        async with async_session_maker() as db:
+        async with AsyncSessionLocal() as db:
             try:
                 now = datetime.now(timezone.utc)
 
@@ -280,7 +280,7 @@ async def batch_validate_addresses(user_id: Optional[int] = None):
     Args:
         user_id: Optional user ID to filter addresses
     """
-    async with async_session_maker() as db:
+    async with AsyncSessionLocal() as db:
         # Get pending addresses
         query = select(Address).where(
             and_(
@@ -338,7 +338,7 @@ async def reconcile_shipments():
 
     Finds orders marked as shipped but without shipment records.
     """
-    async with async_session_maker() as db:
+    async with AsyncSessionLocal() as db:
         # Find shipped orders without shipments
         result = await db.execute(
             select(Order)

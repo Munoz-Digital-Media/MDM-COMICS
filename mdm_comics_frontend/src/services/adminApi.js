@@ -452,14 +452,59 @@ export const adminAPI = {
     });
   },
 
+  // Validate GCD SQLite dump schema
+  validateGCDDump: async () => {
+    return fetchAPI('/admin/pipeline/gcd/validate');
+  },
+
   // Get all pipeline checkpoints
   getPipelineCheckpoints: async () => {
     return fetchAPI('/admin/pipeline/checkpoints');
   },
 
+  // Clear a specific pipeline checkpoint
+  clearPipelineCheckpoint: async (jobName) => {
+    return fetchAPI('/admin/pipeline/checkpoints/' + jobName + '/clear', {
+      method: 'POST',
+    });
+  },
+
   // Get pipeline stats
   getPipelineStats: async () => {
     return fetchAPI('/admin/pipeline/stats');
+  },
+
+  // ==================== ADMIN SHIPPING MANAGEMENT ====================
+
+  // Get shipping label for a shipment
+  getShippingLabel: async (shipmentId) => {
+    return fetchAPI('/shipping/shipments/' + shipmentId + '/label');
+  },
+
+  // Void a shipment (admin only)
+  voidShipment: async (shipmentId) => {
+    return fetchAPI('/shipping/shipments/' + shipmentId + '/void', {
+      method: 'POST',
+    });
+  },
+
+  // Get all shipments (admin view with filters)
+  getShipments: async (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.orderId) params.set('order_id', options.orderId);
+    if (options.status) params.set('status', options.status);
+    params.set('page', options.page || 1);
+    params.set('page_size', options.pageSize || 20);
+
+    return fetchAPI('/shipping/shipments?' + params.toString());
+  },
+
+  // Create shipment for an order (admin)
+  createShipment: async (shipmentData) => {
+    return fetchAPI('/shipping/shipments', {
+      method: 'POST',
+      body: JSON.stringify(shipmentData),
+    });
   },
 };
 

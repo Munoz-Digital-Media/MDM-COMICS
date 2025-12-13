@@ -134,6 +134,8 @@ export default function CheckoutForm({ cartItems, total, onSuccess, onCancel }) 
   }, []);
 
   const initializeCheckout = async () => {
+    // MED-005: Reset error state at start to clear stale errors
+    setError(null);
     try {
       // Get Stripe publishable key from our backend
       const config = await checkoutAPI.getConfig();

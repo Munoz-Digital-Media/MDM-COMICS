@@ -280,6 +280,14 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Pipeline scheduler DISABLED via config or import failed")
 
+    # v1.8.0: Ensure GCD dump exists (auto-download from S3 if needed)
+    if settings.GCD_IMPORT_ENABLED:
+        from app.adapters.gcd import ensure_gcd_dump_exists
+        if ensure_gcd_dump_exists():
+            logger.info("GCD dump available for import")
+        else:
+            logger.warning("GCD dump not available - import will fail until dump is provided")
+
     yield
 
     # Cleanup on shutdown

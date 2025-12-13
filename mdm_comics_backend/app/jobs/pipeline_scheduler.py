@@ -1682,6 +1682,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("dlq_retry", run_dlq_retry_job, interval_minutes=15)),
             # v1.7.0: Daily price snapshot for AI/ML training (runs once per day at startup, then every 24h)
             asyncio.create_task(self._run_job_loop("daily_snapshot", run_daily_snapshot_job, interval_minutes=1440)),
+            # v1.8.0: HIGH-005 - Cross-reference job for GCD-to-Metron/Primary linking
+            asyncio.create_task(self._run_job_loop("cross_reference", run_cross_reference_job, interval_minutes=60)),
             # v1.9.0: Self-healing job - detects and restarts stalled jobs automatically
             asyncio.create_task(self._run_job_loop("self_healing", run_self_healing_job, interval_minutes=SELF_HEAL_CHECK_INTERVAL_MINUTES)),
         ]
@@ -1691,6 +1693,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - funko_price_check: every 60 minutes")
         print("[SCHEDULER]   - dlq_retry: every 15 minutes")
         print("[SCHEDULER]   - daily_snapshot: every 24 hours (AI/ML data)")
+        print("[SCHEDULER]   - cross_reference: every 60 minutes (GCD-Primary linking)")
         print(f"[SCHEDULER]   - self_healing: every {SELF_HEAL_CHECK_INTERVAL_MINUTES} minutes (auto-restart stalled jobs)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 

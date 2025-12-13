@@ -39,7 +39,8 @@ export default function CameraPermission({ onGranted, onDenied, children }) {
           // If 'prompt', we need to try getUserMedia to trigger the permission dialog
         } catch (permErr) {
           // Permissions API not supported for camera, fall through to getUserMedia
-          console.log('[CameraPermission] Permissions API not available, trying getUserMedia');
+          // LOW-001: Gate console.log behind DEV mode
+          if (import.meta.env.DEV) console.log('[CameraPermission] Permissions API not available, trying getUserMedia');
         }
       }
 
@@ -54,7 +55,8 @@ export default function CameraPermission({ onGranted, onDenied, children }) {
       setStatus('granted');
       onGranted?.();
     } catch (error) {
-      console.error('[CameraPermission] Error:', error);
+      // LOW-001: Gate console.error behind DEV mode
+      if (import.meta.env.DEV) console.error('[CameraPermission] Error:', error);
 
       if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
         setStatus('denied');

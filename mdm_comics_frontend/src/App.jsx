@@ -941,7 +941,7 @@ import AboutContact from "./components/AboutContact";
           <ComicSearch
             onClose={() => setIsComicSearchOpen(false)}
             onSelectComic={(comic) => {
-              console.log("Selected comic:", comic);
+              if (import.meta.env.DEV) console.log("Selected comic:", comic);
               setIsComicSearchOpen(false);
             }}
           />
@@ -952,7 +952,7 @@ import AboutContact from "./components/AboutContact";
           <FunkoSearch
             onClose={() => setIsFunkoSearchOpen(false)}
             onSelectFunko={(funko) => {
-              console.log("Selected funko:", funko);
+              if (import.meta.env.DEV) console.log("Selected funko:", funko);
               setIsFunkoSearchOpen(false);
             }}
           />
