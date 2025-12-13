@@ -1,5 +1,5 @@
 """
-Pipeline Job Scheduler v1.9.2
+Pipeline Job Scheduler v1.9.4
 
 Automated data acquisition jobs that ACTUALLY RUN.
 
@@ -11,6 +11,8 @@ Jobs:
 5. Daily Price Snapshot - Capture price state for AI/ML training (v1.7.0)
 6. GCD Import - Import comics from Grand Comics Database SQLite dump (v1.8.0)
 7. Self-Healing - Auto-detect and restart stalled jobs (v1.9.0)
+8. Full Price Sync - Process entire DB for PriceCharting prices (v1.9.3)
+9. Cover Hash Backfill - Generate perceptual hashes for image search (v1.9.4)
 
 All jobs use checkpoints for crash recovery and log to DLQ on failure.
 
@@ -1933,6 +1935,139 @@ async def run_cross_reference_job(
 
 
 # =============================================================================
+# COVER HASH BACKFILL JOB (BE-004 - Image Search Support)
+# =============================================================================
+
+async def run_cover_hash_backfill_job(batch_size: int = 50, max_records: int = 0):
+    """
+    Backfill cover_hash for comics that have image URLs but no hash.
+
+    This enables image-based comic cover search by generating perceptual
+    hashes from existing cover image URLs.
+
+    Args:
+        batch_size: Number of images to process per batch (default 50)
+        max_records: Limit total records processed (0 = unlimited)
+    """
+    from app.services.comic_cache import generate_cover_hash_from_url
+
+    job_name = "cover_hash_backfill"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting cover hash backfill (batch: {batch_id})")
+
+    async with AsyncSessionLocal() as db:
+        # Atomically claim job
+        claimed, checkpoint = await try_claim_job(db, job_name, "backfill", batch_id)
+
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
+            return {"status": "skipped", "message": "Job already running"}
+
+        stats = {"processed": 0, "hashed": 0, "errors": 0, "skipped": 0}
+
+        try:
+            # Get starting offset from checkpoint
+            state_data = checkpoint.get("state_data") or {}
+            last_id = state_data.get("last_id", 0) if isinstance(state_data, dict) else 0
+
+            while True:
+                # Find comics with image URL but no cover_hash
+                result = await db.execute(text("""
+                    SELECT id, image
+                    FROM comic_issues
+                    WHERE image IS NOT NULL
+                      AND image != ''
+                      AND cover_hash IS NULL
+                      AND id > :last_id
+                    ORDER BY id
+                    LIMIT :limit
+                """), {"last_id": last_id, "limit": batch_size})
+
+                comics = result.fetchall()
+
+                if not comics:
+                    logger.info(f"[{job_name}] No more comics to process")
+                    break
+
+                logger.info(f"[{job_name}] Processing batch of {len(comics)} comics")
+
+                for comic in comics:
+                    comic_id, image_url = comic.id, comic.image
+                    stats["processed"] += 1
+                    last_id = comic_id
+
+                    try:
+                        # Generate hash from image URL
+                        cover_hash, hash_prefix, hash_bytes = await generate_cover_hash_from_url(image_url)
+
+                        if cover_hash:
+                            # Update comic with hash
+                            await db.execute(text("""
+                                UPDATE comic_issues
+                                SET cover_hash = :hash,
+                                    cover_hash_prefix = :prefix,
+                                    cover_hash_bytes = :bytes,
+                                    updated_at = NOW()
+                                WHERE id = :id
+                            """), {
+                                "id": comic_id,
+                                "hash": cover_hash,
+                                "prefix": hash_prefix,
+                                "bytes": hash_bytes
+                            })
+                            stats["hashed"] += 1
+                        else:
+                            stats["skipped"] += 1
+
+                    except Exception as e:
+                        stats["errors"] += 1
+                        logger.warning(f"[{job_name}] Error hashing comic {comic_id}: {e}")
+
+                # Commit batch and update checkpoint
+                await db.commit()
+
+                await db.execute(text("""
+                    UPDATE pipeline_checkpoints
+                    SET state_data = jsonb_build_object('last_id', :last_id),
+                        updated_at = NOW()
+                    WHERE job_name = :name
+                """), {"name": job_name, "last_id": last_id})
+                await db.commit()
+
+                logger.info(
+                    f"[{job_name}] Batch complete: {stats['processed']} processed, "
+                    f"{stats['hashed']} hashed, {stats['skipped']} skipped, {stats['errors']} errors"
+                )
+
+                # Check max_records limit
+                if max_records and stats["processed"] >= max_records:
+                    logger.info(f"[{job_name}] Reached max_records limit ({max_records})")
+                    break
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+        finally:
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=stats["processed"],
+                updated_delta=stats["hashed"],
+                errors_delta=stats["errors"]
+            )
+
+        logger.info(
+            f"[{job_name}] COMPLETE: {stats['processed']} processed, "
+            f"{stats['hashed']} hashed, {stats['skipped']} skipped, {stats['errors']} errors"
+        )
+
+        return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
 # MAIN SCHEDULER
 # =============================================================================
 
@@ -2036,6 +2171,7 @@ class PipelineScheduler:
             "cross_reference": run_cross_reference_job,  # v1.8.0 - GCD-Primary
             "self_healing": run_self_healing_job,  # v1.9.0 - Auto-restart stalled jobs
             "full_price_sync": run_full_price_sync_job,  # v1.9.3 - Full daily price sync
+            "cover_hash_backfill": run_cover_hash_backfill_job,  # v1.9.4 - Generate cover hashes for image search
         }
 
         if job_name not in jobs:
