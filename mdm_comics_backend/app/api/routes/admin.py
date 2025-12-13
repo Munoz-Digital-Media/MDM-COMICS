@@ -1348,13 +1348,27 @@ async def trigger_gcd_import(
 
     logger.info(f"GCD import triggered by admin {current_user.id}: max_records={request.max_records}")
 
-    # Fire-and-forget: run job in background, return immediately
-    # This prevents gateway timeout on long-running imports
-    asyncio.create_task(run_gcd_import_job(
-        db_path=request.db_path,
-        batch_size=request.batch_size,
-        max_records=request.max_records,
-    ))
+    # Run job and store task reference to prevent garbage collection
+    async def run_import():
+        try:
+            await run_gcd_import_job(
+                db_path=request.db_path,
+                batch_size=request.batch_size,
+                max_records=request.max_records,
+            )
+        except Exception as e:
+            logger.error(f"GCD import background task failed: {e}")
+
+    # Keep task reference to prevent GC
+    if not hasattr(trigger_gcd_import, '_tasks'):
+        trigger_gcd_import._tasks = set()
+
+    # Clean up completed tasks first
+    trigger_gcd_import._tasks = {t for t in trigger_gcd_import._tasks if not t.done()}
+
+    # Create and store new task
+    task = asyncio.create_task(run_import())
+    trigger_gcd_import._tasks.add(task)
 
     return {
         "status": "started",
