@@ -236,6 +236,19 @@ class Settings(BaseSettings):
     GCD_IMPORT_ENABLED: bool = False  # Master toggle for GCD import job
     GCD_IMPORT_MAX_RECORDS: int = 0  # 0 = unlimited, >0 = subset import for validation
 
+    # ===== MULTI-SOURCE ENRICHMENT v1.10.0 =====
+    # Comic Vine API (200 req/hr - non-commercial only)
+    COMIC_VINE_API_KEY: str = ""
+
+    # Source Rotator Settings
+    ENRICHMENT_HEDGE_DELAY_MS: int = 300  # Delay before backup request
+    ENRICHMENT_MAX_FALLBACK_ATTEMPTS: int = 3  # Max sources to try per request
+    ENRICHMENT_CIRCUIT_RECOVERY_SECONDS: int = 300  # Wait before retrying failed source
+
+    # Scraper Settings (conservative to avoid bans)
+    SCRAPER_MIN_DELAY_SECONDS: float = 2.0  # Minimum delay between scrape requests
+    SCRAPER_USER_AGENT: str = "MDMComicsBot/1.0 (+https://mdmcomics.com/bot)"
+
     # ===== THE RACK FACTOR v1.5.2 =====
     # Newsletter and Social Media Content Engine
     RACK_FACTOR_ENABLED: bool = True  # Master toggle for The Rack Factor
