@@ -13,11 +13,13 @@ Strategy:
 This fixes:
 - BE-001: Now checks local cache before hitting Metron API
 - BE-002: All writes batched into single transaction (removed individual commits)
+- BE-004: Auto-generate cover_hash from image URLs for image search
 """
 import time
 import logging
+import io
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert
@@ -36,6 +38,63 @@ from app.services.metron import metron_service
 from app.core.utils import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# COVER HASH GENERATION (BE-004)
+# =============================================================================
+
+async def generate_cover_hash_from_url(image_url: str) -> Tuple[Optional[str], Optional[str], Optional[bytes]]:
+    """
+    Download cover image and generate perceptual hash.
+
+    Returns:
+        Tuple of (cover_hash, cover_hash_prefix, cover_hash_bytes) or (None, None, None) on failure
+    """
+    if not image_url:
+        return None, None, None
+
+    try:
+        import httpx
+        from PIL import Image
+        import imagehash
+
+        # Download image with timeout
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(image_url, follow_redirects=True)
+            if response.status_code != 200:
+                logger.debug(f"[COVER_HASH] Failed to download {image_url}: HTTP {response.status_code}")
+                return None, None, None
+
+            # Verify it's an image
+            content_type = response.headers.get('content-type', '')
+            if not content_type.startswith('image/'):
+                logger.debug(f"[COVER_HASH] Not an image: {content_type}")
+                return None, None, None
+
+            # Open image and compute hash
+            img = Image.open(io.BytesIO(response.content))
+            phash = imagehash.phash(img)
+
+            # Convert to storage formats
+            hash_hex = str(phash)  # 16-char hex string
+            hash_prefix = hash_hex[:8] if len(hash_hex) >= 8 else None
+            hash_bytes = None
+            if len(hash_hex) == 16:
+                try:
+                    hash_bytes = bytes.fromhex(hash_hex)
+                except ValueError:
+                    pass
+
+            logger.debug(f"[COVER_HASH] Generated hash {hash_hex[:8]}... for {image_url[:50]}")
+            return hash_hex, hash_prefix, hash_bytes
+
+    except ImportError as e:
+        logger.warning(f"[COVER_HASH] Missing dependency: {e}. Install imagehash and Pillow.")
+        return None, None, None
+    except Exception as e:
+        logger.debug(f"[COVER_HASH] Error generating hash for {image_url[:50]}: {e}")
+        return None, None, None
 
 # Cache staleness threshold in hours
 CACHE_STALENESS_HOURS = 24
@@ -310,10 +369,13 @@ class ComicCacheService:
                 pass
 
         # BE-003: Extract cover_hash from raw_data if present (for image search optimization)
+        # BE-004: If no hash but has image URL, generate hash from downloaded image
         cover_hash = issue_data.get('cover_hash')
         cover_hash_prefix = None
         cover_hash_bytes = None
+
         if cover_hash:
+            # Use existing hash from data source
             normalized_hash = cover_hash.strip().lower()
             cover_hash = normalized_hash
             if len(normalized_hash) >= 8:
@@ -323,6 +385,14 @@ class ComicCacheService:
                     cover_hash_bytes = bytes.fromhex(normalized_hash)
                 except ValueError:
                     cover_hash_bytes = None
+        elif issue_data.get('image'):
+            # BE-004: No hash provided, generate from image URL
+            try:
+                cover_hash, cover_hash_prefix, cover_hash_bytes = await generate_cover_hash_from_url(
+                    issue_data['image']
+                )
+            except Exception as e:
+                logger.debug(f"[CACHE] Cover hash generation failed for issue {issue_data.get('id')}: {e}")
 
         stmt = insert(ComicIssue).values(
             metron_id=issue_data['id'],
