@@ -1,5 +1,5 @@
 """
-Pipeline Job Scheduler v1.9.4
+Pipeline Job Scheduler v1.9.5
 
 Automated data acquisition jobs that ACTUALLY RUN.
 
@@ -13,6 +13,7 @@ Jobs:
 7. Self-Healing - Auto-detect and restart stalled jobs (v1.9.0)
 8. Full Price Sync - Process entire DB for PriceCharting prices (v1.9.3)
 9. Cover Hash Backfill - Generate perceptual hashes for image search (v1.9.4)
+10. Image Acquisition - Download covers to S3, generate thumbnails+hashes (v1.9.5)
 
 All jobs use checkpoints for crash recovery and log to DLQ on failure.
 
@@ -2068,6 +2069,178 @@ async def run_cover_hash_backfill_job(batch_size: int = 50, max_records: int = 0
 
 
 # =============================================================================
+# IMAGE ACQUISITION JOB (v1.9.5 - Download covers to S3)
+# =============================================================================
+
+async def run_image_acquisition_job(batch_size: int = 100, max_records: int = 0):
+    """
+    Acquire cover images from external URLs and store in S3.
+
+    Process:
+    1. Find comics with image URL but no cover_s3_key
+    2. Download image, validate, generate hash
+    3. Upload to S3 with checksum verification
+    4. Generate thumbnail
+    5. Update database with S3 keys + hash
+
+    Args:
+        batch_size: Number of images to process per batch
+        max_records: Limit total records (0 = unlimited)
+
+    Governance:
+        - constitution_cyberSec.json: Checksum validation
+        - constitution_data_hygiene.json: Image validation
+    """
+    from app.services.image_acquisition import ImageAcquisitionService, ImageAcquisitionStatus
+
+    job_name = "image_acquisition"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting image acquisition (batch: {batch_id})")
+
+    stats = {
+        "processed": 0,
+        "acquired": 0,
+        "failed": 0,
+        "skipped": 0,
+        "bytes_downloaded": 0
+    }
+
+    async with AsyncSessionLocal() as db:
+        # Atomically claim job
+        claimed, checkpoint = await try_claim_job(db, job_name, "acquisition", batch_id)
+
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running or claim failed")
+            return {"status": "skipped", "message": "Job already running"}
+
+        try:
+            # Get last processed ID from checkpoint
+            state_data = checkpoint.get("state_data") or {}
+            last_id = state_data.get("last_id", 0) if isinstance(state_data, dict) else 0
+
+            async with ImageAcquisitionService() as service:
+                while True:
+                    # Find comics with image URL but no S3 key
+                    result = await db.execute(text("""
+                        SELECT id, image
+                        FROM comic_issues
+                        WHERE image IS NOT NULL
+                          AND image != ''
+                          AND cover_s3_key IS NULL
+                          AND id > :last_id
+                        ORDER BY id
+                        LIMIT :limit
+                    """), {"last_id": last_id, "limit": batch_size})
+
+                    comics = result.fetchall()
+
+                    if not comics:
+                        logger.info(f"[{job_name}] No more comics to process")
+                        break
+
+                    logger.info(f"[{job_name}] Processing batch of {len(comics)} comics")
+
+                    # Build batch list
+                    items = [(comic.id, comic.image) for comic in comics]
+
+                    # Process batch concurrently
+                    results = await service.acquire_batch(items)
+
+                    # Update database with results
+                    for result in results:
+                        stats["processed"] += 1
+                        last_id = max(last_id, result.issue_id)
+
+                        if result.status == ImageAcquisitionStatus.SUCCESS:
+                            # Update comic with S3 keys and hash
+                            await db.execute(text("""
+                                UPDATE comic_issues
+                                SET cover_s3_key = :cover_key,
+                                    thumb_s3_key = :thumb_key,
+                                    cover_hash = :hash,
+                                    cover_hash_prefix = :hash_prefix,
+                                    cover_hash_bytes = :hash_bytes,
+                                    image_checksum = :checksum,
+                                    image_acquired_at = NOW(),
+                                    updated_at = NOW()
+                                WHERE id = :id
+                            """), {
+                                "id": result.issue_id,
+                                "cover_key": result.cover_s3_key,
+                                "thumb_key": result.thumb_s3_key,
+                                "hash": result.cover_hash,
+                                "hash_prefix": result.cover_hash_prefix,
+                                "hash_bytes": result.cover_hash_bytes,
+                                "checksum": result.checksum
+                            })
+                            stats["acquired"] += 1
+                            stats["bytes_downloaded"] += result.file_size
+
+                        elif result.status == ImageAcquisitionStatus.SKIPPED:
+                            stats["skipped"] += 1
+
+                        else:
+                            stats["failed"] += 1
+                            # Add to DLQ for retry
+                            await add_to_dlq(
+                                db,
+                                job_type="image_acquisition",
+                                error_message=result.error_message or result.status.value,
+                                entity_type="comic_issue",
+                                entity_id=result.issue_id,
+                                error_type=result.status.value,
+                                raw_data={"source_url": result.source_url},
+                                batch_id=batch_id
+                            )
+
+                    # Commit batch
+                    await db.commit()
+
+                    # Update checkpoint
+                    await db.execute(text("""
+                        UPDATE pipeline_checkpoints
+                        SET state_data = jsonb_build_object('last_id', :last_id),
+                            updated_at = NOW()
+                        WHERE job_name = :name
+                    """), {"name": job_name, "last_id": last_id})
+                    await db.commit()
+
+                    logger.info(
+                        f"[{job_name}] Batch: {stats['processed']} processed, "
+                        f"{stats['acquired']} acquired, {stats['failed']} failed"
+                    )
+
+                    # Check limits
+                    if max_records and stats["processed"] >= max_records:
+                        logger.info(f"[{job_name}] Reached max_records limit ({max_records})")
+                        break
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+        finally:
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=stats["processed"],
+                updated_delta=stats["acquired"],
+                errors_delta=stats["failed"]
+            )
+
+    mb_downloaded = stats["bytes_downloaded"] / (1024 * 1024)
+    logger.info(
+        f"[{job_name}] COMPLETE: {stats['processed']} processed, "
+        f"{stats['acquired']} acquired, {stats['failed']} failed, "
+        f"{mb_downloaded:.1f} MB downloaded"
+    )
+
+    return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
 # MAIN SCHEDULER
 # =============================================================================
 
@@ -2172,6 +2345,7 @@ class PipelineScheduler:
             "self_healing": run_self_healing_job,  # v1.9.0 - Auto-restart stalled jobs
             "full_price_sync": run_full_price_sync_job,  # v1.9.3 - Full daily price sync
             "cover_hash_backfill": run_cover_hash_backfill_job,  # v1.9.4 - Generate cover hashes for image search
+            "image_acquisition": run_image_acquisition_job,  # v1.9.5 - Download covers to S3
         }
 
         if job_name not in jobs:
