@@ -9,9 +9,9 @@ SECURITY: Defaults are fail-safe for production.
 import json
 import os
 import logging
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # CORS - accepts JSON array or comma-separated string
-    CORS_ORIGINS: List[str] = DEFAULT_CORS_ORIGINS
+    # Using str type to prevent pydantic-settings from trying to parse as JSON
+    CORS_ORIGINS: Union[str, List[str]] = DEFAULT_CORS_ORIGINS
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
