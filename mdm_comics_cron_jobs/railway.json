@@ -5,8 +5,7 @@
     "dockerfilePath": "mdm_comics_backend/cron.Dockerfile",
     "watchPatterns": [
       "mdm_comics_cron_jobs/**",
-      "mdm_comics_backend/app/**",
-      "mdm_comics_backend/run_cron.py"
+      "mdm_comics_backend/**"
     ]
   },
   "deploy": {
