@@ -77,6 +77,9 @@ async def clear_stale_checkpoints(db: AsyncSession) -> int:
 
     This handles the case where a container was killed mid-job, leaving
     is_running = true forever. Returns the number of stale checkpoints cleared.
+
+    v1.10.1: For gcd_import, also sync offset to actual DB count to prevent
+    re-processing already-imported records.
     """
     result = await db.execute(text("""
         UPDATE pipeline_checkpoints
@@ -93,6 +96,30 @@ async def clear_stale_checkpoints(db: AsyncSession) -> int:
         await db.commit()
         for row in cleared:
             logger.warning(f"[CHECKPOINT] Cleared stale checkpoint for job: {row.job_name}")
+
+            # v1.10.1: Sync GCD import offset to actual DB count
+            # This prevents re-processing records that were already imported
+            # before the job was killed/timed out
+            if row.job_name == "gcd_import":
+                try:
+                    count_result = await db.execute(text(
+                        "SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL"
+                    ))
+                    actual_count = count_result.scalar() or 0
+
+                    await db.execute(text("""
+                        UPDATE pipeline_checkpoints
+                        SET state_data = jsonb_build_object('offset', :offset),
+                            total_processed = :offset
+                        WHERE job_name = 'gcd_import'
+                    """), {"offset": actual_count})
+                    await db.commit()
+
+                    logger.info(
+                        f"[CHECKPOINT] Synced gcd_import offset to actual DB count: {actual_count:,}"
+                    )
+                except Exception as e:
+                    logger.error(f"[CHECKPOINT] Failed to sync gcd_import offset: {e}")
 
     return len(cleared)
 
