@@ -1479,17 +1479,60 @@ async def get_gcd_import_status(
     }
 
 
+class ResetCheckpointRequest(BaseModel):
+    """Request to reset a checkpoint - requires explicit confirmation."""
+    confirm: bool = False
+
+
 @router.post("/pipeline/gcd/reset-checkpoint")
 async def reset_gcd_checkpoint(
+    request: ResetCheckpointRequest,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Reset GCD import checkpoint to start fresh.
 
-    WARNING: This will cause the next import to start from the beginning.
-    Use this if you want to re-import all data or if the checkpoint is corrupted.
+    WARNING: This will cause the next import to RE-PROCESS ALL RECORDS from the beginning.
+    This can take 10+ hours and waste resources re-updating existing records.
+
+    v1.10.2: Requires explicit confirmation to prevent accidental resets.
+
+    Request body must include: {"confirm": true}
     """
+    # v1.10.2: Require explicit confirmation
+    if not request.confirm:
+        # Get current state to show what would be lost
+        result = await db.execute(text("""
+            SELECT state_data, total_processed FROM pipeline_checkpoints
+            WHERE job_name = 'gcd_import'
+        """))
+        row = result.fetchone()
+        current_offset = 0
+        if row and row.state_data:
+            current_offset = row.state_data.get("offset", 0) if isinstance(row.state_data, dict) else 0
+
+        gcd_count = await db.execute(text(
+            "SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL"
+        ))
+        db_count = gcd_count.scalar() or 0
+
+        return {
+            "status": "confirmation_required",
+            "message": "This will reset the checkpoint to offset 0. Send {\"confirm\": true} to proceed.",
+            "warning": f"Current offset is {current_offset:,}, DB has {db_count:,} records. "
+                       f"Resetting will cause re-processing of all {db_count:,} records.",
+        }
+
+    # Get current offset for logging
+    result = await db.execute(text("""
+        SELECT state_data FROM pipeline_checkpoints WHERE job_name = 'gcd_import'
+    """))
+    row = result.fetchone()
+    old_offset = 0
+    if row and row.state_data:
+        old_offset = row.state_data.get("offset", 0) if isinstance(row.state_data, dict) else 0
+
     await db.execute(text("""
         UPDATE pipeline_checkpoints
         SET state_data = '{"offset": 0}'::jsonb,
@@ -1497,14 +1540,22 @@ async def reset_gcd_checkpoint(
             total_processed = 0,
             total_updated = 0,
             total_errors = 0,
-            last_error = 'Checkpoint reset by admin at ' || NOW()::text
+            last_error = 'Checkpoint MANUALLY reset by admin (was offset ' ||
+                :old_offset || ') at ' || NOW()::text
         WHERE job_name = 'gcd_import'
-    """))
+    """), {"old_offset": old_offset})
     await db.commit()
 
-    logger.info(f"GCD import checkpoint reset by admin {current_user.id}")
+    logger.warning(
+        f"GCD import checkpoint RESET by admin {current_user.id} "
+        f"(was offset {old_offset:,}, now 0)"
+    )
 
-    return {"status": "reset", "message": "GCD import checkpoint has been reset to offset 0"}
+    return {
+        "status": "reset",
+        "message": f"GCD import checkpoint has been reset from offset {old_offset:,} to 0",
+        "warning": "Next import will re-process all records from the beginning"
+    }
 
 
 @router.post("/pipeline/gcd/clear-stale-lock")
