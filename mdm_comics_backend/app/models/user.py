@@ -54,7 +54,7 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    orders = relationship("Order", back_populates="user")
+    orders = relationship("Order", back_populates="user", foreign_keys="Order.user_id")
     cart_items = relationship("CartItem", back_populates="user")
     grade_requests = relationship("GradeRequest", back_populates="user")
     addresses = relationship("Address", back_populates="user")
