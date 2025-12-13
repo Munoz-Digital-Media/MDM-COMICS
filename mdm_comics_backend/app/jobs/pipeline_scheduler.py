@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionLocal
 from app.core.utils import utcnow
 from app.core.http_client import get_metron_client, get_pricecharting_client
+from app.utils.db_sanitizer import sanitize_date, sanitize_decimal, sanitize_string
 from app.models.pipeline import (
     PipelineCheckpoint,
     DeadLetterQueue,
@@ -2273,8 +2274,10 @@ async def run_gcd_import_job(
                         story_title = truncate(record.get("story_title"), 500)
 
                         # v1.10.3: Map cover_date and price from GCD data
-                        release_date = record.get("release_date")  # GCD key_date
-                        cover_price = record.get("cover_price")    # GCD price
+                        # v1.10.4: Sanitize to convert empty strings to None
+                        # Constitution Compliance: Phase 3 Input Validation
+                        release_date = sanitize_date(record.get("release_date"), "cover_date")
+                        cover_price = sanitize_decimal(record.get("cover_price"), "price", min_value=0)
 
                         # Check if record exists (by gcd_id)
                         existing = await db.execute(text("""
