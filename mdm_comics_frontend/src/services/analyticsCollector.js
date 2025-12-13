@@ -340,29 +340,59 @@ function setupErrorTracking() {
     return false;
   };
 
-  // Unhandled promise rejections
-  window.addEventListener('unhandledrejection', (event) => {
+  // MED-008: Store rejection handler for cleanup
+  rejectionHandler = (event) => {
     trackError('unhandled_rejection', event.reason?.message || String(event.reason), event.reason?.stack);
-  });
+  };
+  window.addEventListener('unhandledrejection', rejectionHandler);
 }
 
 /**
  * Set up page visibility tracking
+ * MED-008: Returns cleanup function to remove event listeners
  */
+let visibilityHandler = null;
+let beforeUnloadHandler = null;
+let rejectionHandler = null;
+
 function setupVisibilityTracking() {
-  document.addEventListener('visibilitychange', () => {
+  // MED-008: Store handlers for cleanup
+  visibilityHandler = () => {
     if (document.visibilityState === 'hidden') {
       trackEvent('page.hide', {});
       flushEvents();
     }
-  });
+  };
 
-  window.addEventListener('beforeunload', () => {
+  beforeUnloadHandler = () => {
     trackEvent('session.end', {
       duration: Math.round((Date.now() - performance.timing.navigationStart) / 1000),
     });
     flushEvents();
-  });
+  };
+
+  document.addEventListener('visibilitychange', visibilityHandler);
+  window.addEventListener('beforeunload', beforeUnloadHandler);
+}
+
+/**
+ * MED-008: Cleanup function to remove all event listeners
+ */
+function cleanup() {
+  if (visibilityHandler) {
+    document.removeEventListener('visibilitychange', visibilityHandler);
+    visibilityHandler = null;
+  }
+  if (beforeUnloadHandler) {
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+    beforeUnloadHandler = null;
+  }
+  if (rejectionHandler) {
+    window.removeEventListener('unhandledrejection', rejectionHandler);
+    rejectionHandler = null;
+  }
+  // Reset window.onerror
+  window.onerror = null;
 }
 
 // ============================================================================
@@ -395,6 +425,9 @@ export const analytics = {
   // Utilities
   getSessionId,
   isOptedOut,
+
+  // MED-008: Cleanup function
+  cleanup,
 };
 
 export default analytics;

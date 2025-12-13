@@ -4,6 +4,7 @@
  *
  * Handles offline barcode queue storage with schema versioning.
  * NASTY-006 FIX: Proper DB_VERSION and onupgradeneeded handler.
+ * MW-002: Console logging gated behind DEV mode per constitution_logging.json
  */
 
 const DB_NAME = 'mdm_scanner';
@@ -11,6 +12,10 @@ const DB_VERSION = 2; // Increment on schema changes
 const STORE_NAME = 'scan_queue';
 
 let dbPromise = null;
+
+// MW-002: Dev-only logging per constitution_logging.json Section 2
+const devLog = (...args) => { if (import.meta.env.DEV) console.log(...args); };
+const devError = (...args) => { if (import.meta.env.DEV) console.error(...args); };
 
 /**
  * Open IndexedDB connection with schema migration support.
@@ -26,7 +31,7 @@ export async function openDB() {
       const db = event.target.result;
       const oldVersion = event.oldVersion;
 
-      console.log(`[ScannerDB] Upgrading from v${oldVersion} to v${DB_VERSION}`);
+      devLog(`[ScannerDB] Upgrading from v${oldVersion} to v${DB_VERSION}`);
 
       if (oldVersion < 1) {
         // Initial schema
@@ -36,7 +41,7 @@ export async function openDB() {
         });
         store.createIndex('synced', 'synced', { unique: false });
         store.createIndex('barcode', 'barcode', { unique: false });
-        console.log('[ScannerDB] Created initial schema');
+        devLog('[ScannerDB] Created initial schema');
       }
 
       if (oldVersion < 2) {
@@ -45,18 +50,18 @@ export async function openDB() {
         const store = tx.objectStore(STORE_NAME);
         if (!store.indexNames.contains('scanned_at')) {
           store.createIndex('scanned_at', 'scanned_at', { unique: false });
-          console.log('[ScannerDB] Added scanned_at index');
+          devLog('[ScannerDB] Added scanned_at index');
         }
       }
     };
 
     request.onsuccess = () => {
-      console.log('[ScannerDB] Database opened successfully');
+      devLog('[ScannerDB] Database opened successfully');
       resolve(request.result);
     };
 
     request.onerror = () => {
-      console.error('[ScannerDB] Failed to open database:', request.error);
+      devError('[ScannerDB] Failed to open database:', request.error);
       dbPromise = null;
       reject(request.error);
     };
@@ -87,12 +92,12 @@ export async function queueBarcode(barcode, barcodeType = 'UPC') {
     const request = store.add(record);
 
     request.onsuccess = () => {
-      console.log(`[ScannerDB] Queued barcode: ${barcode}`);
+      devLog(`[ScannerDB] Queued barcode: ${barcode}`);
       resolve(request.result);
     };
 
     request.onerror = () => {
-      console.error('[ScannerDB] Failed to queue barcode:', request.error);
+      devError('[ScannerDB] Failed to queue barcode:', request.error);
       reject(request.error);
     };
   });
@@ -232,7 +237,7 @@ export async function cleanupSyncedBarcodes(olderThanDays = 7) {
         }
         cursor.continue();
       } else {
-        console.log(`[ScannerDB] Cleaned up ${deleted} old synced barcodes`);
+        devLog(`[ScannerDB] Cleaned up ${deleted} old synced barcodes`);
         resolve(deleted);
       }
     };
@@ -256,7 +261,7 @@ export async function clearQueue() {
     const request = store.clear();
 
     request.onsuccess = () => {
-      console.log('[ScannerDB] Queue cleared');
+      devLog('[ScannerDB] Queue cleared');
       resolve();
     };
 
@@ -273,11 +278,11 @@ export async function syncQueue(apiEndpoint) {
   const pending = await getPendingBarcodes();
 
   if (pending.length === 0) {
-    console.log('[ScannerDB] No pending barcodes to sync');
+    devLog('[ScannerDB] No pending barcodes to sync');
     return { synced: 0, failed: 0 };
   }
 
-  console.log(`[ScannerDB] Syncing ${pending.length} barcodes...`);
+  devLog(`[ScannerDB] Syncing ${pending.length} barcodes...`);
 
   try {
     const response = await fetch(apiEndpoint, {
@@ -304,10 +309,10 @@ export async function syncQueue(apiEndpoint) {
     // Mark successfully synced items
     await markAsSynced(pending.map(b => b.id));
 
-    console.log(`[ScannerDB] Synced ${pending.length} barcodes`);
+    devLog(`[ScannerDB] Synced ${pending.length} barcodes`);
     return { synced: pending.length, failed: 0 };
   } catch (error) {
-    console.error('[ScannerDB] Sync failed:', error);
+    devError('[ScannerDB] Sync failed:', error);
     return { synced: 0, failed: pending.length, error: error.message };
   }
 }

@@ -491,8 +491,8 @@ export default function InventorySummary() {
         priceChange={selectedPriceChange}
         onCreateProduct={async (productData) => {
           // TODO: Integrate with product creation API
-          console.log('Create product:', productData);
-          alert('Product creation coming soon! Data logged to console.');
+          if (import.meta.env.DEV) console.log('Create product:', productData);
+          alert('Product creation coming soon!');
         }}
       />
     </div>

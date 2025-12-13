@@ -96,6 +96,10 @@ async def _sync_funko_prices(db: AsyncSession) -> int:
         db.add(changelog)
         changes += 1
 
+    # CRIT-002: Explicit commit to prevent data loss
+    if changes > 0:
+        await db.commit()
+
     return changes
 
 
@@ -142,6 +146,10 @@ async def _sync_comic_prices(db: AsyncSession) -> int:
         )
         db.add(changelog)
         changes += 1
+
+    # CRIT-002: Explicit commit to prevent data loss
+    if changes > 0:
+        await db.commit()
 
     return changes
 

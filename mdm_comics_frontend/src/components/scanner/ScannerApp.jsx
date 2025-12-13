@@ -37,7 +37,8 @@ export default function ScannerApp({ onClose, embedded = false }) {
       const stats = await getQueueStats();
       setQueueStats(stats);
     } catch (e) {
-      console.error('[ScannerApp] Failed to get queue stats:', e);
+      // LOW-001: Gate console.error behind DEV mode
+      if (import.meta.env.DEV) console.error('[ScannerApp] Failed to get queue stats:', e);
     }
   }, []);
 
@@ -47,7 +48,8 @@ export default function ScannerApp({ onClose, embedded = false }) {
       const items = await getAllBarcodes();
       setQueueItems(items);
     } catch (e) {
-      console.error('[ScannerApp] Failed to load queue:', e);
+      // LOW-001: Gate console.error behind DEV mode
+      if (import.meta.env.DEV) console.error('[ScannerApp] Failed to load queue:', e);
     }
   }, []);
 
@@ -109,7 +111,8 @@ export default function ScannerApp({ onClose, embedded = false }) {
         setTimeout(() => handleSync(), 500);
       }
     } catch (e) {
-      console.error('[ScannerApp] Failed to queue barcode:', e);
+      // LOW-001: Gate console.error behind DEV mode
+      if (import.meta.env.DEV) console.error('[ScannerApp] Failed to queue barcode:', e);
       showNotification('Failed to save barcode', 'error');
     }
   };

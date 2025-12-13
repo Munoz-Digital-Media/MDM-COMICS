@@ -82,6 +82,10 @@ async function fetchAPI(endpoint, options = {}) {
     });
 
     if (!response.ok) {
+      // LOW-002: Handle 401 by dispatching auth expired event
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('auth:expired'));
+      }
       const error = await response.json().catch(() => ({}));
       throw new Error(error.detail || `API Error: ${response.status}`);
     }
@@ -93,7 +97,8 @@ async function fetchAPI(endpoint, options = {}) {
 
     return await response.json();
   } catch (error) {
-    console.error(`API call failed: ${endpoint}`, error);
+    // LOW-001: Gate console.error behind DEV mode
+    if (import.meta.env.DEV) console.error(`API call failed: ${endpoint}`, error);
     throw error;
   }
 }
@@ -220,6 +225,16 @@ export const authAPI = {
   },
 
   /**
+   * Logout from all devices
+   * Revokes all tokens issued before now for this user
+   */
+  logoutAll: async () => {
+    return fetchAPI('/auth/logout-all', {
+      method: 'POST',
+    });
+  },
+
+  /**
    * Get current user
    * P1-5: No longer needs token parameter - uses cookie
    * Still accepts token for backwards compatibility
@@ -247,6 +262,104 @@ export const authAPI = {
       options.body = JSON.stringify({ refresh_token: refreshToken });
     }
     return fetchAPI('/auth/refresh', options);
+  },
+
+  // ============================================================
+  // Password Management
+  // ============================================================
+
+  /**
+   * Request password reset email
+   * Always returns success to prevent email enumeration
+   */
+  requestPasswordReset: async (email) => {
+    return fetchAPI('/auth/password-reset/request', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  /**
+   * Confirm password reset with token
+   */
+  confirmPasswordReset: async (token, newPassword) => {
+    return fetchAPI('/auth/password-reset/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+  },
+
+  /**
+   * Change password (requires current password)
+   */
+  changePassword: async (currentPassword, newPassword) => {
+    return fetchAPI('/auth/password/change', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    });
+  },
+
+  /**
+   * Get password policy requirements
+   */
+  getPasswordRequirements: async () => {
+    return fetchAPI('/auth/password/requirements');
+  },
+
+  /**
+   * Check password strength without storing
+   */
+  checkPasswordStrength: async (password) => {
+    return fetchAPI('/auth/password/check-strength', {
+      method: 'POST',
+      body: JSON.stringify(password),
+    });
+  },
+
+  // ============================================================
+  // Email Verification
+  // ============================================================
+
+  /**
+   * Request email verification (resend verification email)
+   */
+  requestEmailVerification: async () => {
+    return fetchAPI('/auth/email/request-verification', {
+      method: 'POST',
+    });
+  },
+
+  /**
+   * Verify email with token
+   */
+  verifyEmail: async (token) => {
+    return fetchAPI('/auth/email/verify', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  },
+
+  // ============================================================
+  // Session Management
+  // ============================================================
+
+  /**
+   * List active sessions for current user
+   */
+  getSessions: async () => {
+    return fetchAPI('/auth/sessions');
+  },
+
+  /**
+   * Revoke a specific session
+   */
+  revokeSession: async (sessionId) => {
+    return fetchAPI(`/auth/sessions/${sessionId}`, {
+      method: 'DELETE',
+    });
   },
 };
 
@@ -337,6 +450,17 @@ export const checkoutAPI = {
       options.headers = { Authorization: `Bearer ${token}` };
     }
     return fetchAPI('/checkout/confirm-order', options);
+  },
+
+  /**
+   * Cancel a stock reservation and restore stock
+   * Called when user cancels checkout
+   */
+  cancelReservation: async (paymentIntentId) => {
+    return fetchAPI('/checkout/cancel-reservation', {
+      method: 'POST',
+      body: JSON.stringify(paymentIntentId),
+    });
   },
 };
 
@@ -497,6 +621,9 @@ export const shippingAPI = {
     return fetchAPI(`/shipping/track/${trackingNumber}`);
   },
 };
+
+// Re-export middleware API for convenience
+export { middlewareAPI, isMiddlewareConfigured } from './middlewareApi.js';
 
 export default {
   comics: comicsAPI,

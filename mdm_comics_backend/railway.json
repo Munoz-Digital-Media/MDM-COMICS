@@ -3,9 +3,10 @@
 	"build": {
 		"builder": "DOCKERFILE",
 		"dockerfilePath": "mdm_comics_backend/api.Dockerfile",
-		"dockerContext": "mdm_comics_backend",
 		"watchPatterns": [
-			"mdm_comics_backend/**"
+			"mdm_comics_backend/app/**",
+			"mdm_comics_backend/requirements.txt",
+			"mdm_comics_backend/api.Dockerfile"
 		]
 	},
 	"deploy": {

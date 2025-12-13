@@ -19,8 +19,14 @@ export default function FunkoSearch({ onSelectFunko, onClose }) {
   const [stats, setStats] = useState(null);
 
   // Load stats on mount
+  // MED-006: Handle stats failure gracefully with fallback
   useEffect(() => {
-    funkosAPI.getStats().then(setStats).catch(() => {});
+    funkosAPI.getStats()
+      .then(setStats)
+      .catch((err) => {
+        if (import.meta.env.DEV) console.error('Failed to load stats:', err);
+        setStats({ total: 'N/A', series: 'N/A' });
+      });
   }, []);
 
   const handleSearch = useCallback(async (pageNum = 1) => {

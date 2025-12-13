@@ -163,8 +163,9 @@ async def create_payment_intent(
             automatic_payment_methods={"enabled": True}
         )
     except stripe.error.StripeError as e:
-        # Rollback will restore stock on exception
-        raise HTTPException(status_code=400, detail=str(e))
+        # HIGH-001: Sanitize Stripe errors - log details, return generic message
+        logger.error(f"Stripe PaymentIntent creation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Payment processing failed. Please try again.")
 
     # Step 4: Create reservation records
     expires_at = StockReservation.create_expiry(RESERVATION_TTL_MINUTES)
@@ -290,7 +291,9 @@ async def confirm_order(
         }
 
     except stripe.error.StripeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # HIGH-001: Sanitize Stripe errors - log details, return generic message
+        logger.error(f"Stripe PaymentIntent retrieval failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Payment verification failed. Please contact support.")
 
 
 @router.post("/cancel-reservation")
@@ -524,13 +527,19 @@ async def handle_payment_failed(payment_intent: dict):
                 logger.info(f"No reservations to release for failed payment {payment_intent_id}")
                 return
 
-            # Restore stock
-            for reservation in reservations:
-                await db.execute(
-                    update(Product)
-                    .where(Product.id == reservation.product_id)
-                    .values(stock=Product.stock + reservation.quantity)
-                )
+            # HIGH-002: Atomic stock restoration using single UPDATE with JOIN
+            # This prevents race conditions where concurrent operations could corrupt counts
+            from sqlalchemy import text
+            await db.execute(
+                text("""
+                    UPDATE products p
+                    SET stock = p.stock + r.quantity
+                    FROM stock_reservations r
+                    WHERE r.payment_intent_id = :pi_id
+                    AND p.id = r.product_id
+                """),
+                {"pi_id": payment_intent_id}
+            )
 
             # Delete reservations
             await db.execute(

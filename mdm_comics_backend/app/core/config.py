@@ -227,9 +227,10 @@ class Settings(BaseSettings):
     PIPELINE_FUNKO_PRICE_CHECK_INTERVAL_MINUTES: int = 60
     PIPELINE_DLQ_RETRY_INTERVAL_MINUTES: int = 15
 
-    # GCD (Grand Comics Database) Import - v1.7.0
+    # GCD (Grand Comics Database) Import - v1.8.0
     # SQLite dump path: local dev uses assets/, Railway uses mounted volume
     GCD_DUMP_PATH: str = "/data/gcd/2025-12-01.db"  # Railway volume mount
+    GCD_DUMP_S3_URL: str = "https://mdm-comics-assets.s3.us-east-2.amazonaws.com/2025-12-01.db"  # S3 fallback
     GCD_IMPORT_BATCH_SIZE: int = 1000  # Records per batch during import
     GCD_IMPORT_ENABLED: bool = False  # Master toggle for GCD import job
     GCD_IMPORT_MAX_RECORDS: int = 0  # 0 = unlimited, >0 = subset import for validation

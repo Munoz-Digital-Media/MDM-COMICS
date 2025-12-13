@@ -25,8 +25,10 @@ v1.7.0: Added SQLite dump import (import_from_sqlite)
 - JOIN support for series/publisher denormalization
 """
 import logging
+import os
 import re
 import sqlite3
+from pathlib import Path
 from typing import Any, Dict, Optional, List, Iterator, Generator
 from bs4 import BeautifulSoup
 
@@ -39,6 +41,68 @@ from app.core.adapter_registry import (
 from app.core.http_client import ResilientHTTPClient
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_gcd_dump_exists() -> bool:
+    """
+    Ensure GCD SQLite dump exists, downloading from S3 if needed.
+
+    Returns True if dump is available, False otherwise.
+    Call this on startup before running GCD import.
+    """
+    from app.core.config import settings
+
+    dump_path = Path(settings.GCD_DUMP_PATH)
+
+    # Check if already exists
+    if dump_path.exists():
+        size_mb = dump_path.stat().st_size / (1024 * 1024)
+        logger.info(f"[GCD] Dump exists at {dump_path} ({size_mb:.1f} MB)")
+        return True
+
+    # Need to download from S3
+    s3_url = settings.GCD_DUMP_S3_URL
+    if not s3_url:
+        logger.warning("[GCD] No S3 URL configured, cannot download dump")
+        return False
+
+    logger.info(f"[GCD] Dump not found at {dump_path}, downloading from S3...")
+
+    try:
+        import httpx
+
+        # Create parent directory
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Stream download with progress
+        with httpx.stream("GET", s3_url, timeout=3600.0, follow_redirects=True) as response:
+            response.raise_for_status()
+            total_size = int(response.headers.get("content-length", 0))
+            downloaded = 0
+            last_log_pct = 0
+
+            with open(dump_path, "wb") as f:
+                for chunk in response.iter_bytes(chunk_size=8192 * 128):  # 1MB chunks
+                    f.write(chunk)
+                    downloaded += len(chunk)
+
+                    # Log progress every 10%
+                    if total_size > 0:
+                        pct = int((downloaded / total_size) * 100)
+                        if pct >= last_log_pct + 10:
+                            logger.info(f"[GCD] Download progress: {pct}% ({downloaded // (1024*1024)} MB)")
+                            last_log_pct = pct
+
+        size_mb = dump_path.stat().st_size / (1024 * 1024)
+        logger.info(f"[GCD] Download complete: {dump_path} ({size_mb:.1f} MB)")
+        return True
+
+    except Exception as e:
+        logger.error(f"[GCD] Failed to download dump from S3: {e}")
+        # Clean up partial download
+        if dump_path.exists():
+            dump_path.unlink()
+        return False
 
 
 class GCDAdapter(DataSourceAdapter):

@@ -183,13 +183,8 @@ class CartResponse(BaseModel):
 # ============================================================================
 # ORDER SCHEMAS
 # ============================================================================
-class ShippingAddress(BaseModel):
-    name: str
-    street: str
-    city: str
-    state: str
-    zip_code: str
-    country: str = "USA"
+# MED-004: Use consolidated ShippingAddress from order.py to avoid duplication
+from app.schemas.order import ShippingAddress
 
 
 class OrderCreate(BaseModel):

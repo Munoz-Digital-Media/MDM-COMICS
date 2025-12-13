@@ -185,8 +185,8 @@ const AuthModal = memo(function AuthModal({ mode, setMode, onClose, onLogin, onS
             </button>
           </div>
 
-          {/* Demo credentials hint for login */}
-          {mode === "login" && (
+          {/* Demo credentials hint - DEV ONLY per constitution_cyberSec.json Section 3 */}
+          {mode === "login" && import.meta.env.DEV && (
             <div className="mt-4 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
               <p className="text-xs text-zinc-500 text-center">
                 <span className="text-orange-500">Demo:</span> demo@mdmcomics.com / demo123

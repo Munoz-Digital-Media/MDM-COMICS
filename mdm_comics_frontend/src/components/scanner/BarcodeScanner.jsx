@@ -89,7 +89,8 @@ export default function BarcodeScanner({ onScan, onError, paused = false }) {
           // Torch not available
         }
       } catch (error) {
-        console.error('[BarcodeScanner] Init error:', error);
+        // LOW-001: Gate console.error behind DEV mode
+        if (import.meta.env.DEV) console.error('[BarcodeScanner] Init error:', error);
         onError?.(error);
       }
     };
@@ -133,7 +134,8 @@ export default function BarcodeScanner({ onScan, onError, paused = false }) {
         setTorchOn(!torchOn);
       }
     } catch (e) {
-      console.error('[BarcodeScanner] Torch toggle error:', e);
+      // LOW-001: Gate console.error behind DEV mode
+      if (import.meta.env.DEV) console.error('[BarcodeScanner] Torch toggle error:', e);
     }
   };
 

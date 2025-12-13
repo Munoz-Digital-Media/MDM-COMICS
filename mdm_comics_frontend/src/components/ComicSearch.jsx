@@ -166,7 +166,8 @@ export default function ComicSearch({ onSelectComic, onClose }) {
                       #{comic.number}
                     </h4>
                     <div className="flex items-center gap-2 text-xs text-zinc-500">
-                      {comic.cover_date && (
+                      {/* LOW-003: Validate date before parsing */}
+                      {comic.cover_date && !isNaN(new Date(comic.cover_date).getTime()) && (
                         <span className="flex items-center gap-1">
                           <Calendar className="w-3 h-3" />
                           {new Date(comic.cover_date).getFullYear()}

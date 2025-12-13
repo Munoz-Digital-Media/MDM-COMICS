@@ -6,9 +6,11 @@ Updated for Admin Console Inventory System v1.3.0:
 - Added pricecharting_id for price sync linkage
 - Added deleted_at for soft delete (preserves order history)
 - Fixed timestamps to timezone-aware (NASTY-008)
+
+DB-005/DB-006: Added audit columns and check constraints per constitution_db.json
 """
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, JSON, Index
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, JSON, Index, Numeric, ForeignKey, CheckConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -27,10 +29,10 @@ class Product(Base):
     category = Column(String, nullable=False, index=True)  # comics, funko
     subcategory = Column(String, index=True)  # Marvel, DC, etc.
 
-    # Pricing
-    price = Column(Float, nullable=False)  # Street value (from PriceCharting)
-    original_price = Column(Float)  # Our cost basis
-    cost = Column(Float)  # Deprecated - use original_price
+    # Pricing - DB-001: Numeric(12,2) per constitution_db.json Section 5
+    price = Column(Numeric(12, 2), nullable=False)  # Street value (from PriceCharting)
+    original_price = Column(Numeric(12, 2))  # Our cost basis
+    cost = Column(Numeric(12, 2))  # Deprecated - use original_price
 
     # Inventory
     stock = Column(Integer, default=0)
@@ -84,15 +86,23 @@ class Product(Base):
         server_default=func.now()
     )
 
+    # DB-005: Audit trail columns per constitution_db.json Section 5
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    update_reason = Column(String(255), nullable=True)
+
     # Relationships
     cart_items = relationship("CartItem", back_populates="product")
     order_items = relationship("OrderItem", back_populates="product")
     stock_movements = relationship("StockMovement", back_populates="product")
+    updater = relationship("User", foreign_keys=[updated_by])
 
-    # Indexes for barcode matching (PERF-003, PERF-004)
+    # Indexes and constraints (PERF-003, PERF-004, DB-006)
     __table_args__ = (
         Index("ix_products_upc_isbn", upc, isbn),
         Index("ix_products_active", id, postgresql_where=(deleted_at.is_(None))),
+        # DB-006: Check constraints for data integrity
+        CheckConstraint('stock >= 0', name='check_stock_non_negative'),
+        CheckConstraint('price > 0', name='check_price_positive'),
     )
 
     @property
