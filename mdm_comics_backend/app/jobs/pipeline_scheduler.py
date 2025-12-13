@@ -2558,6 +2558,10 @@ async def run_gcd_import_job(
                         # v1.10.5: Add series_name for cover enrichment search queries
                         series_name = truncate(record.get("series_name"), 255)
 
+                        # v1.10.5: Store ALL raw GCD data - 1:1 foundation
+                        # This preserves everything GCD gives us for future use
+                        raw_data = json.dumps(record) if record else None
+
                         # v1.10.3: Map cover_date and price from GCD data
                         # v1.10.4: Sanitize to convert empty strings to None
                         # Constitution Compliance: Phase 3 Input Validation
@@ -2585,6 +2589,7 @@ async def run_gcd_import_job(
                                     page_count = COALESCE(:page_count, page_count),
                                     cover_date = COALESCE(:cover_date, cover_date),
                                     price = COALESCE(:price, price),
+                                    raw_data = :raw_data,
                                     updated_at = NOW()
                                 WHERE gcd_id = :gcd_id
                             """), {
@@ -2599,6 +2604,7 @@ async def run_gcd_import_job(
                                 "page_count": record.get("page_count"),
                                 "cover_date": release_date,
                                 "price": cover_price,
+                                "raw_data": raw_data,
                             })
                             batch_stats["updated"] += 1
                         else:
@@ -2607,12 +2613,12 @@ async def run_gcd_import_job(
                                 INSERT INTO comic_issues (
                                     gcd_id, gcd_series_id, gcd_publisher_id,
                                     number, issue_name, series_name, isbn, upc, page_count,
-                                    cover_date, price,
+                                    cover_date, price, raw_data,
                                     created_at, updated_at
                                 ) VALUES (
                                     :gcd_id, :gcd_series_id, :gcd_publisher_id,
                                     :issue_number, :story_title, :series_name, :isbn, :upc, :page_count,
-                                    :cover_date, :price,
+                                    :cover_date, :price, :raw_data,
                                     NOW(), NOW()
                                 )
                                 RETURNING id
@@ -2628,6 +2634,7 @@ async def run_gcd_import_job(
                                 "page_count": record.get("page_count"),
                                 "cover_date": release_date,
                                 "price": cover_price,
+                                "raw_data": raw_data,
                             })
                             new_row = result.fetchone()
                             comic_id = new_row.id if new_row else None
