@@ -2254,9 +2254,17 @@ async def run_multi_source_enrichment_job(
 
     v1.10.0 - Multi-Source Enrichment:
     - Uses source rotator for intelligent failover
-    - Tries Metron first, falls back to Comic Vine
+    - Tries Metron first, falls back to Comic Vine, then scrapers
     - Tracks quota usage across sources
     - Logs enrichment attempts for debugging
+    - Collects grading examples for AI training
+
+    Sources (by priority):
+    1. Metron (API) - Primary for descriptions, creators, characters
+    2. Comic Vine (API) - Secondary metadata
+    3. ComicBookRealm (scraper) - Covers, pricing, CGC data
+    4. MyComicShop (scraper) - Covers, retail pricing
+    5. GradingTool (scraper) - AI grading training data
 
     Args:
         batch_size: Records to process per batch
@@ -2266,14 +2274,39 @@ async def run_multi_source_enrichment_job(
     from app.services.quota_tracker import quota_tracker
     from app.models.source_quota import EnrichmentAttempt
     from app.adapters.comicvine_adapter import create_comicvine_adapter
+    from app.adapters.comicbookrealm_adapter import create_comicbookrealm_adapter
+    from app.adapters.mycomicshop_adapter import create_mycomicshop_adapter
+    from app.adapters.gradingtool_adapter import create_gradingtool_adapter
 
     job_name = "multi_source_enrichment"
     batch_id = str(uuid4())
 
     logger.info(f"[{job_name}] Starting multi-source enrichment (batch: {batch_id})")
 
-    # Initialize Comic Vine adapter if not already registered
-    await create_comicvine_adapter()
+    # Initialize all adapters
+    try:
+        await create_comicvine_adapter()
+        logger.info(f"[{job_name}] Comic Vine adapter initialized")
+    except Exception as e:
+        logger.warning(f"[{job_name}] Comic Vine adapter init failed: {e}")
+
+    try:
+        await create_comicbookrealm_adapter()
+        logger.info(f"[{job_name}] ComicBookRealm adapter initialized")
+    except Exception as e:
+        logger.warning(f"[{job_name}] ComicBookRealm adapter init failed: {e}")
+
+    try:
+        await create_mycomicshop_adapter()
+        logger.info(f"[{job_name}] MyComicShop adapter initialized")
+    except Exception as e:
+        logger.warning(f"[{job_name}] MyComicShop adapter init failed: {e}")
+
+    try:
+        await create_gradingtool_adapter()
+        logger.info(f"[{job_name}] GradingTool adapter initialized")
+    except Exception as e:
+        logger.warning(f"[{job_name}] GradingTool adapter init failed: {e}")
 
     stats = {
         "processed": 0,
