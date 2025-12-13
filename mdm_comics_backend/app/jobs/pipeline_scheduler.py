@@ -1578,7 +1578,33 @@ async def run_gcd_import_job(
             state_data = checkpoint.get("state_data") or {}
             start_offset = state_data.get("offset", 0) if isinstance(state_data, dict) else 0
 
-            logger.info(f"[{job_name}] Resuming from offset {start_offset}")
+            # v1.10.2: SANITY CHECK - Prevent re-processing if offset << DB count
+            # This catches cases where checkpoint was accidentally reset to 0
+            gcd_count_result = await db.execute(text(
+                "SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL"
+            ))
+            actual_db_count = gcd_count_result.scalar() or 0
+
+            if start_offset < actual_db_count * 0.9:  # If offset is < 90% of DB count
+                logger.warning(
+                    f"[{job_name}] OFFSET SANITY CHECK FAILED: "
+                    f"offset={start_offset:,} but DB has {actual_db_count:,} records. "
+                    f"Auto-fixing to resume from {actual_db_count:,}"
+                )
+                start_offset = actual_db_count
+
+                # Update checkpoint to fixed offset
+                await db.execute(text("""
+                    UPDATE pipeline_checkpoints
+                    SET state_data = jsonb_build_object('offset', :offset),
+                        last_error = 'Offset auto-fixed from ' ||
+                            COALESCE((state_data->>'offset')::text, '0') ||
+                            ' to ' || :offset || ' at ' || NOW()::text
+                    WHERE job_name = :name
+                """), {"name": job_name, "offset": actual_db_count})
+                await db.commit()
+
+            logger.info(f"[{job_name}] Resuming from offset {start_offset:,} (DB has {actual_db_count:,} records)")
 
             # Stream records from GCD SQLite
             for batch in adapter.import_from_sqlite(
