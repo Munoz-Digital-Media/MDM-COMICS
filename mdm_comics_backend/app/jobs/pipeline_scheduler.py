@@ -2502,12 +2502,22 @@ async def run_gcd_import_job(
 
             # v1.10.2: SANITY CHECK - Prevent re-processing if offset << DB count
             # This catches cases where checkpoint was accidentally reset to 0
+            # v1.10.5: Allow re-processing if series_name needs backfilling
             gcd_count_result = await db.execute(text(
                 "SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL"
             ))
             actual_db_count = gcd_count_result.scalar() or 0
 
-            if start_offset < actual_db_count * 0.9:  # If offset is < 90% of DB count
+            # Check if series_name backfill is needed
+            backfill_needed_result = await db.execute(text("""
+                SELECT COUNT(*) FROM comic_issues
+                WHERE gcd_id IS NOT NULL
+                AND (series_name IS NULL OR series_name = 'None' OR raw_data IS NULL)
+            """))
+            backfill_needed = (backfill_needed_result.scalar() or 0) > 0
+
+            if start_offset < actual_db_count * 0.9 and not backfill_needed:
+                # Standard sanity check - prevent accidental reprocessing
                 logger.warning(
                     f"[{job_name}] OFFSET SANITY CHECK FAILED: "
                     f"offset={start_offset:,} but DB has {actual_db_count:,} records. "
@@ -2525,6 +2535,12 @@ async def run_gcd_import_job(
                     WHERE job_name = :name
                 """), {"name": job_name, "offset": actual_db_count})
                 await db.commit()
+            elif backfill_needed:
+                # Allow reprocessing for series_name/raw_data backfill
+                logger.info(
+                    f"[{job_name}] Backfill mode: series_name/raw_data needs population. "
+                    f"Starting from offset {start_offset:,}"
+                )
 
             logger.info(f"[{job_name}] Resuming from offset {start_offset:,} (DB has {actual_db_count:,} records)")
 
