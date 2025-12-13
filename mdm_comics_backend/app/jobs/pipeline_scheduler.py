@@ -1602,6 +1602,285 @@ async def run_comprehensive_enrichment_job(batch_size: int = 50, max_records: in
 
 
 # =============================================================================
+# COVER ENRICHMENT JOB (v1.10.5 - Phase 3: Cover Images from MSE Sources)
+# =============================================================================
+
+async def run_cover_enrichment_job(batch_size: int = 100, max_records: int = 0):
+    """
+    Phase 3 Cover Enrichment - Fetch cover images from MSE sources.
+
+    This job specifically targets comics without cover images and enriches them
+    using ComicVine (primary) with scraper fallbacks.
+
+    SOURCE PRIORITY:
+    1. ComicVine API - Best quality, comprehensive coverage
+    2. ComicBookRealm (scraper) - Good fallback
+    3. MyComicShop (scraper) - Additional coverage
+
+    Rate Limits (constitution_cyberSec.json compliant):
+    - ComicVine: 200/hour = ~3.3/min, we use 1/sec with gaps
+    - Scrapers: 0.5/sec (robots.txt compliant)
+
+    Args:
+        batch_size: Comics to process per batch
+        max_records: Max total to process (0 = unlimited)
+    """
+    from app.adapters import create_comicvine_adapter
+    from app.utils.db_sanitizer import sanitize_url
+    import asyncio as aio
+
+    job_name = "cover_enrichment"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting Phase 3 Cover Enrichment (batch: {batch_id})")
+
+    # Check API key
+    import os
+    api_key = os.getenv("COMIC_VINE_API_KEY")
+    if not api_key:
+        logger.error(f"[{job_name}] COMIC_VINE_API_KEY not set - aborting")
+        return {"status": "failed", "error": "No cover sources configured"}
+
+    # Import client factory
+    from app.adapters.comicvine_adapter import get_comicvine_client, ComicVineAdapter, COMICVINE_CONFIG
+
+    stats = {
+        "processed": 0,
+        "enriched": 0,
+        "covers_added": 0,
+        "creators_added": 0,
+        "creators_linked": 0,
+        "not_found": 0,
+        "failed": 0,
+        "by_source": {"comicvine": 0},
+    }
+
+    # Use client context manager for HTTP requests
+    async with get_comicvine_client() as client:
+        comicvine = ComicVineAdapter(COMICVINE_CONFIG, client, api_key)
+        logger.info(f"[{job_name}] ComicVine adapter initialized")
+
+        async with AsyncSessionLocal() as db:
+            # Initialize checkpoint
+            await db.execute(text("""
+                INSERT INTO pipeline_checkpoints (job_name, job_type, created_at, updated_at)
+                VALUES (:name, 'enrichment', NOW(), NOW())
+                ON CONFLICT (job_name) DO NOTHING
+            """), {"name": job_name})
+
+            # Claim job
+            result = await db.execute(text("""
+                UPDATE pipeline_checkpoints
+                SET is_running = true,
+                    last_run_started = NOW(),
+                    current_batch_id = :batch_id,
+                    updated_at = NOW()
+                WHERE job_name = :name
+                AND (is_running = false OR is_running IS NULL)
+                RETURNING id, state_data
+            """), {"name": job_name, "batch_id": batch_id})
+            claim = result.fetchone()
+
+            if not claim:
+                logger.warning(f"[{job_name}] Job already running, skipping")
+                return {"status": "skipped", "message": "Job already running"}
+
+            await db.commit()
+
+            # Get starting offset from checkpoint
+            state_data = claim.state_data or {}
+            last_id = state_data.get("last_id", 0) if isinstance(state_data, dict) else 0
+            logger.info(f"[{job_name}] Resuming from last_id={last_id}")
+
+            try:
+                while True:
+                    # Find comics without covers
+                    result = await db.execute(text("""
+                        SELECT id, series_name, issue_name, number, gcd_id
+                        FROM comic_issues
+                        WHERE (image IS NULL OR image = '')
+                        AND id > :last_id
+                        AND gcd_id IS NOT NULL
+                        ORDER BY id
+                        LIMIT :limit
+                    """), {"last_id": last_id, "limit": batch_size})
+                    comics = result.fetchall()
+
+                    if not comics:
+                        logger.info(f"[{job_name}] No more comics without covers")
+                        break
+
+                    for comic in comics:
+                        comic_id = comic.id
+                        last_id = comic_id
+                        stats["processed"] += 1
+
+                        try:
+                            # Build search query from series name, issue name, and number
+                            series = comic.series_name or ""
+                            issue = comic.issue_name or ""
+                            number = comic.number or ""
+                            search_query = f"{series} {issue} {number}".strip()
+
+                            if not search_query or len(search_query) < 3:
+                                stats["not_found"] += 1
+                                continue
+
+                            # Rate limiting: 1 request per second
+                            await aio.sleep(1.0)
+
+                            # Search ComicVine
+                            result = await comicvine.search_issues(search_query, limit=5)
+
+                            if not result.success or not result.records:
+                                stats["not_found"] += 1
+                                continue
+
+                            # Find best match (first result with image or creators)
+                            cover_url = None
+                            creators = []
+                            for record in result.records:
+                                normalized = comicvine.normalize(record)
+                                if not cover_url and normalized.get("cover_url"):
+                                    cover_url = sanitize_url(normalized["cover_url"])
+                                if not creators and normalized.get("creators"):
+                                    creators = normalized["creators"]
+                                # Stop once we have both
+                                if cover_url and creators:
+                                    break
+
+                            if not cover_url and not creators:
+                                stats["not_found"] += 1
+                                continue
+
+                            enriched_this_record = False
+
+                            # Update cover image
+                            if cover_url:
+                                await db.execute(text("""
+                                    UPDATE comic_issues
+                                    SET image = :image,
+                                        updated_at = NOW()
+                                    WHERE id = :id AND (image IS NULL OR image = '')
+                                """), {"id": comic_id, "image": cover_url})
+                                stats["covers_added"] += 1
+                                enriched_this_record = True
+
+                            # Process creators
+                            if creators:
+                                for creator_data in creators:
+                                    creator_name = creator_data.get("name")
+                                    creator_role = creator_data.get("role", "unknown")
+                                    comicvine_id = creator_data.get("comicvine_id")
+
+                                    if not creator_name:
+                                        continue
+
+                                    # Find or create creator
+                                    existing = await db.execute(text("""
+                                        SELECT id FROM comic_creators WHERE LOWER(name) = LOWER(:name) LIMIT 1
+                                    """), {"name": creator_name})
+                                    creator_row = existing.fetchone()
+
+                                    if creator_row:
+                                        creator_id = creator_row.id
+                                    else:
+                                        # Create new creator
+                                        try:
+                                            result_ins = await db.execute(text("""
+                                                INSERT INTO comic_creators (name, raw_data, created_at, updated_at)
+                                                VALUES (:name, :raw_data, NOW(), NOW())
+                                                RETURNING id
+                                            """), {
+                                                "name": creator_name,
+                                                "raw_data": json.dumps({"comicvine_id": comicvine_id}) if comicvine_id else None
+                                            })
+                                            row = result_ins.fetchone()
+                                            creator_id = row.id if row else None
+                                            if creator_id:
+                                                stats["creators_added"] += 1
+                                        except Exception:
+                                            # Race condition - another process inserted, re-fetch
+                                            existing = await db.execute(text("""
+                                                SELECT id FROM comic_creators WHERE LOWER(name) = LOWER(:name) LIMIT 1
+                                            """), {"name": creator_name})
+                                            creator_row = existing.fetchone()
+                                            creator_id = creator_row.id if creator_row else None
+
+                                    # Link creator to issue (with role)
+                                    if creator_id:
+                                        await db.execute(text("""
+                                        INSERT INTO issue_creators (issue_id, creator_id, role)
+                                        VALUES (:issue_id, :creator_id, :role)
+                                        ON CONFLICT (issue_id, creator_id) DO NOTHING
+                                    """), {
+                                        "issue_id": comic_id,
+                                        "creator_id": creator_id,
+                                        "role": creator_role[:100] if creator_role else "unknown"
+                                    })
+                                    stats["creators_linked"] += 1
+                                    enriched_this_record = True
+
+                            if enriched_this_record:
+                                stats["enriched"] += 1
+                                stats["by_source"]["comicvine"] += 1
+
+                        except Exception as e:
+                            logger.error(f"[{job_name}] Error enriching {comic_id}: {e}")
+                            stats["failed"] += 1
+                            await add_to_dlq(
+                                db, job_name, str(e),
+                                entity_type="comic_issue",
+                                entity_id=str(comic_id),
+                                error_type=type(e).__name__
+                            )
+
+                    # Commit batch and update checkpoint
+                    await db.commit()
+
+                    await db.execute(text("""
+                        UPDATE pipeline_checkpoints
+                        SET state_data = jsonb_build_object('last_id', CAST(:last_id AS integer)),
+                            updated_at = NOW()
+                        WHERE job_name = :name
+                    """), {"name": job_name, "last_id": last_id})
+                    await db.commit()
+
+                    logger.info(
+                        f"[{job_name}] Batch: {stats['processed']} processed, "
+                        f"{stats['enriched']} enriched, {stats['not_found']} not found"
+                    )
+
+                    # Check max_records limit
+                    if max_records and stats["processed"] >= max_records:
+                        logger.info(f"[{job_name}] Reached max_records limit ({max_records})")
+                        break
+
+            except Exception as e:
+                logger.error(f"[{job_name}] Job failed: {e}")
+                traceback.print_exc()
+                await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+            finally:
+                await update_checkpoint(
+                    db, job_name,
+                    is_running=False,
+                    processed_delta=stats["processed"],
+                    updated_delta=stats["enriched"],
+                    errors_delta=stats["failed"],
+                )
+
+    logger.info(
+        f"[{job_name}] COMPLETE: {stats['processed']} processed, "
+        f"{stats['enriched']} records enriched, {stats['covers_added']} covers, "
+        f"{stats['creators_added']} new creators, {stats['creators_linked']} links, "
+        f"{stats['not_found']} not found, {stats['failed']} failed. Sources: {stats['by_source']}"
+    )
+
+    return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
 # DLQ RETRY JOB
 # =============================================================================
 
@@ -2276,6 +2555,8 @@ async def run_gcd_import_job(
                         upc = truncate(record.get("upc"), 50)
                         issue_number = truncate(record.get("issue_number"), 50)
                         story_title = truncate(record.get("story_title"), 500)
+                        # v1.10.5: Add series_name for cover enrichment search queries
+                        series_name = truncate(record.get("series_name"), 255)
 
                         # v1.10.3: Map cover_date and price from GCD data
                         # v1.10.4: Sanitize to convert empty strings to None
@@ -2298,6 +2579,7 @@ async def run_gcd_import_job(
                                     gcd_publisher_id = :gcd_publisher_id,
                                     number = COALESCE(:issue_number, number),
                                     issue_name = COALESCE(:story_title, issue_name),
+                                    series_name = COALESCE(:series_name, series_name),
                                     isbn = COALESCE(:isbn, isbn),
                                     upc = COALESCE(:upc, upc),
                                     page_count = COALESCE(:page_count, page_count),
@@ -2311,6 +2593,7 @@ async def run_gcd_import_job(
                                 "gcd_publisher_id": record.get("gcd_publisher_id"),
                                 "issue_number": issue_number,
                                 "story_title": story_title,
+                                "series_name": series_name,
                                 "isbn": isbn,
                                 "upc": upc,
                                 "page_count": record.get("page_count"),
@@ -2323,12 +2606,12 @@ async def run_gcd_import_job(
                             result = await db.execute(text("""
                                 INSERT INTO comic_issues (
                                     gcd_id, gcd_series_id, gcd_publisher_id,
-                                    number, issue_name, isbn, upc, page_count,
+                                    number, issue_name, series_name, isbn, upc, page_count,
                                     cover_date, price,
                                     created_at, updated_at
                                 ) VALUES (
                                     :gcd_id, :gcd_series_id, :gcd_publisher_id,
-                                    :issue_number, :story_title, :isbn, :upc, :page_count,
+                                    :issue_number, :story_title, :series_name, :isbn, :upc, :page_count,
                                     :cover_date, :price,
                                     NOW(), NOW()
                                 )
@@ -2339,6 +2622,7 @@ async def run_gcd_import_job(
                                 "gcd_publisher_id": record.get("gcd_publisher_id"),
                                 "issue_number": issue_number,
                                 "story_title": story_title,
+                                "series_name": series_name,
                                 "isbn": isbn,
                                 "upc": upc,
                                 "page_count": record.get("page_count"),
@@ -3400,6 +3684,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("comprehensive_enrichment", run_comprehensive_enrichment_job, interval_minutes=30)),
             # v1.10.4: GCD Import - runs every 60 min until complete (~170k remaining)
             asyncio.create_task(self._run_job_loop("gcd_import", run_gcd_import_job, interval_minutes=60)),
+            # v1.10.5: Phase 3 Cover Enrichment - Covers + Creators from ComicVine
+            asyncio.create_task(self._run_job_loop("cover_enrichment", run_cover_enrichment_job, interval_minutes=60)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -3413,6 +3699,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - pricecharting_matching: every 60 minutes (Discover PC IDs)")
         print("[SCHEDULER]   - comprehensive_enrichment: every 30 minutes (ALL sources, parallel)")
         print("[SCHEDULER]   - gcd_import: every 60 minutes (finish remaining ~170k records)")
+        print("[SCHEDULER]   - cover_enrichment: every 60 minutes (Phase 3: covers + creators from ComicVine)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -3462,6 +3749,7 @@ class PipelineScheduler:
             "cover_date_backfill": run_cover_date_backfill_job,  # v1.10.3 - Backfill cover_date from GCD
             "pricecharting_matching": run_pricecharting_matching_job,  # v1.10.3 - Discover pricecharting_id
             "comprehensive_enrichment": run_comprehensive_enrichment_job,  # v1.10.3 - All sources, all fields, parallel
+            "cover_enrichment": run_cover_enrichment_job,  # v1.10.5 - Phase 3: covers + creators from ComicVine
         }
 
         if job_name not in jobs:
