@@ -148,6 +148,15 @@ class ComicIssue(Base):
     cover_hash_bytes = Column(LargeBinary(8))
 
     # -------------------------------------------------------------------------
+    # S3 Image Storage (v1.9.5 - Image Acquisition System)
+    # Own the images, don't depend on external URLs
+    # -------------------------------------------------------------------------
+    cover_s3_key = Column(String(255), index=True)    # S3 key: covers/{id}.jpg
+    thumb_s3_key = Column(String(255))                 # S3 key: thumbs/{id}_sm.jpg
+    image_acquired_at = Column(DateTime)               # When image was downloaded
+    image_checksum = Column(String(64))                # SHA-256 of original image
+
+    # -------------------------------------------------------------------------
     # PriceCharting Integration (v1.5.0 - resolves RISK-005 schema drift)
     # These fields are synced by import_pricecharting_comics.py and price_sync_daily.py
     # -------------------------------------------------------------------------
