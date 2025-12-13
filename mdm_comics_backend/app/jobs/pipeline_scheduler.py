@@ -2087,7 +2087,7 @@ async def run_self_healing_job():
                             last_error = 'SELF-HEALED: Cleared stale checkpoint at ' || NOW()::text ||
                                 ' (was stalled for ' || :minutes || ' minutes)'
                         WHERE job_name = :name
-                    """), {"name": job_name_to_check, "minutes": int(minutes_since_update)})
+                    """), {"name": job_name_to_check, "minutes": str(int(minutes_since_update))})
                     await db.commit()
 
                     # Record this restart
