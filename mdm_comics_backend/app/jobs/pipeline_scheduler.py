@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 # Stale checkpoint timeout in hours - if a job claims to be "running" for longer
 # than this, we assume it crashed and clear the flag
-STALE_CHECKPOINT_TIMEOUT_HOURS = 2
+STALE_CHECKPOINT_TIMEOUT_HOURS = 4
 
 # Self-healing configuration
 SELF_HEAL_CHECK_INTERVAL_MINUTES = 10  # How often to check for stalled jobs
