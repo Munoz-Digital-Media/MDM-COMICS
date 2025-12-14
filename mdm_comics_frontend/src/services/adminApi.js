@@ -420,6 +420,22 @@ export const adminAPI = {
     return fetchAPI('/admin/pipeline/gcd/status');
   },
 
+  // Get PriceCharting matching status
+  getPriceChartingStatus: async () => {
+    return fetchAPI('/admin/pipeline/pricecharting/status');
+  },
+
+  // Trigger PriceCharting matching job
+  triggerPriceChartingMatch: async (options = {}) => {
+    return fetchAPI('/admin/pipeline/pricecharting/match', {
+      method: 'POST',
+      body: JSON.stringify({
+        batch_size: options.batch_size || 500,
+        max_records: options.max_records || 0,
+      }),
+    });
+  },
+
   // Trigger GCD import
   triggerGCDImport: async (options = {}) => {
     return fetchAPI('/admin/pipeline/gcd/import', {

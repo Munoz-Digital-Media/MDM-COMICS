@@ -1,16 +1,20 @@
 /**
- * PipelineStatus - GCD Import Progress Tracker
- * Displays real-time progress of the GCD data import pipeline
+ * PipelineStatus - Multi-Pipeline Progress Tracker v1.11.2
+ * Displays real-time progress of ALL data pipelines:
+ * - GCD Import (Grand Comics Database)
+ * - PriceCharting Matching (UPC/ISBN -> PriceCharting ID)
  *
  * Features:
- * - Option 1: Live Import Stats (rate, ETA, current batch)
- * - Option 5: Data Quality Summary (metadata completeness, cover images, etc.)
+ * - Live Import Stats (rate, ETA, current batch)
+ * - Data Quality Summary (metadata completeness, cover images, etc.)
+ * - Pipeline controls (start, pause, reset)
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Database, RefreshCw, Loader2, CheckCircle, XCircle,
   AlertTriangle, Play, Pause, RotateCcw, Clock, Zap,
-  Image, FileText, BookOpen, Building2, BarChart3
+  Image, FileText, BookOpen, Building2, BarChart3,
+  DollarSign, Link2, TrendingUp
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 
@@ -47,11 +51,13 @@ function formatRate(rate) {
 }
 
 export default function PipelineStatus({ compact = false }) {
-  const [status, setStatus] = useState(null);
+  const [gcdStatus, setGcdStatus] = useState(null);
+  const [pcStatus, setPcStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('gcd'); // 'gcd' or 'pricecharting'
 
   // Option 1: Rate tracking state with exponential moving average (EMA)
   const [importRate, setImportRate] = useState(0);
@@ -60,7 +66,13 @@ export default function PipelineStatus({ compact = false }) {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const data = await adminAPI.getGCDStatus();
+      // Fetch both pipeline statuses in parallel
+      const [gcdData, pcData] = await Promise.all([
+        adminAPI.getGCDStatus().catch(e => null),
+        adminAPI.getPriceChartingStatus().catch(e => null),
+      ]);
+
+      const data = gcdData; // For backwards compatibility with rate calculation
 
       // Calculate import rate with EMA smoothing (Option 1)
       const now = Date.now();
@@ -86,9 +98,10 @@ export default function PipelineStatus({ compact = false }) {
         }
       }
 
-      lastCountRef.current = { count: data.imported_count, timestamp: now };
+      lastCountRef.current = { count: data?.imported_count || 0, timestamp: now };
 
-      setStatus(data);
+      setGcdStatus(gcdData);
+      setPcStatus(pcData);
       setError(null);
     } catch (err) {
       console.error('Pipeline status fetch error:', err);
@@ -102,13 +115,14 @@ export default function PipelineStatus({ compact = false }) {
     fetchStatus();
   }, [fetchStatus]);
 
-  // Auto-refresh every 5 seconds when import is running
+  // Auto-refresh every 5 seconds when ANY pipeline is running
   useEffect(() => {
-    if (!autoRefresh || !status?.checkpoint?.is_running) return;
+    const anyRunning = gcdStatus?.checkpoint?.is_running || pcStatus?.checkpoint?.is_running;
+    if (!autoRefresh || !anyRunning) return;
 
     const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
-  }, [autoRefresh, status?.checkpoint?.is_running, fetchStatus]);
+  }, [autoRefresh, gcdStatus?.checkpoint?.is_running, pcStatus?.checkpoint?.is_running, fetchStatus]);
 
   const handleTriggerImport = async () => {
     setActionLoading(true);
@@ -134,6 +148,18 @@ export default function PipelineStatus({ compact = false }) {
     }
   };
 
+  const handleTriggerPriceCharting = async () => {
+    setActionLoading(true);
+    try {
+      await adminAPI.triggerPriceChartingMatch({ batch_size: 500, max_records: 0 });
+      await fetchStatus();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
@@ -145,7 +171,7 @@ export default function PipelineStatus({ compact = false }) {
     );
   }
 
-  if (error && !status) {
+  if (error && !gcdStatus && !pcStatus) {
     return (
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
         <div className="flex items-center justify-between">
@@ -164,240 +190,330 @@ export default function PipelineStatus({ compact = false }) {
     );
   }
 
-  const checkpoint = status?.checkpoint || {};
-  const settings = status?.settings || {};
-  const dataQuality = status?.data_quality || null;
-  const isRunning = checkpoint.is_running;
-  const totalInDump = settings.dump_total_count || 0;
-  const importedCount = status?.imported_count || 0;
-  const progress = totalInDump > 0 ? (importedCount / totalInDump) * 100 : 0;
-  const remaining = totalInDump - importedCount;
+  // GCD Status extraction
+  const gcdCheckpoint = gcdStatus?.checkpoint || {};
+  const gcdSettings = gcdStatus?.settings || {};
+  const dataQuality = gcdStatus?.data_quality || null;
+  const gcdIsRunning = gcdCheckpoint.is_running;
+  const totalInDump = gcdSettings.dump_total_count || 0;
+  const importedCount = gcdStatus?.imported_count || 0;
+  const gcdProgress = totalInDump > 0 ? (importedCount / totalInDump) * 100 : 0;
+  const gcdRemaining = totalInDump - importedCount;
+  const gcdEta = importRate > 0 ? gcdRemaining / importRate : null;
 
-  // Option 1: Calculate ETA
-  const eta = importRate > 0 ? remaining / importRate : null;
+  // PriceCharting Status extraction
+  const pcCheckpoint = pcStatus?.checkpoint || {};
+  const pcStats = pcStatus?.matching_stats || {};
+  const pcIsRunning = pcCheckpoint.is_running;
+  const pcComicsMatched = pcStats.comics_matched || 0;
+  const pcComicsTotal = pcStats.comics_total || 0;
+  const pcFunkosMatched = pcStats.funkos_matched || 0;
+  const pcFunkosTotal = pcStats.funkos_total || 0;
+  const pcProgress = pcComicsTotal > 0 ? (pcComicsMatched / pcComicsTotal) * 100 : 0;
+  const pcStateData = pcCheckpoint.state_data || {};
+  const pcPhase = pcStateData.phase || 'unknown';
+  const pcComicLastId = pcStateData.comic_last_id || 0;
 
-  // Compact view for dashboard
+  // Calculate time spent for PriceCharting
+  const pcStarted = pcCheckpoint.last_run_started ? new Date(pcCheckpoint.last_run_started) : null;
+  const pcTimeSpent = pcStarted && pcIsRunning ? Math.floor((Date.now() - pcStarted.getTime()) / 1000) : null;
+
+  // Estimate remaining time based on progress rate
+  const pcEstRate = pcTimeSpent && pcComicLastId > 0 ? pcComicLastId / pcTimeSpent : 0;
+  const pcRemainingRecords = pcComicsTotal - pcComicLastId;
+  const pcEta = pcEstRate > 0 ? pcRemainingRecords / pcEstRate : null;
+
+  // Check which jobs are running
+  const anyRunning = gcdIsRunning || pcIsRunning;
+
+  // Compact view for dashboard - shows BOTH pipelines
   if (compact) {
     return (
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Database className="w-4 h-4 text-blue-400" />
-            <h3 className="text-sm font-semibold text-zinc-400">GCD Import</h3>
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
+        {/* GCD Import Section */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-blue-400" />
+              <h3 className="text-sm font-semibold text-zinc-400">GCD Import</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              {gcdIsRunning ? (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 bg-blue-500/20 text-blue-400 rounded-full">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Running
+                </span>
+              ) : gcdProgress >= 100 ? (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">
+                  <CheckCircle className="w-3 h-3" />
+                  Complete
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 bg-zinc-700 text-zinc-400 rounded-full">
+                  <Pause className="w-3 h-3" />
+                  Idle
+                </span>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {isRunning ? (
-              <span className="flex items-center gap-1 text-xs px-2 py-1 bg-blue-500/20 text-blue-400 rounded-full">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Running
-              </span>
-            ) : progress >= 100 ? (
-              <span className="flex items-center gap-1 text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">
-                <CheckCircle className="w-3 h-3" />
-                Complete
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-xs px-2 py-1 bg-zinc-700 text-zinc-400 rounded-full">
-                <Pause className="w-3 h-3" />
-                Paused
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Progress bar */}
-        <div className="mb-3">
-          <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+          <div className="h-2 bg-zinc-800 rounded-full overflow-hidden mb-1">
             <div
               className={`h-full transition-all duration-500 ${
-                isRunning ? 'bg-blue-500' : progress >= 100 ? 'bg-green-500' : 'bg-orange-500'
+                gcdIsRunning ? 'bg-blue-500' : gcdProgress >= 100 ? 'bg-green-500' : 'bg-orange-500'
               }`}
-              style={{ width: `${Math.min(progress, 100)}%` }}
+              style={{ width: `${Math.min(gcdProgress, 100)}%` }}
             />
           </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-zinc-500">{formatNumber(importedCount)} / {formatNumber(totalInDump)}</span>
+            <span className="text-zinc-400">{formatPercent(gcdProgress)}%</span>
+          </div>
         </div>
 
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-zinc-500">
-            {formatNumber(importedCount)} / {formatNumber(totalInDump)}
-          </span>
-          <span className={`font-medium ${isRunning ? 'text-blue-400' : 'text-zinc-400'}`}>
-            {formatPercent(progress)}%
-          </span>
+        {/* PriceCharting Matching Section */}
+        <div className="pt-3 border-t border-zinc-800">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-green-400" />
+              <h3 className="text-sm font-semibold text-zinc-400">PriceCharting Match</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              {pcIsRunning ? (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Running
+                </span>
+              ) : pcComicsMatched > 0 ? (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">
+                  <Link2 className="w-3 h-3" />
+                  {formatNumber(pcComicsMatched)} matched
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 bg-zinc-700 text-zinc-400 rounded-full">
+                  <Pause className="w-3 h-3" />
+                  Idle
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Progress info */}
+          {pcIsRunning && (
+            <div className="space-y-2">
+              <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-green-500 transition-all duration-500"
+                  style={{ width: `${Math.min((pcComicLastId / pcComicsTotal) * 100, 100)}%` }}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-zinc-500">Processing:</span>
+                  <span className="text-zinc-300 ml-1">ID {formatNumber(pcComicLastId)} / {formatNumber(pcComicsTotal)}</span>
+                </div>
+                <div>
+                  <span className="text-zinc-500">Matched:</span>
+                  <span className="text-green-400 ml-1">{formatNumber(pcComicsMatched)}</span>
+                </div>
+              </div>
+              {pcTimeSpent && (
+                <div className="flex items-center gap-3 text-xs text-zinc-500">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-blue-400" />
+                    Time: {formatDuration(pcTimeSpent)}
+                  </span>
+                  {pcEta && (
+                    <span className="flex items-center gap-1">
+                      <TrendingUp className="w-3 h-3 text-yellow-400" />
+                      ETA: {formatDuration(pcEta)}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!pcIsRunning && pcComicsMatched > 0 && (
+            <div className="text-xs text-zinc-500">
+              Comics: {formatNumber(pcComicsMatched)} matched | Funkos: {formatNumber(pcFunkosMatched)} matched
+            </div>
+          )}
         </div>
 
-        {/* Compact rate/ETA when running */}
-        {isRunning && importRate > 0 && (
-          <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
-            <span className="flex items-center gap-1">
-              <Zap className="w-3 h-3 text-yellow-400" />
-              {formatRate(importRate)}
-            </span>
-            {eta && (
-              <span className="flex items-center gap-1">
-                <Clock className="w-3 h-3 text-blue-400" />
-                ETA: {formatDuration(eta)}
-              </span>
-            )}
-          </div>
-        )}
-
-        {checkpoint.total_errors > 0 && (
-          <div className="mt-2 flex items-center gap-1 text-xs text-red-400">
-            <XCircle className="w-3 h-3" />
-            {checkpoint.total_errors} errors
-          </div>
-        )}
+        {/* Auto-refresh indicator */}
+        <div className="flex items-center justify-between text-xs text-zinc-600 pt-2 border-t border-zinc-800">
+          <span>{anyRunning ? 'Auto-refreshing...' : 'Idle'}</span>
+          <button
+            onClick={fetchStatus}
+            className="p-1 hover:bg-zinc-800 rounded transition-colors"
+          >
+            <RefreshCw className={`w-3 h-3 ${anyRunning ? 'animate-spin text-blue-400' : 'text-zinc-500'}`} />
+          </button>
+        </div>
       </div>
     );
   }
 
-  // Full view
+  // Full view with tabs for GCD and PriceCharting
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
-      {/* Header */}
+      {/* Header with Tabs */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-500/20 rounded-lg border border-blue-500/30">
-            <Database className="w-5 h-5 text-blue-400" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-white">GCD Import Pipeline</h3>
-            <p className="text-xs text-zinc-500">Grand Comics Database - 2.5M+ records</p>
-          </div>
-        </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setAutoRefresh(!autoRefresh)}
-            className={`p-2 rounded-lg transition-colors ${
-              autoRefresh ? 'bg-blue-500/20 text-blue-400' : 'bg-zinc-800 text-zinc-500'
+            onClick={() => setActiveTab('gcd')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              activeTab === 'gcd'
+                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
             }`}
-            title={autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh OFF'}
           >
-            <RefreshCw className={`w-4 h-4 ${autoRefresh && isRunning ? 'animate-spin' : ''}`} />
+            <Database className="w-4 h-4" />
+            <span className="text-sm font-medium">GCD Import</span>
+            {gcdIsRunning && <Loader2 className="w-3 h-3 animate-spin" />}
+          </button>
+          <button
+            onClick={() => setActiveTab('pricecharting')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              activeTab === 'pricecharting'
+                ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+            }`}
+          >
+            <DollarSign className="w-4 h-4" />
+            <span className="text-sm font-medium">PriceCharting</span>
+            {pcIsRunning && <Loader2 className="w-3 h-3 animate-spin" />}
           </button>
         </div>
+        <button
+          onClick={() => setAutoRefresh(!autoRefresh)}
+          className={`p-2 rounded-lg transition-colors ${
+            autoRefresh ? 'bg-blue-500/20 text-blue-400' : 'bg-zinc-800 text-zinc-500'
+          }`}
+          title={autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh OFF'}
+        >
+          <RefreshCw className={`w-4 h-4 ${autoRefresh && anyRunning ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
-      {/* Status Badge */}
-      <div className="flex items-center gap-3">
-        {isRunning ? (
-          <span className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Import Running
-          </span>
-        ) : progress >= 100 ? (
-          <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
-            <CheckCircle className="w-4 h-4" />
-            Import Complete
-          </span>
-        ) : (
-          <span className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-zinc-400 rounded-lg text-sm">
-            <Pause className="w-4 h-4" />
-            Paused
-          </span>
-        )}
-
-        {!isRunning && progress < 100 && (
-          <button
-            onClick={handleTriggerImport}
-            disabled={actionLoading}
-            className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm hover:bg-green-500/30 transition-colors disabled:opacity-50"
-          >
-            {actionLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+      {/* ==================== GCD TAB ==================== */}
+      {activeTab === 'gcd' && (
+        <>
+          {/* Status Badge */}
+          <div className="flex items-center gap-3">
+            {gcdIsRunning ? (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Import Running
+              </span>
+            ) : gcdProgress >= 100 ? (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
+                <CheckCircle className="w-4 h-4" />
+                Import Complete
+              </span>
             ) : (
-              <Play className="w-4 h-4" />
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-zinc-400 rounded-lg text-sm">
+                <Pause className="w-4 h-4" />
+                Idle
+              </span>
             )}
-            Resume Import
-          </button>
-        )}
 
-        {checkpoint.last_error && (
-          <button
-            onClick={handleResetCheckpoint}
-            disabled={actionLoading}
-            className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded-lg text-sm hover:bg-orange-500/30 transition-colors disabled:opacity-50"
-          >
-            <RotateCcw className="w-4 h-4" />
-            Reset
-          </button>
-        )}
-      </div>
+            {!gcdIsRunning && gcdProgress < 100 && (
+              <button
+                onClick={handleTriggerImport}
+                disabled={actionLoading}
+                className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm hover:bg-green-500/30 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                Resume Import
+              </button>
+            )}
 
-      {/* Progress */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-zinc-400">Progress</span>
-          <span className="text-sm font-medium text-white">{formatPercent(progress)}%</span>
-        </div>
-        <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full transition-all duration-500 ${
-              isRunning ? 'bg-blue-500' : progress >= 100 ? 'bg-green-500' : 'bg-orange-500'
-            }`}
-            style={{ width: `${Math.min(progress, 100)}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-zinc-800/50 rounded-lg p-3">
-          <p className="text-xs text-zinc-500 mb-1">Imported</p>
-          <p className="text-lg font-bold text-white">{formatNumber(importedCount)}</p>
-        </div>
-        <div className="bg-zinc-800/50 rounded-lg p-3">
-          <p className="text-xs text-zinc-500 mb-1">Remaining</p>
-          <p className="text-lg font-bold text-white">{formatNumber(remaining)}</p>
-        </div>
-        <div className="bg-zinc-800/50 rounded-lg p-3">
-          <p className="text-xs text-zinc-500 mb-1">Processed</p>
-          <p className="text-lg font-bold text-white">{formatNumber(checkpoint.total_processed)}</p>
-        </div>
-        <div className="bg-zinc-800/50 rounded-lg p-3">
-          <p className="text-xs text-zinc-500 mb-1">Errors</p>
-          <p className={`text-lg font-bold ${checkpoint.total_errors > 0 ? 'text-red-400' : 'text-white'}`}>
-            {formatNumber(checkpoint.total_errors)}
-          </p>
-        </div>
-      </div>
-
-      {/* Option 1: Live Import Stats (when running) */}
-      {isRunning && (
-        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Zap className="w-4 h-4 text-yellow-400" />
-            <h4 className="text-sm font-medium text-blue-400">Live Import Stats</h4>
+            {gcdCheckpoint.last_error && (
+              <button
+                onClick={handleResetCheckpoint}
+                disabled={actionLoading}
+                className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded-lg text-sm hover:bg-orange-500/30 transition-colors disabled:opacity-50"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Reset
+              </button>
+            )}
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Import Rate</p>
-              <p className="text-lg font-bold text-white">
-                {importRate > 0 ? formatRate(importRate) : 'Calculating...'}
-              </p>
+
+          {/* Progress */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-zinc-400">Progress</span>
+              <span className="text-sm font-medium text-white">{formatPercent(gcdProgress)}%</span>
             </div>
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Est. Time Remaining</p>
-              <p className="text-lg font-bold text-white">
-                {eta ? formatDuration(eta) : 'Calculating...'}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Batch Size</p>
-              <p className="text-lg font-bold text-white">{formatNumber(settings.batch_size || 5000)}</p>
+            <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-500 ${
+                  gcdIsRunning ? 'bg-blue-500' : gcdProgress >= 100 ? 'bg-green-500' : 'bg-orange-500'
+                }`}
+                style={{ width: `${Math.min(gcdProgress, 100)}%` }}
+              />
             </div>
           </div>
-          {checkpoint.last_run_started && (
-            <p className="text-xs text-zinc-500 mt-3">
-              Started: {new Date(checkpoint.last_run_started).toLocaleString()}
-            </p>
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Imported</p>
+              <p className="text-lg font-bold text-white">{formatNumber(importedCount)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Remaining</p>
+              <p className="text-lg font-bold text-white">{formatNumber(gcdRemaining)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Processed</p>
+              <p className="text-lg font-bold text-white">{formatNumber(gcdCheckpoint.total_processed)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Errors</p>
+              <p className={`text-lg font-bold ${gcdCheckpoint.total_errors > 0 ? 'text-red-400' : 'text-white'}`}>
+                {formatNumber(gcdCheckpoint.total_errors)}
+              </p>
+            </div>
+          </div>
+
+          {/* Live Import Stats (when running) */}
+          {gcdIsRunning && (
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Zap className="w-4 h-4 text-yellow-400" />
+                <h4 className="text-sm font-medium text-blue-400">Live Import Stats</h4>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Import Rate</p>
+                  <p className="text-lg font-bold text-white">
+                    {importRate > 0 ? formatRate(importRate) : 'Calculating...'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Est. Time Remaining</p>
+                  <p className="text-lg font-bold text-white">
+                    {gcdEta ? formatDuration(gcdEta) : 'Calculating...'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Batch Size</p>
+                  <p className="text-lg font-bold text-white">{formatNumber(gcdSettings.batch_size || 5000)}</p>
+                </div>
+              </div>
+              {gcdCheckpoint.last_run_started && (
+                <p className="text-xs text-zinc-500 mt-3">
+                  Started: {new Date(gcdCheckpoint.last_run_started).toLocaleString()}
+                </p>
+              )}
+            </div>
           )}
-        </div>
-      )}
 
-      {/* Option 5: Data Quality Summary (when not running or showing alongside) */}
-      {dataQuality && !isRunning && (
+          {/* Data Quality Summary */}
+          {dataQuality && !gcdIsRunning && (
         <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <BarChart3 className="w-4 h-4 text-purple-400" />
@@ -466,29 +582,206 @@ export default function PipelineStatus({ compact = false }) {
         </div>
       )}
 
-      {/* Error Display */}
-      {checkpoint.last_error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-          <div className="flex items-start gap-2">
-            <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-red-400 mb-1">Last Error</p>
-              <p className="text-xs text-red-400/80 font-mono break-all">
-                {checkpoint.last_error.substring(0, 200)}
-                {checkpoint.last_error.length > 200 && '...'}
-              </p>
+          {/* Error Display */}
+          {gcdCheckpoint.last_error && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-red-400 mb-1">Last Error</p>
+                  <p className="text-xs text-red-400/80 font-mono break-all">
+                    {gcdCheckpoint.last_error.substring(0, 200)}
+                    {gcdCheckpoint.last_error.length > 200 && '...'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* GCD Dump Info */}
+          <div className="pt-3 border-t border-zinc-800">
+            <div className="flex items-center justify-between text-xs text-zinc-500">
+              <span>GCD Dump: {gcdSettings.dump_exists ? 'Available' : 'Not Found'}</span>
+              <span>Total Records: {formatNumber(totalInDump)}</span>
             </div>
           </div>
-        </div>
+        </>
       )}
 
-      {/* GCD Dump Info */}
-      <div className="pt-3 border-t border-zinc-800">
-        <div className="flex items-center justify-between text-xs text-zinc-500">
-          <span>GCD Dump: {settings.dump_exists ? 'Available' : 'Not Found'}</span>
-          <span>Total Records: {formatNumber(totalInDump)}</span>
-        </div>
-      </div>
+      {/* ==================== PRICECHARTING TAB ==================== */}
+      {activeTab === 'pricecharting' && (
+        <>
+          {/* Status Badge */}
+          <div className="flex items-center gap-3">
+            {pcIsRunning ? (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Matching Running
+              </span>
+            ) : pcComicsMatched > 0 ? (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
+                <Link2 className="w-4 h-4" />
+                {formatNumber(pcComicsMatched)} Comics Matched
+              </span>
+            ) : (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-zinc-400 rounded-lg text-sm">
+                <Pause className="w-4 h-4" />
+                Idle
+              </span>
+            )}
+
+            {!pcIsRunning && (
+              <button
+                onClick={handleTriggerPriceCharting}
+                disabled={actionLoading}
+                className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm hover:bg-green-500/30 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                {pcComicsMatched > 0 ? 'Continue Matching' : 'Start Matching'}
+              </button>
+            )}
+          </div>
+
+          {/* Progress Bar */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-zinc-400">Matching Progress</span>
+              <span className="text-sm font-medium text-white">
+                {pcComicsTotal > 0 ? formatPercent((pcComicLastId / pcComicsTotal) * 100) : '0.00'}%
+              </span>
+            </div>
+            <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-500 ${pcIsRunning ? 'bg-green-500' : 'bg-green-600'}`}
+                style={{ width: `${pcComicsTotal > 0 ? Math.min((pcComicLastId / pcComicsTotal) * 100, 100) : 0}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Comics Matched</p>
+              <p className="text-lg font-bold text-green-400">{formatNumber(pcComicsMatched)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Total Comics</p>
+              <p className="text-lg font-bold text-white">{formatNumber(pcComicsTotal)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Funkos Matched</p>
+              <p className="text-lg font-bold text-green-400">{formatNumber(pcFunkosMatched)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Current Position</p>
+              <p className="text-lg font-bold text-white">ID {formatNumber(pcComicLastId)}</p>
+            </div>
+          </div>
+
+          {/* Live Matching Stats (when running) */}
+          {pcIsRunning && (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Zap className="w-4 h-4 text-yellow-400" />
+                <h4 className="text-sm font-medium text-green-400">Live Matching Stats</h4>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-blue-400" />
+                    Time Spent
+                  </p>
+                  <p className="text-lg font-bold text-white">
+                    {pcTimeSpent ? formatDuration(pcTimeSpent) : '--'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1 flex items-center gap-1">
+                    <TrendingUp className="w-3 h-3 text-yellow-400" />
+                    Est. Remaining
+                  </p>
+                  <p className="text-lg font-bold text-white">
+                    {pcEta ? formatDuration(pcEta) : 'Calculating...'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Match Rate</p>
+                  <p className="text-lg font-bold text-white">
+                    {pcEstRate > 0 ? formatRate(pcEstRate) : '--'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Current Phase</p>
+                  <p className="text-lg font-bold text-white capitalize">{pcPhase}</p>
+                </div>
+              </div>
+              {pcStarted && (
+                <p className="text-xs text-zinc-500 mt-3">
+                  Started: {pcStarted.toLocaleString()}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Match Summary (when not running and has matches) */}
+          {!pcIsRunning && pcComicsMatched > 0 && (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 className="w-4 h-4 text-green-400" />
+                <h4 className="text-sm font-medium text-green-400">Match Summary</h4>
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Comics Match Rate:</span>
+                  <span className="text-green-400 font-medium">
+                    {pcComicsTotal > 0 ? formatPercent((pcComicsMatched / pcComicsTotal) * 100) : '0'}%
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Funkos Match Rate:</span>
+                  <span className="text-green-400 font-medium">
+                    {pcFunkosTotal > 0 ? formatPercent((pcFunkosMatched / pcFunkosTotal) * 100) : '0'}%
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Total Processed:</span>
+                  <span className="text-zinc-300">{formatNumber(pcCheckpoint.total_processed || 0)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Errors:</span>
+                  <span className={pcCheckpoint.total_errors > 0 ? 'text-red-400' : 'text-zinc-300'}>
+                    {formatNumber(pcCheckpoint.total_errors || 0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Error Display */}
+          {pcCheckpoint.last_error && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-red-400 mb-1">Last Error</p>
+                  <p className="text-xs text-red-400/80 font-mono break-all">
+                    {pcCheckpoint.last_error.substring(0, 200)}
+                    {pcCheckpoint.last_error.length > 200 && '...'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* API Info */}
+          <div className="pt-3 border-t border-zinc-800">
+            <div className="flex items-center justify-between text-xs text-zinc-500">
+              <span>Matching via PriceCharting API (UPC/ISBN lookup)</span>
+              <span>Batch Size: 500</span>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
