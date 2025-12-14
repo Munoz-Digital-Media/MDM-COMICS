@@ -1,5 +1,5 @@
 """
-ComicBookRealm Scraper Adapter v1.10.0
+ComicBookRealm Scraper Adapter v1.11.0
 
 Web scraper for ComicBookRealm.com - comic database with pricing and grading data.
 
@@ -11,6 +11,14 @@ Features:
 - CGC grading examples for AI training
 - Price data and market values
 - Series and issue metadata
+- v1.11.0: Enhanced fields:
+  - ISBN/UPC extraction
+  - Est. Print Run (rarity predictor for ML)
+  - Searched count (demand metric)
+  - Owned count (supply metric)
+  - Contributors tab parsing
+  - Characters tab parsing
+  - Variant tracking
 
 Usage:
     adapter = ComicBookRealmAdapter(config, client)
@@ -289,7 +297,15 @@ class ComicBookRealmAdapter(DataSourceAdapter):
         }
 
     def _parse_issue_page(self, html: str, url: str) -> Dict[str, Any]:
-        """Parse a single issue detail page."""
+        """Parse a single issue detail page.
+
+        v1.11.0: Enhanced to extract:
+        - ISBN/UPC barcodes
+        - Est. Print Run (ML rarity predictor)
+        - Searched/Owned counts (supply/demand metrics)
+        - Cover price
+        - Variant information
+        """
         soup = BeautifulSoup(html, 'html.parser')
 
         data = {
@@ -321,7 +337,23 @@ class ComicBookRealmAdapter(DataSourceAdapter):
         if publisher_elem:
             data["publisher"] = publisher_elem.get_text(strip=True)
 
-        # Extract price data
+        # v1.11.0: Extract ISBN/UPC barcode
+        isbn_upc_data = self._extract_isbn_upc(soup)
+        data.update(isbn_upc_data)
+
+        # v1.11.0: Extract market metrics (Est. Print Run, Searched, Owned)
+        market_metrics = self._extract_market_metrics(soup)
+        data.update(market_metrics)
+
+        # v1.11.0: Extract cover price
+        cover_price_data = self._extract_cover_price(soup)
+        data.update(cover_price_data)
+
+        # v1.11.0: Extract variant information
+        variant_data = self._extract_variant_info(soup)
+        data.update(variant_data)
+
+        # Extract price data (market values)
         price_data = self._extract_price_data(soup)
         data.update(price_data)
 
@@ -344,6 +376,196 @@ class ComicBookRealmAdapter(DataSourceAdapter):
                 data["cover_date"] = parsed_date
 
         return data
+
+    def _extract_isbn_upc(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """
+        Extract ISBN/UPC barcode from page.
+
+        v1.11.0: Critical for matching against GCD and PriceCharting.
+        Format from CBR: 7-59606-02457-5-99911
+        """
+        isbn_data = {}
+
+        # Look for barcode/ISBN/UPC in various formats
+        page_text = soup.get_text()
+
+        # UPC pattern (usually 12-13 digits, may have dashes)
+        upc_patterns = [
+            r'UPC[:\s]*([0-9-]{10,20})',
+            r'Barcode[:\s]*([0-9-]{10,20})',
+            r'([0-9]-[0-9]{5}-[0-9]{5}-[0-9]-[0-9]{5})',  # CBR format
+            r'([0-9]{12,13})',  # Standard UPC
+        ]
+
+        for pattern in upc_patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                upc_raw = match.group(1)
+                # Normalize: remove dashes for canonical form
+                upc_normalized = re.sub(r'[^0-9]', '', upc_raw)
+                if 10 <= len(upc_normalized) <= 15:
+                    isbn_data["upc_raw"] = upc_raw
+                    isbn_data["upc"] = upc_normalized
+                    break
+
+        # ISBN pattern (10 or 13 digits, may have dashes or X)
+        isbn_patterns = [
+            r'ISBN[:\s]*([0-9X-]{10,20})',
+            r'ISBN-13[:\s]*([0-9-]{13,20})',
+            r'ISBN-10[:\s]*([0-9X-]{10,15})',
+        ]
+
+        for pattern in isbn_patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                isbn_raw = match.group(1)
+                isbn_normalized = re.sub(r'[^0-9X]', '', isbn_raw.upper())
+                if len(isbn_normalized) in (10, 13):
+                    isbn_data["isbn_raw"] = isbn_raw
+                    isbn_data["isbn"] = isbn_normalized
+                    break
+
+        # Also check specific elements
+        for elem in soup.select('[class*="barcode"], [class*="upc"], [class*="isbn"]'):
+            text = elem.get_text(strip=True)
+            if text and not isbn_data.get("upc"):
+                upc_clean = re.sub(r'[^0-9]', '', text)
+                if 10 <= len(upc_clean) <= 15:
+                    isbn_data["upc"] = upc_clean
+
+        return isbn_data
+
+    def _extract_market_metrics(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """
+        Extract market metrics from page.
+
+        v1.11.0: Key ML features:
+        - Est. Print Run: Rarity predictor (lower = rarer = higher value)
+        - Searched: Demand signal (higher = more interest)
+        - Owned: Supply signal (lower = scarcer in collections)
+        """
+        metrics = {}
+        page_text = soup.get_text()
+
+        # Est. Print Run pattern
+        print_run_patterns = [
+            r'Est\.?\s*Print\s*Run[:\s]*([0-9,]+)',
+            r'Print\s*Run[:\s]*([0-9,]+)',
+            r'Estimated\s*Print[:\s]*([0-9,]+)',
+        ]
+
+        for pattern in print_run_patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                run_str = match.group(1).replace(',', '')
+                try:
+                    metrics["est_print_run"] = int(run_str)
+                except ValueError:
+                    pass
+                break
+
+        # Searched count pattern
+        searched_patterns = [
+            r'Searched[:\s]*([0-9,]+)',
+            r'([0-9,]+)\s*Searched',
+            r'Search\s*Count[:\s]*([0-9,]+)',
+        ]
+
+        for pattern in searched_patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                searched_str = match.group(1).replace(',', '')
+                try:
+                    metrics["searched_count"] = int(searched_str)
+                except ValueError:
+                    pass
+                break
+
+        # Owned count pattern
+        owned_patterns = [
+            r'Owned[:\s]*([0-9,]+)',
+            r'([0-9,]+)\s*Owned',
+            r'Own\s*Count[:\s]*([0-9,]+)',
+            r'In\s*Collections?[:\s]*([0-9,]+)',
+        ]
+
+        for pattern in owned_patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                owned_str = match.group(1).replace(',', '')
+                try:
+                    metrics["owned_count"] = int(owned_str)
+                except ValueError:
+                    pass
+                break
+
+        # Calculate rarity score if we have both metrics
+        if metrics.get("searched_count") and metrics.get("owned_count"):
+            # Higher search/owned ratio = higher demand relative to supply
+            if metrics["owned_count"] > 0:
+                metrics["demand_supply_ratio"] = round(
+                    metrics["searched_count"] / metrics["owned_count"], 2
+                )
+
+        return metrics
+
+    def _extract_cover_price(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Extract original cover price."""
+        cover_price_data = {}
+        page_text = soup.get_text()
+
+        cover_price_patterns = [
+            r'Cover\s*Price[:\s]*\$?([0-9.]+)',
+            r'Original\s*Price[:\s]*\$?([0-9.]+)',
+            r'Price[:\s]*\$([0-9.]+)',
+        ]
+
+        for pattern in cover_price_patterns:
+            match = re.search(pattern, page_text, re.IGNORECASE)
+            if match:
+                try:
+                    cover_price_data["cover_price"] = float(match.group(1))
+                except ValueError:
+                    pass
+                break
+
+        return cover_price_data
+
+    def _extract_variant_info(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """
+        Extract variant cover information.
+
+        v1.11.0: Track variants for proper matching and valuation.
+        """
+        variant_data = {}
+        page_text = soup.get_text()
+
+        # Check if this is a variant
+        variant_patterns = [
+            r'(Variant)\s*Cover',
+            r'(Incentive)\s*(?:Variant)?',
+            r'(1:[0-9]+)\s*(?:Variant|Cover)',
+            r'(Sketch)\s*(?:Variant|Cover)',
+            r'(Virgin)\s*(?:Variant|Cover)',
+            r'(Foil)\s*(?:Variant|Cover)',
+        ]
+
+        variant_types = []
+        for pattern in variant_patterns:
+            matches = re.findall(pattern, page_text, re.IGNORECASE)
+            variant_types.extend(matches)
+
+        if variant_types:
+            variant_data["is_variant"] = True
+            variant_data["variant_types"] = list(set(t.strip() for t in variant_types))
+
+        # Look for ratio variants (1:25, 1:50, etc.)
+        ratio_match = re.search(r'(1:\d+)', page_text)
+        if ratio_match:
+            variant_data["variant_ratio"] = ratio_match.group(1)
+            variant_data["is_variant"] = True
+
+        return variant_data
 
     def _extract_price_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """Extract pricing information from page."""
@@ -572,6 +794,8 @@ class ComicBookRealmAdapter(DataSourceAdapter):
     def normalize(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """
         Normalize a ComicBookRealm record to canonical schema.
+
+        v1.11.0: Added market metrics and variant fields.
         """
         # Parse series and issue from title
         title = record.get("title", "")
@@ -595,7 +819,25 @@ class ComicBookRealmAdapter(DataSourceAdapter):
             "cover_url": record.get("cover_url"),
             "image": record.get("cover_url"),
 
-            # Pricing
+            # v1.11.0: ISBN/UPC for matching
+            "isbn": record.get("isbn"),
+            "isbn_raw": record.get("isbn_raw"),
+            "upc": record.get("upc"),
+            "upc_raw": record.get("upc_raw"),
+
+            # v1.11.0: Market metrics for ML
+            "est_print_run": record.get("est_print_run"),
+            "searched_count": record.get("searched_count"),
+            "owned_count": record.get("owned_count"),
+            "demand_supply_ratio": record.get("demand_supply_ratio"),
+            "cover_price": record.get("cover_price"),
+
+            # v1.11.0: Variant information
+            "is_variant": record.get("is_variant", False),
+            "variant_types": record.get("variant_types", []),
+            "variant_ratio": record.get("variant_ratio"),
+
+            # Pricing (market values)
             "price_nm": record.get("price_nm"),
             "price_vf": record.get("price_vf"),
             "price_f": record.get("price_f"),
@@ -609,6 +851,10 @@ class ComicBookRealmAdapter(DataSourceAdapter):
             "condition_notes": record.get("condition_notes"),
             "defects": record.get("defects", []),
 
+            # v1.11.0: Contributors/Characters from tabs
+            "contributors": record.get("contributors", []),
+            "characters": record.get("characters", []),
+
             # Description
             "description": record.get("description"),
 
@@ -617,6 +863,185 @@ class ComicBookRealmAdapter(DataSourceAdapter):
             "_source": "comicbookrealm",
             "_raw": record,
         }
+
+    async def fetch_issue_details_with_tabs(
+        self,
+        url: str,
+    ) -> Dict[str, Any]:
+        """
+        Fetch full issue details including Contributors and Characters tabs.
+
+        v1.11.0: Full enrichment for high-value issues.
+        """
+        # Fetch main page
+        data = await self.fetch_by_id(url)
+        if not data:
+            return {}
+
+        # Fetch Contributors tab if available
+        contributors = await self._fetch_contributors_tab(url)
+        if contributors:
+            data["contributors"] = contributors
+
+        # Fetch Characters tab if available
+        characters = await self._fetch_characters_tab(url)
+        if characters:
+            data["characters"] = characters
+
+        return data
+
+    async def _fetch_contributors_tab(self, base_url: str) -> List[Dict[str, Any]]:
+        """
+        Fetch and parse Contributors tab.
+
+        Returns list of contributors with roles (Writer, Artist, Colorist, etc.)
+        """
+        # CBR typically uses tab URLs or AJAX endpoints
+        contributors_url = f"{base_url}?tab=contributors"
+
+        html = await self._fetch_page(contributors_url)
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, 'html.parser')
+        contributors = []
+
+        # Look for contributor listings
+        contributor_patterns = [
+            ('.contributor', 'role', 'name'),
+            ('.credit', 'role', 'creator'),
+            ('tr.creator', 'td:first-child', 'td:last-child'),
+        ]
+
+        for container_sel, role_sel, name_sel in contributor_patterns:
+            items = soup.select(container_sel)
+            if items:
+                for item in items:
+                    role_elem = item.select_one(role_sel) if isinstance(role_sel, str) and '.' in role_sel else item
+                    name_elem = item.select_one(name_sel) if isinstance(name_sel, str) and '.' in name_sel else item
+
+                    role = role_elem.get_text(strip=True) if role_elem else ""
+                    name = name_elem.get_text(strip=True) if name_elem else ""
+
+                    # Try to split if both are in same element
+                    if role and not name:
+                        parts = role.split(':')
+                        if len(parts) == 2:
+                            role, name = parts[0].strip(), parts[1].strip()
+
+                    if name:
+                        contributors.append({
+                            "name": name,
+                            "role": self._normalize_role(role),
+                        })
+                break
+
+        # Fallback: Look for common role patterns in text
+        if not contributors:
+            text = soup.get_text()
+            role_patterns = [
+                (r'Writer[s]?[:\s]+([^,\n]+)', 'Writer'),
+                (r'Penciler[s]?[:\s]+([^,\n]+)', 'Penciler'),
+                (r'Inker[s]?[:\s]+([^,\n]+)', 'Inker'),
+                (r'Colorist[s]?[:\s]+([^,\n]+)', 'Colorist'),
+                (r'Letterer[s]?[:\s]+([^,\n]+)', 'Letterer'),
+                (r'Cover[:\s]+([^,\n]+)', 'Cover Artist'),
+                (r'Editor[s]?[:\s]+([^,\n]+)', 'Editor'),
+            ]
+
+            for pattern, role in role_patterns:
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                for name in matches:
+                    name = name.strip()
+                    if name and len(name) < 100:  # Sanity check
+                        contributors.append({
+                            "name": name,
+                            "role": role,
+                        })
+
+        return contributors
+
+    async def _fetch_characters_tab(self, base_url: str) -> List[Dict[str, Any]]:
+        """
+        Fetch and parse Characters tab.
+
+        Returns list of characters appearing in the issue.
+        """
+        characters_url = f"{base_url}?tab=characters"
+
+        html = await self._fetch_page(characters_url)
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, 'html.parser')
+        characters = []
+
+        # Look for character listings
+        character_selectors = [
+            '.character',
+            '.character-item',
+            'a[href*="character"]',
+            '.cast li',
+        ]
+
+        for selector in character_selectors:
+            items = soup.select(selector)
+            if items:
+                for item in items:
+                    name = item.get_text(strip=True)
+                    if name and len(name) < 200:  # Sanity check
+                        # Check for appearance type (cameo, first appearance, etc.)
+                        appearance_type = "standard"
+                        parent_text = item.parent.get_text() if item.parent else ""
+
+                        if "first" in parent_text.lower():
+                            appearance_type = "first_appearance"
+                        elif "cameo" in parent_text.lower():
+                            appearance_type = "cameo"
+                        elif "death" in parent_text.lower():
+                            appearance_type = "death"
+
+                        characters.append({
+                            "name": name,
+                            "appearance_type": appearance_type,
+                        })
+                break
+
+        return characters
+
+    def _normalize_role(self, role: str) -> str:
+        """Normalize contributor role to standard format."""
+        role_lower = role.lower().strip()
+
+        role_mappings = {
+            "writer": "Writer",
+            "script": "Writer",
+            "story": "Writer",
+            "plot": "Writer",
+            "penciler": "Penciler",
+            "pencils": "Penciler",
+            "penciller": "Penciler",
+            "artist": "Artist",
+            "art": "Artist",
+            "inker": "Inker",
+            "inks": "Inker",
+            "colorist": "Colorist",
+            "colors": "Colorist",
+            "colour": "Colorist",
+            "letterer": "Letterer",
+            "letters": "Letterer",
+            "cover": "Cover Artist",
+            "cover artist": "Cover Artist",
+            "editor": "Editor",
+            "assistant editor": "Assistant Editor",
+            "editor-in-chief": "Editor-in-Chief",
+        }
+
+        for key, value in role_mappings.items():
+            if key in role_lower:
+                return value
+
+        return role.title() if role else "Unknown"
 
     async def fetch_grading_examples(
         self,
