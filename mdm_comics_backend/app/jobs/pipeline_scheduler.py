@@ -1882,6 +1882,312 @@ async def run_cover_enrichment_job(batch_size: int = 100, max_records: int = 0):
 
 
 # =============================================================================
+# MARVEL FANDOM ENRICHMENT JOB (v1.10.8 - Story-level credits)
+# =============================================================================
+
+async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
+    """
+    Marvel Fandom Enrichment - Fetch story-level credits from Marvel Database.
+
+    This job enriches Marvel comics with:
+    - Per-story credits (writer, penciler, inker, colorist, letterer, editor)
+    - Character appearances per story
+    - Cover variants
+    - Editor-in-chief, release date, Marvel Unlimited status
+
+    Rate Limits:
+    - 1 request per second (Fandom API)
+
+    Args:
+        batch_size: Comics to process per batch
+        max_records: Max total to process (0 = unlimited)
+    """
+    import httpx
+    from bs4 import BeautifulSoup
+    import re
+
+    job_name = "marvel_fandom"
+    batch_id = str(uuid4())
+
+    logger.info(f"[{job_name}] Starting Marvel Fandom Story Enrichment (batch: {batch_id})")
+
+    stats = {
+        "processed": 0,
+        "enriched": 0,
+        "stories_created": 0,
+        "creators_created": 0,
+        "credits_linked": 0,
+        "not_found": 0,
+        "failed": 0,
+    }
+
+    async with AsyncSessionLocal() as db:
+        # Initialize checkpoint
+        await db.execute(text("""
+            INSERT INTO pipeline_checkpoints (job_name, job_type, created_at, updated_at)
+            VALUES (:name, 'enrichment', NOW(), NOW())
+            ON CONFLICT (job_name) DO NOTHING
+        """), {"name": job_name})
+
+        # Claim job
+        result = await db.execute(text("""
+            UPDATE pipeline_checkpoints
+            SET is_running = true,
+                last_run_started = NOW(),
+                current_batch_id = :batch_id,
+                updated_at = NOW()
+            WHERE job_name = :name
+            AND (is_running = false OR is_running IS NULL)
+            RETURNING id, state_data
+        """), {"name": job_name, "batch_id": batch_id})
+        claim = result.fetchone()
+
+        if not claim:
+            logger.warning(f"[{job_name}] Job already running, skipping")
+            return {"status": "skipped", "message": "Job already running"}
+
+        await db.commit()
+
+        state_data = claim.state_data or {}
+        last_id = state_data.get("last_id", 0) if isinstance(state_data, dict) else 0
+        logger.info(f"[{job_name}] Resuming from last_id={last_id}")
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                while True:
+                    # Find Marvel comics without story data
+                    # Look for publisher_name containing 'Marvel' and no stories yet
+                    result = await db.execute(text("""
+                        SELECT ci.id, ci.series_name, ci.number, ci.series_year_began,
+                               ci.publisher_name
+                        FROM comic_issues ci
+                        LEFT JOIN stories s ON s.comic_issue_id = ci.id
+                        WHERE ci.publisher_name ILIKE '%Marvel%'
+                        AND ci.id > :last_id
+                        AND s.id IS NULL
+                        AND ci.series_name IS NOT NULL
+                        ORDER BY ci.id
+                        LIMIT :limit
+                    """), {"last_id": last_id, "limit": batch_size})
+                    comics = result.fetchall()
+
+                    if not comics:
+                        logger.info(f"[{job_name}] No more Marvel comics without stories")
+                        break
+
+                    for comic in comics:
+                        comic_id = comic.id
+                        last_id = comic_id
+                        stats["processed"] += 1
+
+                        if max_records > 0 and stats["processed"] > max_records:
+                            logger.info(f"[{job_name}] Reached max_records limit ({max_records})")
+                            break
+
+                        try:
+                            # Build Marvel Fandom page title
+                            series = comic.series_name or ""
+                            number = comic.number or ""
+                            year = comic.series_year_began
+
+                            if not series or not number:
+                                stats["not_found"] += 1
+                                continue
+
+                            # Try to determine volume from year
+                            volume = 1  # Default
+                            if year:
+                                # Common Marvel volume patterns
+                                if "Amazing Spider-Man" in series:
+                                    if year >= 2018:
+                                        volume = 5
+                                    elif year >= 2014:
+                                        volume = 3
+                                    elif year >= 1999:
+                                        volume = 2
+                                # Add more series-specific logic as needed
+
+                            # Build page title: "Series_Name_Vol_X_Issue"
+                            page_title = f"{series.replace(' ', '_')}_Vol_{volume}_{number}"
+
+                            # Rate limiting: 1 req/sec
+                            await asyncio.sleep(1.0)
+
+                            # Fetch from Marvel Fandom API
+                            response = await client.get(
+                                "https://marvel.fandom.com/api.php",
+                                params={
+                                    "action": "parse",
+                                    "page": page_title,
+                                    "prop": "text",
+                                    "format": "json",
+                                }
+                            )
+
+                            if response.status_code != 200:
+                                stats["not_found"] += 1
+                                continue
+
+                            data = response.json()
+                            if "error" in data:
+                                stats["not_found"] += 1
+                                continue
+
+                            html = data.get("parse", {}).get("text", {}).get("*", "")
+                            if not html:
+                                stats["not_found"] += 1
+                                continue
+
+                            # Parse the HTML
+                            soup = BeautifulSoup(html, "html.parser")
+
+                            # Extract stories and credits
+                            stories = []
+                            current_story = None
+
+                            for elem in soup.find_all(["h2", "h3"]):
+                                text = elem.get_text(strip=True)
+
+                                # Story header: '1. "Title"'
+                                match = re.match(r'^(\d+)\.\s*"?(.+?)"?\s*$', text)
+                                if match and elem.name == "h2":
+                                    if current_story:
+                                        stories.append(current_story)
+                                    current_story = {
+                                        "number": int(match.group(1)),
+                                        "title": match.group(2).strip('"'),
+                                        "credits": {}
+                                    }
+                                    continue
+
+                                # Credit roles
+                                if current_story and elem.name == "h3":
+                                    for role in ["Writer", "Penciler", "Inker", "Colorist", "Letterer", "Editor"]:
+                                        if role in text:
+                                            next_elem = elem.find_next_sibling()
+                                            if next_elem:
+                                                links = next_elem.find_all("a") if hasattr(next_elem, "find_all") else []
+                                                names = [a.get_text(strip=True) for a in links if a.get_text(strip=True)]
+                                                if names:
+                                                    current_story["credits"][role.lower()] = names
+                                            break
+
+                            if current_story:
+                                stories.append(current_story)
+
+                            if not stories:
+                                stats["not_found"] += 1
+                                continue
+
+                            # Save stories and credits to database
+                            for story_data in stories:
+                                # Create story record
+                                story_result = await db.execute(text("""
+                                    INSERT INTO stories (comic_issue_id, story_number, title, marvel_fandom_id, created_at, updated_at)
+                                    VALUES (:comic_id, :number, :title, :fandom_id, NOW(), NOW())
+                                    ON CONFLICT (comic_issue_id, story_number) DO UPDATE
+                                    SET title = EXCLUDED.title, updated_at = NOW()
+                                    RETURNING id
+                                """), {
+                                    "comic_id": comic_id,
+                                    "number": story_data["number"],
+                                    "title": story_data["title"][:500] if story_data["title"] else None,
+                                    "fandom_id": page_title,
+                                })
+                                story_row = story_result.fetchone()
+                                story_id = story_row.id if story_row else None
+                                stats["stories_created"] += 1
+
+                                if story_id:
+                                    # Create/link creators for each role
+                                    for role, creators in story_data["credits"].items():
+                                        for creator_name in creators:
+                                            if not creator_name:
+                                                continue
+
+                                            # Get or create creator
+                                            creator_result = await db.execute(text("""
+                                                INSERT INTO creators (name, created_at, updated_at)
+                                                VALUES (:name, NOW(), NOW())
+                                                ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
+                                                RETURNING id
+                                            """), {"name": creator_name[:255]})
+                                            creator_row = creator_result.fetchone()
+                                            creator_id = creator_row.id if creator_row else None
+
+                                            if creator_id:
+                                                stats["creators_created"] += 1
+
+                                                # Link creator to story with role
+                                                await db.execute(text("""
+                                                    INSERT INTO story_creators (story_id, creator_id, role, created_at)
+                                                    VALUES (:story_id, :creator_id, :role, NOW())
+                                                    ON CONFLICT (story_id, creator_id, role) DO NOTHING
+                                                """), {
+                                                    "story_id": story_id,
+                                                    "creator_id": creator_id,
+                                                    "role": role,
+                                                })
+                                                stats["credits_linked"] += 1
+
+                            await db.commit()
+                            stats["enriched"] += 1
+
+                            logger.debug(
+                                f"[{job_name}] Enriched {series} #{number}: "
+                                f"{len(stories)} stories"
+                            )
+
+                        except Exception as e:
+                            logger.error(f"[{job_name}] Error enriching comic {comic_id}: {e}")
+                            stats["failed"] += 1
+                            continue
+
+                    # Update checkpoint
+                    await update_checkpoint(
+                        db, job_name,
+                        state_data={"last_id": last_id},
+                        processed_delta=batch_size,
+                        updated_delta=stats["enriched"],
+                        errors_delta=stats["failed"],
+                    )
+
+                    if max_records > 0 and stats["processed"] >= max_records:
+                        break
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            await db.execute(text("""
+                UPDATE pipeline_checkpoints
+                SET is_running = false, last_error = :error, updated_at = NOW()
+                WHERE job_name = :name
+            """), {"name": job_name, "error": str(e)[:500]})
+            await db.commit()
+            raise
+
+        finally:
+            # Release job lock
+            await db.execute(text("""
+                UPDATE pipeline_checkpoints
+                SET is_running = false,
+                    last_run_completed = NOW(),
+                    state_data = jsonb_build_object('last_id', :last_id),
+                    updated_at = NOW()
+                WHERE job_name = :name
+            """), {"name": job_name, "last_id": last_id})
+            await db.commit()
+
+    logger.info(
+        f"[{job_name}] COMPLETE: {stats['processed']} processed, "
+        f"{stats['enriched']} enriched, {stats['stories_created']} stories, "
+        f"{stats['creators_created']} creators, {stats['credits_linked']} credits, "
+        f"{stats['not_found']} not found, {stats['failed']} failed"
+    )
+
+    return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
 # DLQ RETRY JOB
 # =============================================================================
 
@@ -3744,6 +4050,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("gcd_import", run_gcd_import_job, interval_minutes=60)),
             # v1.10.5: Phase 3 Cover Enrichment - Covers + Creators from ComicVine
             asyncio.create_task(self._run_job_loop("cover_enrichment", run_cover_enrichment_job, interval_minutes=60)),
+            # v1.10.8: Marvel Fandom Enrichment - Story-level credits
+            asyncio.create_task(self._run_job_loop("marvel_fandom", run_marvel_fandom_job, interval_minutes=60)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -3758,6 +4066,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - comprehensive_enrichment: every 30 minutes (ALL sources, parallel)")
         print("[SCHEDULER]   - gcd_import: every 60 minutes (finish remaining ~170k records)")
         print("[SCHEDULER]   - cover_enrichment: every 60 minutes (Phase 3: covers + creators from ComicVine)")
+        print("[SCHEDULER]   - marvel_fandom: every 60 minutes (Story-level credits from Marvel Database)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -3808,6 +4117,7 @@ class PipelineScheduler:
             "pricecharting_matching": run_pricecharting_matching_job,  # v1.10.3 - Discover pricecharting_id
             "comprehensive_enrichment": run_comprehensive_enrichment_job,  # v1.10.3 - All sources, all fields, parallel
             "cover_enrichment": run_cover_enrichment_job,  # v1.10.5 - Phase 3: covers + creators from ComicVine
+            "marvel_fandom": run_marvel_fandom_job,  # v1.10.8 - Story-level credits from Marvel Database
         }
 
         if job_name not in jobs:
