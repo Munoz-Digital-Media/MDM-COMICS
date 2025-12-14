@@ -1924,7 +1924,7 @@ class UPCBackfillRequest(BaseModel):
 @router.post("/pipeline/upc-backfill/run")
 async def trigger_upc_backfill(
     request: UPCBackfillRequest,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1976,7 +1976,7 @@ async def trigger_upc_backfill(
 
 @router.get("/pipeline/upc-backfill/status")
 async def get_upc_backfill_status(
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Get UPC backfill job status and statistics."""
