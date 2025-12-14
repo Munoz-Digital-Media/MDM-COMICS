@@ -1767,3 +1767,147 @@ async def get_mse_status(
         "source_quotas": quotas,
         "comics_needing_enrichment": needs_enrichment,
     }
+
+
+# ----- PriceCharting Matching & Daily Price Sync (v1.11.0) -----
+
+class PCMatchingRequest(BaseModel):
+    """PriceCharting matching job request."""
+    batch_size: int = Field(default=100, ge=10, le=500, description="Records per batch")
+    max_records: int = Field(default=0, ge=0, description="Max records (0=unlimited)")
+
+
+@router.post("/pipeline/pricecharting/match")
+async def trigger_pricecharting_matching(
+    request: PCMatchingRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Trigger PriceCharting matching job manually.
+
+    Matches BOTH comics AND funkos to PriceCharting IDs using:
+    - ISBN lookup (highest confidence for comics)
+    - UPC lookup (works for both)
+    - Fuzzy title matching (fallback)
+
+    This job runs daily to:
+    1. Discover new matches for unmatched records
+    2. Enable price tracking via full_price_sync job
+    3. Feed price_changelog for AI/ML model training
+
+    High-confidence matches (score >= 9) auto-link.
+    Lower confidence matches queue for human review.
+    """
+    import asyncio
+    from app.jobs.pipeline_scheduler import run_pricecharting_matching_job
+
+    # Check if already running
+    result = await db.execute(text("""
+        SELECT is_running FROM pipeline_checkpoints
+        WHERE job_name = 'pricecharting_matching'
+    """))
+    row = result.fetchone()
+    if row and row[0]:
+        raise HTTPException(
+            status_code=409,
+            detail="PriceCharting matching job is already running"
+        )
+
+    logger.info(f"PriceCharting matching triggered by admin {current_user.id}")
+
+    # Run in background
+    async def run_job():
+        try:
+            await run_pricecharting_matching_job(
+                batch_size=request.batch_size,
+                max_records=request.max_records,
+            )
+        except Exception as e:
+            logger.error(f"PriceCharting matching job failed: {e}")
+
+    # Keep task reference to prevent GC
+    if not hasattr(trigger_pricecharting_matching, '_tasks'):
+        trigger_pricecharting_matching._tasks = set()
+    trigger_pricecharting_matching._tasks = {t for t in trigger_pricecharting_matching._tasks if not t.done()}
+    task = asyncio.create_task(run_job())
+    trigger_pricecharting_matching._tasks.add(task)
+
+    return {
+        "status": "started",
+        "message": f"PriceCharting matching started for Funkos + Comics (batch_size={request.batch_size})",
+        "check_status": "/api/admin/pipeline/pricecharting/status"
+    }
+
+
+@router.get("/pipeline/pricecharting/status")
+async def get_pricecharting_matching_status(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get PriceCharting matching job status for both Funkos and Comics."""
+    # Get checkpoint
+    result = await db.execute(text("""
+        SELECT job_name, is_running, total_processed, total_updated, total_errors,
+               last_run_started, last_run_completed, last_error, state_data
+        FROM pipeline_checkpoints
+        WHERE job_name = 'pricecharting_matching'
+    """))
+    row = result.fetchone()
+
+    checkpoint = None
+    if row:
+        checkpoint = {
+            "is_running": row[1],
+            "total_processed": row[2],
+            "total_matched": row[3],
+            "total_errors": row[4],
+            "last_run_started": row[5].isoformat() if row[5] else None,
+            "last_run_completed": row[6].isoformat() if row[6] else None,
+            "last_error": row[7],
+            "state_data": row[8],
+        }
+
+    # Get matching stats for BOTH entity types
+    comics_matched = await db.execute(text(
+        "SELECT COUNT(*) FROM comic_issues WHERE pricecharting_id IS NOT NULL"
+    ))
+    funkos_matched = await db.execute(text(
+        "SELECT COUNT(*) FROM funkos WHERE pricecharting_id IS NOT NULL"
+    ))
+    comics_total = await db.execute(text("SELECT COUNT(*) FROM comic_issues"))
+    funkos_total = await db.execute(text("SELECT COUNT(*) FROM funkos"))
+
+    # Get queue stats by entity type
+    queue_result = await db.execute(text("""
+        SELECT entity_type, COUNT(*)
+        FROM match_review_queue
+        WHERE status = 'pending'
+        GROUP BY entity_type
+    """))
+    queue_by_type = {row[0]: row[1] for row in queue_result.fetchall()}
+
+    # Price changelog stats (last 24h for AI/ML tracking)
+    changelog_result = await db.execute(text("""
+        SELECT entity_type, COUNT(*) as changes
+        FROM price_changelog
+        WHERE changed_at > NOW() - INTERVAL '24 hours'
+        GROUP BY entity_type
+    """))
+    price_changes_24h = {row[0]: row[1] for row in changelog_result.fetchall()}
+
+    return {
+        "checkpoint": checkpoint,
+        "matching_stats": {
+            "comics_matched": comics_matched.scalar() or 0,
+            "comics_total": comics_total.scalar() or 0,
+            "funkos_matched": funkos_matched.scalar() or 0,
+            "funkos_total": funkos_total.scalar() or 0,
+        },
+        "review_queue": {
+            "comics_pending": queue_by_type.get("comic", 0),
+            "funkos_pending": queue_by_type.get("funko", 0),
+            "total_pending": sum(queue_by_type.values()),
+        },
+        "price_changes_24h": price_changes_24h,
+    }
