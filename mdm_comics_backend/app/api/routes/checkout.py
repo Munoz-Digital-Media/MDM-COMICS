@@ -15,6 +15,7 @@ import stripe
 import logging
 import uuid
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
@@ -43,9 +44,10 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 CHECKOUT_CURRENCY = (settings.STRIPE_CURRENCY or "usd").lower()
 RESERVATION_CURRENCY_CODE = CHECKOUT_CURRENCY.upper()
 
-# BLOCK-004: Fallback in-memory set when Redis unavailable
-# Will be used only if Redis connection fails
-_processed_webhook_events_fallback: set = set()
+# BLOCK-004: Fallback in-memory cache when Redis unavailable
+# OPT-003: Using OrderedDict for O(1) LRU-style eviction instead of set->list->slice->set
+_processed_webhook_events_fallback: OrderedDict = OrderedDict()
+_FALLBACK_MAX_SIZE = 10000
 
 
 class CheckoutItem(BaseModel):
@@ -367,7 +369,7 @@ async def stripe_webhook(request: Request):
     This replaces client-trust model where frontend confirms payment.
     Now Stripe tells us directly when payment succeeds.
     """
-    global _processed_webhook_events_fallback
+    # OPT-003: No longer need global since we're not reassigning the OrderedDict
 
     # P1-4: Verify webhook secret is configured
     if not settings.STRIPE_WEBHOOK_SECRET:
@@ -423,12 +425,11 @@ async def stripe_webhook(request: Request):
     # BLOCK-004: Mark as processed in Redis (with 24hr TTL)
     redis_marked = await mark_webhook_processed(event_id)
 
-    # Always add to fallback set for single-instance safety
-    _processed_webhook_events_fallback.add(event_id)
-
-    # Cleanup fallback set to prevent memory growth (keep last 10000)
-    if len(_processed_webhook_events_fallback) > 10000:
-        _processed_webhook_events_fallback = set(list(_processed_webhook_events_fallback)[-5000:])
+    # OPT-003: Add to fallback cache with O(1) LRU-style eviction
+    # Using OrderedDict for efficient FIFO eviction without memory spike
+    _processed_webhook_events_fallback[event_id] = True
+    while len(_processed_webhook_events_fallback) > _FALLBACK_MAX_SIZE:
+        _processed_webhook_events_fallback.popitem(last=False)  # Remove oldest
 
     if redis_marked:
         logger.debug(f"Webhook {event_id} marked processed in Redis")

@@ -66,10 +66,17 @@ async function fetchAPI(endpoint, options = {}) {
   };
 
   // P1-5: Add CSRF token for mutations (non-GET requests)
+  // NASTY-006: Log warning if CSRF token is missing for mutations
   if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
     const csrfToken = getCsrfToken();
     if (csrfToken) {
       headers['X-CSRF-Token'] = csrfToken;
+    } else if (import.meta.env.PROD) {
+      // In production, missing CSRF token is a concern
+      console.warn(
+        '[API] CSRF token missing for mutation request to:', endpoint,
+        '- Request may be rejected. Try refreshing the page.'
+      );
     }
   }
 
