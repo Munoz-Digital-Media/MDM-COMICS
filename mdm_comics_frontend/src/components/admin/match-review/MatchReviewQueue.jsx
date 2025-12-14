@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { api } from '../../../services/api';
+import { matchReviewAPI } from '../../../services/api';
 import MatchCard from './MatchCard';
 import MatchComparison from './MatchComparison';
 import ManualSearchModal from './ManualSearchModal';
@@ -47,15 +47,15 @@ const MatchReviewQueue = () => {
       setLoading(true);
       setError(null);
 
-      const response = await api.post('/api/admin/match-queue', filter);
-      setMatches(response.data.items || []);
-      setTotal(response.data.total || 0);
+      const response = await matchReviewAPI.getQueue(filter);
+      setMatches(response.items || []);
+      setTotal(response.total || 0);
       setStats({
-        pending_count: response.data.pending_count,
-        escalated_count: response.data.escalated_count
+        pending_count: response.pending_count,
+        escalated_count: response.escalated_count
       });
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load queue');
+      setError(err.message || 'Failed to load queue');
       console.error('Queue fetch error:', err);
     } finally {
       setLoading(false);
@@ -65,8 +65,8 @@ const MatchReviewQueue = () => {
   // Fetch stats
   const fetchStats = useCallback(async () => {
     try {
-      const response = await api.get('/api/admin/match-queue/stats');
-      setStats(response.data);
+      const response = await matchReviewAPI.getStats();
+      setStats(response);
     } catch (err) {
       console.error('Stats fetch error:', err);
     }
@@ -103,7 +103,7 @@ const MatchReviewQueue = () => {
 
     setProcessing(prev => new Set([...prev, matchId]));
     try {
-      await api.post(`/api/admin/match-queue/${matchId}/approve`, {});
+      await matchReviewAPI.approve(matchId);
       announce('Match approved successfully');
       setMatches(prev => prev.filter(m => m.id !== matchId));
       setSelectedMatch(null);
@@ -125,7 +125,7 @@ const MatchReviewQueue = () => {
 
     setProcessing(prev => new Set([...prev, matchId]));
     try {
-      await api.post(`/api/admin/match-queue/${matchId}/reject`, { reason });
+      await matchReviewAPI.reject(matchId, reason);
       announce('Match rejected');
       setMatches(prev => prev.filter(m => m.id !== matchId));
       setSelectedMatch(null);
@@ -143,7 +143,7 @@ const MatchReviewQueue = () => {
   };
 
   const handleSkip = async (matchId) => {
-    await api.post(`/api/admin/match-queue/${matchId}/skip`, {});
+    await matchReviewAPI.skip(matchId);
     setSelectedMatch(null);
   };
 
@@ -162,10 +162,8 @@ const MatchReviewQueue = () => {
     }
 
     try {
-      const response = await api.post('/api/admin/match-queue/bulk-approve', {
-        match_ids: eligibleIds
-      });
-      announce(`Approved ${response.data.approved_count} matches`);
+      const response = await matchReviewAPI.bulkApprove(eligibleIds);
+      announce(`Approved ${response.approved_count} matches`);
       fetchQueue();
       fetchStats();
     } catch (err) {
@@ -176,11 +174,7 @@ const MatchReviewQueue = () => {
 
   const handleManualLink = async (entityType, entityId, pricechartingId) => {
     try {
-      await api.post('/api/admin/match-queue/manual-link', {
-        entity_type: entityType,
-        entity_id: entityId,
-        pricecharting_id: pricechartingId
-      });
+      await matchReviewAPI.manualLink(entityType, entityId, pricechartingId);
       announce('Manual link created');
       setShowManualSearch(false);
       setManualSearchEntity(null);

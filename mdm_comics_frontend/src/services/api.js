@@ -652,6 +652,93 @@ export const shippingAPI = {
   },
 };
 
+/**
+ * Match Review Queue API (Admin)
+ */
+export const matchReviewAPI = {
+  /**
+   * Get queue items with filters
+   */
+  getQueue: async (filter) => {
+    return fetchAPI('/admin/match-queue', {
+      method: 'POST',
+      body: JSON.stringify(filter),
+    });
+  },
+
+  /**
+   * Get queue statistics
+   */
+  getStats: async () => {
+    return fetchAPI('/admin/match-queue/stats');
+  },
+
+  /**
+   * Approve a match
+   */
+  approve: async (matchId, notes = null) => {
+    return fetchAPI(`/admin/match-queue/${matchId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    });
+  },
+
+  /**
+   * Reject a match
+   */
+  reject: async (matchId, reason, notes = null) => {
+    return fetchAPI(`/admin/match-queue/${matchId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason, notes }),
+    });
+  },
+
+  /**
+   * Skip a match for later
+   */
+  skip: async (matchId, notes = null) => {
+    return fetchAPI(`/admin/match-queue/${matchId}/skip`, {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    });
+  },
+
+  /**
+   * Bulk approve matches with score >= 8
+   */
+  bulkApprove: async (matchIds, notes = null) => {
+    return fetchAPI('/admin/match-queue/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify({ match_ids: matchIds, notes }),
+    });
+  },
+
+  /**
+   * Manual link entity to PriceCharting
+   */
+  manualLink: async (entityType, entityId, pricechartingId, notes = null) => {
+    return fetchAPI('/admin/match-queue/manual-link', {
+      method: 'POST',
+      body: JSON.stringify({
+        entity_type: entityType,
+        entity_id: entityId,
+        pricecharting_id: pricechartingId,
+        notes,
+      }),
+    });
+  },
+
+  /**
+   * Search PriceCharting for manual linking
+   */
+  search: async (query, entityType) => {
+    return fetchAPI('/admin/match-queue/search', {
+      method: 'POST',
+      body: JSON.stringify({ query, entity_type: entityType }),
+    });
+  },
+};
+
 // Re-export middleware API for convenience
 export { middlewareAPI, isMiddlewareConfigured } from './middlewareApi.js';
 
@@ -665,4 +752,5 @@ export default {
   funkos: funkosAPI,
   contact: contactAPI,
   shipping: shippingAPI,
+  matchReview: matchReviewAPI,
 };
