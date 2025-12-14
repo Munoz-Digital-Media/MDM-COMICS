@@ -435,13 +435,19 @@ def get_comicvine_client() -> ResilientHTTPClient:
 
 
 async def create_comicvine_adapter() -> Optional[ComicVineAdapter]:
-    """Create and return a Comic Vine adapter instance."""
+    """Create and return a Comic Vine adapter instance.
+    
+    Note: v1.12.2 - Client is now auto-initialized via __aenter__.
+    """
     api_key = os.getenv(COMICVINE_API_KEY_ENV)
     if not api_key:
         logger.warning(f"[COMICVINE] {COMICVINE_API_KEY_ENV} not set")
         return None
 
     client = get_comicvine_client()
+    # v1.12.2: Initialize the httpx client
+    await client.__aenter__()
+    
     adapter = ComicVineAdapter(COMICVINE_CONFIG, client, api_key)
 
     # Register with global registry

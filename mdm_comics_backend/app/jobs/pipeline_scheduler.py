@@ -1292,24 +1292,25 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                             match_method = f"fuzzy_score_{best_score}"
 
                                 if pc_id:
-                                    # v1.11.3: Ensure pc_id is int and use explicit SQL cast
+                                    # v1.12.2: Use savepoint for each update to isolate transaction failures
                                     pc_id_int = int(pc_id) if pc_id else None
-                                    await db.execute(text("""
-                                        UPDATE comic_issues
-                                        SET pricecharting_id = CAST(:pc_id AS INTEGER), updated_at = NOW()
-                                        WHERE id = :id
-                                    """), {"id": comic_id, "pc_id": pc_id_int})
-                                    stats["comics_matched"] += 1
-                                    logger.debug(f"[{job_name}] Matched Comic {comic_id} -> PC:{pc_id} via {match_method}")
+                                    try:
+                                        async with db.begin_nested():
+                                            await db.execute(text("""
+                                                UPDATE comic_issues
+                                                SET pricecharting_id = CAST(:pc_id AS INTEGER), updated_at = NOW()
+                                                WHERE id = :id
+                                            """), {"id": comic_id, "pc_id": pc_id_int})
+                                        stats["comics_matched"] += 1
+                                        logger.debug(f"[{job_name}] Matched Comic {comic_id} -> PC:{pc_id} via {match_method}")
+                                    except Exception as update_err:
+                                        logger.warning(f"[{job_name}] Failed to update Comic {comic_id}: {update_err}")
+                                        stats["errors"] += 1
 
                             except Exception as e:
                                 stats["errors"] += 1
                                 logger.warning(f"[{job_name}] Error matching Comic {comic_id}: {e}")
-                                # v1.12.1: Rollback to clear failed transaction state
-                                try:
-                                    await db.rollback()
-                                except:
-                                    pass
+                                # v1.12.2: Continue to next comic - savepoint handles isolation
 
                         # Commit and checkpoint
                         await db.commit()
@@ -2381,7 +2382,7 @@ async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
                 UPDATE pipeline_checkpoints
                 SET is_running = false,
                     last_run_completed = NOW(),
-                    state_data = jsonb_build_object('last_id', :last_id),
+                    state_data = jsonb_build_object('last_id', CAST(:last_id AS integer)),
                     updated_at = NOW()
                 WHERE job_name = :name
             """), {"name": job_name, "last_id": last_id})
@@ -2690,7 +2691,7 @@ async def run_upc_backfill_job(batch_size: int = 100, max_records: int = 0):
                 await db.commit()
                 await db.execute(text("""
                     UPDATE pipeline_checkpoints
-                    SET state_data = jsonb_build_object('last_id', :last_id)
+                    SET state_data = jsonb_build_object('last_id', CAST(:last_id AS integer))
                     WHERE job_name = :name
                 """), {"name": job_name, "last_id": last_id})
                 await db.commit()
@@ -3924,7 +3925,7 @@ async def run_cover_hash_backfill_job(batch_size: int = 50, max_records: int = 0
 
                 await db.execute(text("""
                     UPDATE pipeline_checkpoints
-                    SET state_data = jsonb_build_object('last_id', :last_id),
+                    SET state_data = jsonb_build_object('last_id', CAST(:last_id AS integer)),
                         updated_at = NOW()
                     WHERE job_name = :name
                 """), {"name": job_name, "last_id": last_id})
@@ -4094,7 +4095,7 @@ async def run_image_acquisition_job(batch_size: int = 100, max_records: int = 0)
                     # Update checkpoint
                     await db.execute(text("""
                         UPDATE pipeline_checkpoints
-                        SET state_data = jsonb_build_object('last_id', :last_id),
+                        SET state_data = jsonb_build_object('last_id', CAST(:last_id AS integer)),
                             updated_at = NOW()
                         WHERE job_name = :name
                     """), {"name": job_name, "last_id": last_id})
@@ -4361,7 +4362,7 @@ async def run_multi_source_enrichment_job(
                 if stats["processed"] % 100 == 0:
                     await db.execute(text("""
                         UPDATE pipeline_checkpoints
-                        SET state_data = jsonb_build_object('last_processed_id', :last_id),
+                        SET state_data = jsonb_build_object('last_processed_id', CAST(:last_id AS integer)),
                             updated_at = NOW()
                         WHERE job_name = :name
                     """), {"name": job_name, "last_id": comic_id})

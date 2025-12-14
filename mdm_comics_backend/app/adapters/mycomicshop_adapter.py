@@ -576,8 +576,14 @@ def get_mycomicshop_client() -> ResilientHTTPClient:
 
 
 async def create_mycomicshop_adapter() -> MyComicShopAdapter:
-    """Create and return a MyComicShop adapter instance."""
+    """Create and return a MyComicShop adapter instance.
+    
+    Note: v1.12.2 - Client is now auto-initialized via __aenter__.
+    """
     client = get_mycomicshop_client()
+    # v1.12.2: Initialize the httpx client
+    await client.__aenter__()
+    
     adapter = MyComicShopAdapter(MYCOMICSHOP_CONFIG, client)
 
     # Register with global registry

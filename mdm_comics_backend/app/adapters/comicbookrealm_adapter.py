@@ -1121,8 +1121,15 @@ def get_comicbookrealm_client() -> ResilientHTTPClient:
 
 
 async def create_comicbookrealm_adapter() -> ComicBookRealmAdapter:
-    """Create and return a ComicBookRealm adapter instance."""
+    """Create and return a ComicBookRealm adapter instance.
+    
+    Note: v1.12.2 - Client is now auto-initialized via __aenter__.
+    The adapter should be closed when done using close() or in a context manager.
+    """
     client = get_comicbookrealm_client()
+    # v1.12.2: Initialize the httpx client
+    await client.__aenter__()
+    
     adapter = ComicBookRealmAdapter(COMICBOOKREALM_CONFIG, client)
 
     # Register with global registry
