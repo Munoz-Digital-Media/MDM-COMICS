@@ -30,6 +30,7 @@ Automatic Offset Sync (v1.9.2):
 - Prevents re-processing of already-imported records after interruption
 """
 import asyncio
+import json
 import logging
 import traceback
 from datetime import datetime, timedelta, date
