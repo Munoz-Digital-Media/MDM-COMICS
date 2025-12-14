@@ -117,6 +117,19 @@ except ImportError as e:
     EnrichmentAttempt = None
     GradingTrainingExample = None
 
+# Match Review Queue v1.0.0
+try:
+    from app.models.match_review import (
+        MatchReviewQueue,
+        MatchAuditLog,
+        IsbnSource,
+    )
+except ImportError as e:
+    print(f"Warning: Could not import match_review models: {e}")
+    MatchReviewQueue = None
+    MatchAuditLog = None
+    IsbnSource = None
+
 __all__ = [
     "User",
     "Product",
@@ -205,4 +218,8 @@ __all__ = [
     "SourceQuota",
     "EnrichmentAttempt",
     "GradingTrainingExample",
+    # Match Review Queue v1.0.0
+    "MatchReviewQueue",
+    "MatchAuditLog",
+    "IsbnSource",
 ]

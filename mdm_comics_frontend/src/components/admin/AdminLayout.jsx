@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, ShoppingCart, BarChart3,
-  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck, Camera, Users, Palette
+  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck, Camera, Users, Palette, GitCompare
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
@@ -16,12 +16,14 @@ import ShipmentList from './shipping/ShipmentList';
 import ScannerApp from '../scanner/ScannerApp';
 import UserList from './users/UserList';
 import BrandAssets from './branding/BrandAssets';
+import { MatchReviewQueue } from './match-review';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'products', label: 'Products', icon: Package },
   { id: 'scanner', label: 'Scanner', icon: Camera },
   { id: 'queue', label: 'Scan Queue', icon: QrCode },
+  { id: 'match-review', label: 'Match Review', icon: GitCompare },
   { id: 'orders', label: 'Orders', icon: ShoppingCart },
   { id: 'shipping', label: 'Shipping', icon: Truck },
   { id: 'users', label: 'Users', icon: Users },
@@ -49,6 +51,8 @@ export default function AdminLayout({ onClose }) {
         return <ScannerApp onClose={() => setActiveSection('dashboard')} embedded />;
       case 'queue':
         return <ScanQueue />;
+      case 'match-review':
+        return <MatchReviewQueue />;
       case 'orders':
         return <OrderList />;
       case 'shipping':
