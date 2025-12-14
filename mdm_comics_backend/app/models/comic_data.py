@@ -93,11 +93,17 @@ class ComicSeries(Base):
 
 class ComicIssue(Base):
     """Individual comic book issues - the main data we care about
-    
+
     v1.6.0: Added GCD (Grand Comics Database) integration fields
     - gcd_id: Unique GCD issue identifier
     - gcd_series_id: GCD series foreign key
     - gcd_publisher_id: GCD publisher foreign key
+
+    v1.11.0: Added ComicBookRealm market metrics
+    - est_print_run: Estimated print run (rarity predictor for ML)
+    - searched_count: Demand signal (higher = more interest)
+    - owned_count: Supply signal (lower = scarcer in collections)
+    - demand_supply_ratio: Computed ratio for ML features
     """
     __tablename__ = 'comic_issues'
 
@@ -173,6 +179,17 @@ class ComicIssue(Base):
     handle = Column(String(255))              # URL-friendly identifier
     year = Column(Integer)                    # Publication year
     series_name = Column(String(255))         # Extracted series name
+
+    # -------------------------------------------------------------------------
+    # ComicBookRealm Market Metrics (v1.11.0 - ML Features)
+    # These fields provide rarity and demand signals for price prediction
+    # -------------------------------------------------------------------------
+    est_print_run = Column(Integer)           # Estimated print run (lower = rarer)
+    searched_count = Column(Integer)          # How many times searched (demand)
+    owned_count = Column(Integer)             # How many in collections (supply)
+    demand_supply_ratio = Column(Numeric(8, 2))  # Computed ratio for ML
+    cbr_url = Column(Text)                    # ComicBookRealm source URL
+    cbr_fetched_at = Column(DateTime)         # When CBR data was last fetched
 
     # Raw Metron response - STORE EVERYTHING
     raw_data = Column(JSON)
