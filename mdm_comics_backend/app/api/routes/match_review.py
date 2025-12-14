@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import get_current_user, require_admin
+from app.api.deps import get_current_user, get_current_admin
 from app.models.user import User
 from app.models.match_review import MatchReviewQueue
 from app.schemas.match_review import (
@@ -40,7 +40,7 @@ router = APIRouter(prefix="/admin/match-queue", tags=["Match Review"])
 async def list_match_queue(
     filter: MatchQueueFilter,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """
     List pending matches for review.
@@ -99,7 +99,7 @@ async def list_match_queue(
 @router.get("/stats", response_model=MatchQueueStats)
 async def get_queue_stats(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """Get queue statistics for dashboard."""
     service = MatchReviewService(db)
@@ -114,7 +114,7 @@ async def get_queue_stats(
 async def get_match_details(
     match_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """Get full details of a match for review."""
     match = await db.get(MatchReviewQueue, match_id)
@@ -159,7 +159,7 @@ async def approve_match(
     match_id: int,
     approval: MatchApproval,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """Approve a match and link the entity to PriceCharting."""
     service = MatchReviewService(db)
@@ -189,7 +189,7 @@ async def reject_match(
     match_id: int,
     rejection: MatchRejection,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """Reject a match candidate."""
     service = MatchReviewService(db)
@@ -220,7 +220,7 @@ async def skip_match(
     match_id: int,
     skip: MatchSkip,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """Skip a match for later review."""
     match = await db.get(MatchReviewQueue, match_id)
@@ -251,7 +251,7 @@ async def skip_match(
 async def bulk_approve_matches(
     bulk: BulkApproval,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """
     Bulk approve matches with score >= 8.
@@ -282,7 +282,7 @@ async def bulk_approve_matches(
 async def manual_link(
     link: ManualLink,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """Manually link an entity to a PriceCharting product."""
     from datetime import datetime
@@ -332,7 +332,7 @@ async def manual_link(
 async def search_pricecharting(
     search: ManualSearch,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """Search PriceCharting for manual linking."""
     import os
