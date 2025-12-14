@@ -2572,11 +2572,20 @@ async def run_gcd_import_job(
                         upc = truncate(record.get("upc"), 50)
                         issue_number = truncate(record.get("issue_number"), 50)
                         story_title = truncate(record.get("story_title"), 500)
-                        # v1.10.5: Add series_name for cover enrichment search queries
                         series_name = truncate(record.get("series_name"), 255)
 
-                        # v1.10.5: Store ALL raw GCD data - 1:1 foundation
-                        # This preserves everything GCD gives us for future use
+                        # v1.10.7: Extract ALL GCD fields into proper columns
+                        publisher_name = truncate(record.get("publisher_name"), 255)
+                        series_sort_name = truncate(record.get("series_sort_name"), 255)
+                        series_year_began = record.get("series_year_began")
+                        series_year_ended = record.get("series_year_ended")
+                        volume = truncate(record.get("volume"), 50)
+                        variant_name = truncate(record.get("variant_name"), 255)
+                        variant_of_gcd_id = record.get("variant_of_gcd_id")
+                        # Use series_year_began as the issue year
+                        year = series_year_began
+
+                        # Store raw GCD data as backup
                         raw_data = json.dumps(record) if record else None
 
                         # v1.10.3: Map cover_date and price from GCD data
@@ -2592,7 +2601,7 @@ async def run_gcd_import_job(
                         existing_row = existing.fetchone()
 
                         if existing_row:
-                            # UPDATE existing record
+                            # UPDATE existing record with ALL GCD fields
                             comic_id = existing_row.id
                             await db.execute(text("""
                                 UPDATE comic_issues SET
@@ -2601,6 +2610,13 @@ async def run_gcd_import_job(
                                     number = COALESCE(:issue_number, number),
                                     issue_name = COALESCE(:story_title, issue_name),
                                     series_name = COALESCE(:series_name, series_name),
+                                    publisher_name = COALESCE(:publisher_name, publisher_name),
+                                    series_sort_name = COALESCE(:series_sort_name, series_sort_name),
+                                    series_year_began = COALESCE(:series_year_began, series_year_began),
+                                    series_year_ended = COALESCE(:series_year_ended, series_year_ended),
+                                    volume = COALESCE(:volume, volume),
+                                    variant_name = COALESCE(:variant_name, variant_name),
+                                    year = COALESCE(:year, year),
                                     isbn = COALESCE(:isbn, isbn),
                                     upc = COALESCE(:upc, upc),
                                     page_count = COALESCE(:page_count, page_count),
@@ -2616,6 +2632,13 @@ async def run_gcd_import_job(
                                 "issue_number": issue_number,
                                 "story_title": story_title,
                                 "series_name": series_name,
+                                "publisher_name": publisher_name,
+                                "series_sort_name": series_sort_name,
+                                "series_year_began": series_year_began,
+                                "series_year_ended": series_year_ended,
+                                "volume": volume,
+                                "variant_name": variant_name,
+                                "year": year,
                                 "isbn": isbn,
                                 "upc": upc,
                                 "page_count": record.get("page_count"),
@@ -2625,17 +2648,21 @@ async def run_gcd_import_job(
                             })
                             batch_stats["updated"] += 1
                         else:
-                            # INSERT new record
+                            # INSERT new record with ALL GCD fields
                             result = await db.execute(text("""
                                 INSERT INTO comic_issues (
                                     gcd_id, gcd_series_id, gcd_publisher_id,
-                                    number, issue_name, series_name, isbn, upc, page_count,
-                                    cover_date, price, raw_data,
+                                    number, issue_name, series_name, publisher_name,
+                                    series_sort_name, series_year_began, series_year_ended,
+                                    volume, variant_name, year,
+                                    isbn, upc, page_count, cover_date, price, raw_data,
                                     created_at, updated_at
                                 ) VALUES (
                                     :gcd_id, :gcd_series_id, :gcd_publisher_id,
-                                    :issue_number, :story_title, :series_name, :isbn, :upc, :page_count,
-                                    :cover_date, :price, :raw_data,
+                                    :issue_number, :story_title, :series_name, :publisher_name,
+                                    :series_sort_name, :series_year_began, :series_year_ended,
+                                    :volume, :variant_name, :year,
+                                    :isbn, :upc, :page_count, :cover_date, :price, :raw_data,
                                     NOW(), NOW()
                                 )
                                 RETURNING id
@@ -2646,6 +2673,13 @@ async def run_gcd_import_job(
                                 "issue_number": issue_number,
                                 "story_title": story_title,
                                 "series_name": series_name,
+                                "publisher_name": publisher_name,
+                                "series_sort_name": series_sort_name,
+                                "series_year_began": series_year_began,
+                                "series_year_ended": series_year_ended,
+                                "volume": volume,
+                                "variant_name": variant_name,
+                                "year": year,
                                 "isbn": isbn,
                                 "upc": upc,
                                 "page_count": record.get("page_count"),
