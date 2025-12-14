@@ -311,10 +311,8 @@ import AboutContact from "./components/AboutContact";
 
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ fontFamily: "'Barlow', sans-serif" }}>
-        {/* Google Fonts & Custom CSS */}
+        {/* Custom CSS Animations - FE-PERF-002/003: Font loading moved to index.html */}
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Bangers&family=Barlow:wght@400;500;600;700&display=swap');
-
           .font-comic { font-family: 'Bangers', cursive; letter-spacing: 0.05em; }
 
           .product-card {

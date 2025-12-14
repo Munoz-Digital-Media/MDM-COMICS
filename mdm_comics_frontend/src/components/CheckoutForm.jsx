@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import {
   Elements,
@@ -123,11 +123,42 @@ function PaymentForm({ clientSecret, cartItems, total, onSuccess, onCancel }) {
 
 // Main checkout component
 // P1-5: Removed token prop - auth handled via HttpOnly cookies
+// OPT-005: Added cleanup to cancel reservation on unmount
 export default function CheckoutForm({ cartItems, total, onSuccess, onCancel }) {
   const [stripePromise, setStripePromise] = useState(null);
   const [clientSecret, setClientSecret] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // OPT-005: Track payment intent ID and order completion for cleanup
+  const paymentIntentIdRef = useRef(null);
+  const orderCompletedRef = useRef(false);
+
+  // OPT-005: Cleanup function to cancel reservation
+  const cancelReservation = useCallback(async () => {
+    if (paymentIntentIdRef.current && !orderCompletedRef.current) {
+      try {
+        await checkoutAPI.cancelReservation(paymentIntentIdRef.current);
+        console.log('Reservation cancelled successfully');
+      } catch (err) {
+        // Silently fail - reservation will timeout anyway
+        console.debug('Failed to cancel reservation:', err);
+      }
+    }
+  }, []);
+
+  // OPT-005: Cancel reservation on unmount
+  useEffect(() => {
+    return () => {
+      cancelReservation();
+    };
+  }, [cancelReservation]);
+
+  // Wrap onSuccess to mark order as completed
+  const handleSuccess = useCallback((order) => {
+    orderCompletedRef.current = true;
+    onSuccess(order);
+  }, [onSuccess]);
 
   useEffect(() => {
     initializeCheckout();
@@ -150,6 +181,11 @@ export default function CheckoutForm({ cartItems, total, onSuccess, onCancel }) 
       // P1-5: No token needed - auth via cookies
       const paymentIntent = await checkoutAPI.createPaymentIntent(null, items);
       setClientSecret(paymentIntent.client_secret);
+
+      // OPT-005: Store payment intent ID for cleanup
+      // Extract from client_secret format: pi_xxx_secret_yyy
+      const piId = paymentIntent.client_secret?.split('_secret_')[0];
+      paymentIntentIdRef.current = piId;
     } catch (err) {
       setError(err.message || 'Failed to initialize checkout');
     } finally {
@@ -207,7 +243,7 @@ export default function CheckoutForm({ cartItems, total, onSuccess, onCancel }) 
         clientSecret={clientSecret}
         cartItems={cartItems}
         total={total}
-        onSuccess={onSuccess}
+        onSuccess={handleSuccess}
         onCancel={onCancel}
       />
     </Elements>

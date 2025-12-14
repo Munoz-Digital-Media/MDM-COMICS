@@ -174,18 +174,41 @@ export const comicsAPI = {
 
 /**
  * Products API (local inventory)
+ * FE-PERF-004: Added pagination support
  */
 export const productsAPI = {
-  getAll: async () => {
-    return fetchAPI('/products');
+  /**
+   * Get all products with optional pagination and filters
+   * @param {Object} options - Query options
+   * @param {number} options.page - Page number (default: 1)
+   * @param {number} options.per_page - Items per page (default: 100, max: 100)
+   * @param {string} options.category - Filter by category
+   * @param {string} options.sort - Sort order
+   * @param {AbortSignal} options.signal - AbortController signal
+   */
+  getAll: async ({ page = 1, per_page = 100, category, sort, signal } = {}) => {
+    const params = new URLSearchParams();
+    params.append('page', page);
+    params.append('per_page', per_page);
+    if (category && category !== 'all') params.append('category', category);
+    if (sort) params.append('sort', sort);
+
+    const options = {};
+    if (signal) options.signal = signal;
+
+    return fetchAPI(`/products?${params.toString()}`, options);
   },
 
   getById: async (id) => {
     return fetchAPI(`/products/${id}`);
   },
 
-  search: async (query) => {
-    return fetchAPI(`/products?search=${encodeURIComponent(query)}`);
+  search: async (query, { page = 1, per_page = 100 } = {}) => {
+    const params = new URLSearchParams();
+    params.append('search', query);
+    params.append('page', page);
+    params.append('per_page', per_page);
+    return fetchAPI(`/products?${params.toString()}`);
   },
 };
 
