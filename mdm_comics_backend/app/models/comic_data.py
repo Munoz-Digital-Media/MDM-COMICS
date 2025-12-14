@@ -116,6 +116,23 @@ class ComicIssue(Base):
     gcd_series_id = Column(Integer, index=True, nullable=True)
     gcd_publisher_id = Column(Integer, index=True, nullable=True)
 
+    # -------------------------------------------------------------------------
+    # Multi-Source Data Distribution (v1.11.1)
+    # Fields distributed from raw_data for direct querying
+    # -------------------------------------------------------------------------
+    data_source = Column(String(50), index=True)   # 'gcd', 'metron', 'comicvine'
+    data_source_id = Column(String(100))           # Source's ID for the record
+
+    # Series metadata (quick access without joins)
+    series_sort_name = Column(String(500))         # For alphabetical sorting
+    series_year_began = Column(Integer, index=True)
+    series_year_ended = Column(Integer)
+    publisher_name = Column(String(255), index=True)  # Denormalized for queries
+
+    # Additional fields
+    volume = Column(Integer)                       # Series volume number
+    story_title = Column(String(500))              # Story/chapter title
+
     # Series relationship
     series_id = Column(Integer, ForeignKey('comic_series.id'))
     series = relationship("ComicSeries", back_populates="issues")
