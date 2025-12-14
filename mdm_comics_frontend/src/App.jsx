@@ -16,14 +16,18 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
   import AuthModal from "./components/AuthModal";
 import AboutContact from "./components/AboutContact";
 
+// FE-PERF-003: CSS animations moved to separate file for caching
+import './styles/animations.css';
+
   // ============================================================================
   // BUILD INFO - Update these on each release
+  // FE-STATE-002: buildDate now injected at build time via vite.config.js
   // ============================================================================
   const BUILD_INFO = {
     version: "1.5.0",
     buildNumber: 15,
-    buildDate: new Date().toISOString(),
-    environment: "development"
+    buildDate: typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : new Date().toISOString(),
+    environment: typeof __BUILD_ENV__ !== 'undefined' ? __BUILD_ENV__ : "development"
   };
 
   // P3-12: UNDER_CONSTRUCTION flag is now fetched from API via /api/config
@@ -160,7 +164,8 @@ import AboutContact from "./components/AboutContact";
       });
     }, [showNotification]);
 
-    const updateQuantity = (productId, newQuantity) => {
+    // NASTY-005: Wrapped in useCallback with products dependency to prevent stale closure
+    const updateQuantity = useCallback((productId, newQuantity) => {
       setCart(prevCart => {
         if (newQuantity <= 0) {
           setTimeout(() => showNotification("Item removed from cart"), 0);
@@ -173,7 +178,7 @@ import AboutContact from "./components/AboutContact";
           item.id === productId ? { ...item, quantity: newQuantity } : item
         );
       });
-    };
+    }, [products, showNotification]);
 
     const removeFromCart = (productId) => {
       setCart(prevCart => prevCart.filter(item => item.id !== productId));
@@ -286,6 +291,22 @@ import AboutContact from "./components/AboutContact";
         .slice(0, count);
     }, [categorizedProducts]);
 
+    // FE-PERF-005: Memoized sorted category products for grid view
+    const sortedCategoryProducts = useMemo(() => {
+      const categoryProducts = selectedCategory === "bagged-boarded"
+        ? categorizedProducts.comics
+        : categorizedProducts[selectedCategory] || [];
+
+      return [...categoryProducts].sort((a, b) => {
+        switch (sortBy) {
+          case "price-low": return a.price - b.price;
+          case "price-high": return b.price - a.price;
+          case "rating": return (b.rating || 0) - (a.rating || 0);
+          default: return (b.featured ? 1 : 0) - (a.featured ? 1 : 0);
+        }
+      });
+    }, [categorizedProducts, selectedCategory, sortBy]);
+
     // ============================================================================
     // RENDER
     // ============================================================================
@@ -311,70 +332,6 @@ import AboutContact from "./components/AboutContact";
 
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ fontFamily: "'Barlow', sans-serif" }}>
-        {/* Custom CSS Animations - FE-PERF-002/003: Font loading moved to index.html */}
-        <style>{`
-          .font-comic { font-family: 'Bangers', cursive; letter-spacing: 0.05em; }
-
-          .product-card {
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-          }
-
-          .product-card:hover {
-            transform: translateY(-8px) scale(1.02);
-            box-shadow: 0 25px 50px -12px rgba(249, 115, 22, 0.25);
-          }
-
-          .pulse-glow {
-            animation: pulseGlow 2s infinite;
-          }
-
-          @keyframes pulseGlow {
-            0%, 100% { box-shadow: 0 0 20px rgba(249, 115, 22, 0.4); }
-            50% { box-shadow: 0 0 40px rgba(249, 115, 22, 0.6); }
-          }
-
-          .slide-in {
-            animation: slideIn 0.3s ease-out;
-          }
-
-          @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-          }
-
-          .fade-up {
-            animation: fadeUp 0.5s ease-out forwards;
-            opacity: 0;
-          }
-
-          @keyframes fadeUp {
-            from { transform: translateY(20px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-          }
-
-          .notification-enter {
-            animation: notificationEnter 0.3s ease-out;
-          }
-
-          @keyframes notificationEnter {
-            from { transform: translateY(-100%); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-          }
-
-          .hero-gradient {
-            background: radial-gradient(ellipse at top, rgba(249, 115, 22, 0.12) 0%, transparent 50%),
-                        radial-gradient(ellipse at bottom right, rgba(249, 115, 22, 0.06) 0%, transparent 40%);
-          }
-
-          .see-more-link {
-            transition: all 0.3s ease;
-          }
-          .see-more-link:hover {
-            text-shadow: 0 0 12px rgba(249, 115, 22, 0.6), 0 0 24px rgba(249, 115, 22, 0.4);
-            transform: translateX(4px);
-          }
-        `}</style>
-
         {/* Notification Toast */}
         {notification && (
           <div className={`fixed top-4 right-4 z-50 notification-enter px-6 py-3 rounded-lg shadow-xl ${
@@ -729,21 +686,9 @@ import AboutContact from "./components/AboutContact";
                 </div>
               </div>
 
-              {/* Products Grid - 5 columns - uses memoized categorizedProducts */}
+              {/* Products Grid - 5 columns - FE-PERF-005: uses memoized sortedCategoryProducts */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {(selectedCategory === "bagged-boarded"
-                    ? categorizedProducts.comics
-                    : categorizedProducts[selectedCategory] || []
-                  )
-                  .slice() // Create copy before sorting
-                  .sort((a, b) => {
-                    switch (sortBy) {
-                      case "price-low": return a.price - b.price;
-                      case "price-high": return b.price - a.price;
-                      case "rating": return (b.rating || 0) - (a.rating || 0);
-                      default: return (b.featured ? 1 : 0) - (a.featured ? 1 : 0);
-                    }
-                  })
+                {sortedCategoryProducts
                   .slice(0, itemsPerPage)
                   .map((product, index) => (
                     <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
