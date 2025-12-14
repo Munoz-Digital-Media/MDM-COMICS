@@ -39,7 +39,15 @@ import AboutContact from "./components/AboutContact";
     const { products, loading: productsLoading, error: productsError } = useProducts();
 
     // State management
-    const [cart, setCart] = useState([]);
+    // FE-STATE-001: Persist cart to localStorage to survive page refresh
+    const [cart, setCart] = useState(() => {
+      try {
+        const saved = localStorage.getItem('mdm_cart');
+        return saved ? JSON.parse(saved) : [];
+      } catch {
+        return [];
+      }
+    });
     const [isCartOpen, setIsCartOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedCategory, setSelectedCategory] = useState("all");
@@ -118,6 +126,15 @@ import AboutContact from "./components/AboutContact";
         }
       };
     }, []);
+
+    // FE-STATE-001: Persist cart to localStorage on changes
+    useEffect(() => {
+      try {
+        localStorage.setItem('mdm_cart', JSON.stringify(cart));
+      } catch {
+        // Ignore localStorage errors (quota exceeded, private browsing, etc.)
+      }
+    }, [cart]);
 
     // Cart operations - wrapped in useCallback for stable references (fixes ProductCard memoization)
     // Per constitution_ui.json §6: "Every action returns feedback state; critical flows persist"
