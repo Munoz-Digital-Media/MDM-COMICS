@@ -23,6 +23,9 @@ DEFAULT_CORS_ORIGINS = [
     "http://127.0.0.1:5173",
     "https://mdmcomics.com",
     "https://www.mdmcomics.com",
+    # Railway development/staging
+    "https://mdm-comics-frontend-development.up.railway.app",
+    "https://mdm-comics-frontend-staging.up.railway.app",
 ]
 
 
