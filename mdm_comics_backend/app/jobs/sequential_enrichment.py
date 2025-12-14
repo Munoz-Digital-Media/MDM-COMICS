@@ -339,14 +339,20 @@ async def query_metron(
 ) -> Dict[str, Any]:
     """Query Metron for missing fields. Returns dict of field->value."""
     from app.adapters.metron_adapter import MetronAdapter
+    from app.core.http_client import get_metron_client
 
     updates = {}
     source = "metron"
 
     try:
-        adapter = MetronAdapter()
+        # Properly initialize the HTTP client
+        client = get_metron_client()
+        await client.__aenter__()
+        adapter = MetronAdapter(client=client)
+        
         if not await adapter.health_check():
             logger.warning(f"[{source}] Health check failed")
+            await client.__aexit__(None, None, None)
             return updates
 
         # Check if source is available (non-blocking check)
@@ -433,6 +439,12 @@ async def query_metron(
             rate_mgr.get_limiter(source).record_rate_limit()
         else:
             logger.warning(f"[{source}] Error querying: {e}")
+    finally:
+        # Cleanup client
+        try:
+            await client.__aexit__(None, None, None)
+        except:
+            pass
 
     if updates:
         logger.info(f"[{source}] Found {len(updates)} fields for comic {comic.get('id')}")
@@ -697,12 +709,14 @@ async def query_comicbookrealm(
             return updates
 
         if comic.get("series_name") and comic.get("number"):
-            # CBR search
-            result = await adapter.search_issue(
+            # CBR search - use search_issues (plural) which returns list
+            fetch_result = await adapter.search_issues(
                 series_name=comic["series_name"],
                 issue_number=str(comic["number"]),
-                publisher=comic.get("publisher_name"),
             )
+            # FetchResult has .records attribute containing the list
+            results = fetch_result.records if fetch_result.success else []
+            result = results[0] if results else None
 
             if result:
                 rate_mgr.get_limiter(source).record_success()
