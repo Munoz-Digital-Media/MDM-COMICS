@@ -188,6 +188,9 @@ class ComicIssue(Base):
     arcs = relationship("ComicArc", secondary=issue_arcs, back_populates="issues")
     variants = relationship("ComicIssue", backref="variant_of", remote_side=[id])
 
+    # v1.11.0: ISBN source tracking for multi-source enrichment
+    isbn_sources = relationship("IsbnSource", back_populates="comic_issue")
+
 
 class ComicCharacter(Base):
     """Characters appearing in comics"""
