@@ -68,6 +68,16 @@ except ImportError as e:
     price_intelligence = None
     PRICE_INTELLIGENCE_ROUTES_AVAILABLE = False
 
+# Match Review Queue v1.0.0 - Human review for uncertain matches
+try:
+    from app.api.routes import match_review
+    MATCH_REVIEW_ROUTES_AVAILABLE = True
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Could not import match_review routes: {e}")
+    match_review = None
+    MATCH_REVIEW_ROUTES_AVAILABLE = False
+
 # Pipeline Scheduler v1.6.0 - automated data acquisition jobs
 try:
     from app.jobs.pipeline_scheduler import pipeline_scheduler
@@ -470,6 +480,12 @@ if DATA_HEALTH_ROUTES_AVAILABLE:
     app.include_router(data_health.router, prefix="/api/admin", tags=["Admin - Data Health"])
 else:
     logger.warning("Data health routes disabled - import failed")
+
+# Match Review Queue v1.0.0
+if MATCH_REVIEW_ROUTES_AVAILABLE:
+    app.include_router(match_review.router, prefix="/api", tags=["Admin - Match Review"])
+else:
+    logger.warning("Match review routes disabled - import failed")
 
 # Price Intelligence v1.7.0
 if PRICE_INTELLIGENCE_ROUTES_AVAILABLE:
