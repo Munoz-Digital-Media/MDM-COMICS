@@ -1139,7 +1139,8 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                     while True:
                         # v1.10.5: Prioritize ISBN (most precise), then UPC, then fallback
                         result = await db.execute(text("""
-                            SELECT id, upc, isbn, isbn_normalized, issue_name, number
+                            SELECT id, upc, isbn, isbn_normalized, 
+                                   publisher_name, series_name, volume, issue_name, number, variant_name
                             FROM comic_issues
                             WHERE pricecharting_id IS NULL
                               AND id > :last_id
@@ -1198,30 +1199,75 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                             pc_id = products[0].get("id")
                                             match_method = "upc"
 
-                                # Method 2: Title search with console filter
-                                if not pc_id and comic.issue_name:
-                                    search_query = comic.issue_name
+                                # Method 2: Multi-element fuzzy match (v1.10.5)
+                                # Uses: publisher, series_name, volume, issue_number, variant
+                                if not pc_id and comic.series_name:
+                                    # Build search query from available elements
+                                    search_parts = []
+                                    if comic.series_name:
+                                        search_parts.append(comic.series_name)
                                     if comic.number:
-                                        search_query = f"{comic.issue_name} #{comic.number}"
-
+                                        search_parts.append(f"#{comic.number}")
+                                    
+                                    search_query = " ".join(search_parts)[:100]
+                                    
                                     response = await client.get(
                                         "https://www.pricecharting.com/api/products",
                                         params={
                                             "t": pc_token,
-                                            "q": search_query[:100],
+                                            "q": search_query,
                                             "console-name": "Comics"
                                         }
                                     )
                                     if response.status_code == 200:
                                         data = response.json()
                                         products = data.get("products", [])
-                                        for prod in products[:5]:
+                                        
+                                        # Score each product by matching elements
+                                        best_match = None
+                                        best_score = 0
+                                        
+                                        for prod in products[:10]:
                                             prod_name = prod.get("product-name", "").lower()
-                                            if comic.issue_name and comic.issue_name.lower() in prod_name:
-                                                if comic.number and f"#{comic.number}" in prod_name:
-                                                    pc_id = prod.get("id")
-                                                    match_method = "title_exact"
-                                                    break
+                                            score = 0
+                                            
+                                            # Check series_name (required, +3 points)
+                                            if comic.series_name and comic.series_name.lower() in prod_name:
+                                                score += 3
+                                            else:
+                                                continue  # Series must match
+                                            
+                                            # Check issue number (+2 points)
+                                            if comic.number:
+                                                # Try various formats: #1, #001, Issue 1
+                                                num_str = str(comic.number).lstrip("0") or "0"
+                                                if f"#{comic.number}" in prod_name or f"#{num_str}" in prod_name:
+                                                    score += 2
+                                                elif f"issue {num_str}" in prod_name.lower():
+                                                    score += 2
+                                            
+                                            # Check volume (+1 point)
+                                            if comic.volume and comic.volume.lower() in prod_name:
+                                                score += 1
+                                            
+                                            # Check publisher (+1 point)  
+                                            if comic.publisher_name and comic.publisher_name.lower() in prod_name:
+                                                score += 1
+                                            
+                                            # Check variant (-0.5 if we have variant but product doesn't mention it)
+                                            if comic.variant_name:
+                                                variant_lower = comic.variant_name.lower()
+                                                if variant_lower in prod_name or "variant" in prod_name:
+                                                    score += 1
+                                            
+                                            if score > best_score:
+                                                best_score = score
+                                                best_match = prod
+                                        
+                                        # Require minimum score of 5 (series + number match at least)
+                                        if best_match and best_score >= 5:
+                                            pc_id = best_match.get("id")
+                                            match_method = f"fuzzy_score_{best_score}"
 
                                 if pc_id:
                                     await db.execute(text("""
