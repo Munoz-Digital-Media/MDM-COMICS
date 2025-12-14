@@ -2056,7 +2056,8 @@ async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
                                     current_story = {
                                         "number": int(match.group(1)),
                                         "title": match.group(2).strip('"'),
-                                        "credits": {}
+                                        "credits": {},
+                                        "characters": [],  # Will be populated from Appearing sections
                                     }
                                     continue
 
@@ -2075,9 +2076,62 @@ async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
                             if current_story:
                                 stories.append(current_story)
 
+                            # Extract character appearances from "Appearing in" sections
+                            has_first_appearance = False
+                            has_death = False
+
+                            for h2 in soup.find_all("h2"):
+                                h2_text = h2.get_text(strip=True)
+                                if h2_text.startswith("Appearing in"):
+                                    # Match to story by title
+                                    story_match = re.search(r'Appearing in "(.+?)"', h2_text)
+                                    if story_match:
+                                        story_title = story_match.group(1)
+                                        # Find matching story
+                                        for story in stories:
+                                            if story["title"] == story_title:
+                                                # Parse character list
+                                                next_elem = h2.find_next_sibling()
+                                                while next_elem and next_elem.name != "h2":
+                                                    if hasattr(next_elem, "find_all"):
+                                                        for li in next_elem.find_all("li"):
+                                                            li_text = li.get_text(strip=True)
+                                                            link = li.find("a")
+                                                            if link:
+                                                                char_name = link.get_text(strip=True)
+                                                                if char_name:
+                                                                    char_data = {
+                                                                        "name": char_name,
+                                                                        "is_first_appearance": "(First appearance" in li_text,
+                                                                        "is_death": "(Death" in li_text,
+                                                                        "is_cameo": "(Cameo" in li_text,
+                                                                        "is_unnamed": "unnamed" in li_text.lower(),
+                                                                    }
+                                                                    story["characters"].append(char_data)
+                                                                    if char_data["is_first_appearance"]:
+                                                                        has_first_appearance = True
+                                                                    if char_data["is_death"]:
+                                                                        has_death = True
+                                                    next_elem = next_elem.find_next_sibling()
+                                                break
+
                             if not stories:
                                 stats["not_found"] += 1
                                 continue
+
+                            # Update comic_issues with significance flags
+                            if has_first_appearance or has_death:
+                                await db.execute(text("""
+                                    UPDATE comic_issues
+                                    SET has_first_appearance = :first,
+                                        has_death = :death,
+                                        updated_at = NOW()
+                                    WHERE id = :comic_id
+                                """), {
+                                    "comic_id": comic_id,
+                                    "first": has_first_appearance,
+                                    "death": has_death,
+                                })
 
                             # Save stories and credits to database
                             for story_data in stories:
@@ -2130,12 +2184,73 @@ async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
                                                 })
                                                 stats["credits_linked"] += 1
 
+                                    # Save character appearances for this story
+                                    for char_data in story_data.get("characters", []):
+                                        if not char_data.get("name"):
+                                            continue
+
+                                        # Get or create character
+                                        char_result = await db.execute(text("""
+                                            INSERT INTO characters (name, created_at, updated_at)
+                                            VALUES (:name, NOW(), NOW())
+                                            ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
+                                            RETURNING id
+                                        """), {"name": char_data["name"][:255]})
+                                        char_row = char_result.fetchone()
+                                        char_id = char_row.id if char_row else None
+
+                                        if char_id:
+                                            # Determine appearance type
+                                            appearance_type = "featured"
+                                            if char_data.get("is_cameo"):
+                                                appearance_type = "cameo"
+                                            elif char_data.get("is_unnamed"):
+                                                appearance_type = "background"
+
+                                            # Link character to story
+                                            await db.execute(text("""
+                                                INSERT INTO story_characters (
+                                                    story_id, character_id, appearance_type,
+                                                    is_first_appearance, is_death, created_at
+                                                )
+                                                VALUES (:story_id, :char_id, :appearance_type,
+                                                        :is_first, :is_death, NOW())
+                                                ON CONFLICT (story_id, character_id) DO UPDATE
+                                                SET is_first_appearance = EXCLUDED.is_first_appearance,
+                                                    is_death = EXCLUDED.is_death
+                                            """), {
+                                                "story_id": story_id,
+                                                "char_id": char_id,
+                                                "appearance_type": appearance_type,
+                                                "is_first": char_data.get("is_first_appearance", False),
+                                                "is_death": char_data.get("is_death", False),
+                                            })
+
+                                            # Update character's first appearance if this is it
+                                            if char_data.get("is_first_appearance"):
+                                                await db.execute(text("""
+                                                    UPDATE characters
+                                                    SET first_appearance_story_id = :story_id
+                                                    WHERE id = :char_id
+                                                    AND first_appearance_story_id IS NULL
+                                                """), {"char_id": char_id, "story_id": story_id})
+
+                                            # Mark character as deceased if death occurs
+                                            if char_data.get("is_death"):
+                                                await db.execute(text("""
+                                                    UPDATE characters
+                                                    SET death_story_id = :story_id,
+                                                        is_deceased = true
+                                                    WHERE id = :char_id
+                                                """), {"char_id": char_id, "story_id": story_id})
+
                             await db.commit()
                             stats["enriched"] += 1
 
+                            char_count = sum(len(s.get("characters", [])) for s in stories)
                             logger.debug(
                                 f"[{job_name}] Enriched {series} #{number}: "
-                                f"{len(stories)} stories"
+                                f"{len(stories)} stories, {char_count} characters"
                             )
 
                         except Exception as e:

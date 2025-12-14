@@ -8,6 +8,12 @@ import { analytics } from './services/analyticsCollector'
 import { replay } from './services/sessionReplay'
 import { vitals } from './services/webVitals'
 
+// FE-ERR-001: Error tracking
+import { installGlobalHandlers } from './services/errorTracking'
+
+// Initialize error tracking first (catches early errors)
+installGlobalHandlers()
+
 // Initialize analytics on app load
 analytics.init()
 

@@ -31,6 +31,8 @@ from sqlalchemy import select, func, text
 
 from app.api.routes import products, users, auth, cart, orders, grading, comics, checkout, funkos, analytics, coupons, admin, contact
 from app.api.routes import shipping
+# FE-ERR-001: Client error reporting
+from app.api.routes import errors
 # User Management System v1.0.0
 from app.api.routes import admin_users, admin_roles, admin_dsar
 # Brand Asset Management v1.0.0
@@ -447,6 +449,8 @@ app.include_router(admin.router, prefix="/api", tags=["Admin"])
 app.include_router(shipping.router, prefix="/api", tags=["Shipping"])
 # IMPL-001: Contact Form
 app.include_router(contact.router, prefix="/api", tags=["Contact"])
+# FE-ERR-001: Client error reporting
+app.include_router(errors.router, prefix="/api", tags=["Error Reporting"])
 # User Management System v1.0.0
 app.include_router(admin_users.router, prefix="/api/admin/users", tags=["Admin - Users"])
 app.include_router(admin_roles.router, prefix="/api/admin/roles", tags=["Admin - Roles"])

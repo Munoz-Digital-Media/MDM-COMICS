@@ -294,19 +294,29 @@ class Settings(BaseSettings):
                     "Configure proper database connection."
                 )
 
-            # P3-15: Check CORS origins in production
-            cors_warnings = []
+            # NASTY-004: Require explicit PII encryption keys in production
+            # Changing SECRET_KEY would break PII decryption for existing records
+            if not self.PII_ENCRYPTION_KEY:
+                errors.append(
+                    "PII_ENCRYPTION_KEY is required in production. "
+                    "Generate with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+                )
+            if not self.PII_PEPPER:
+                errors.append(
+                    "PII_PEPPER is required in production. "
+                    "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+                )
+
+            # NASTY-001: Block localhost CORS origins in production (not just warn)
+            cors_errors = []
             for origin in self.CORS_ORIGINS:
                 if origin == "*":
-                    cors_warnings.append("Wildcard '*' CORS origin is insecure in production")
+                    cors_errors.append("Wildcard '*' CORS origin is forbidden in production")
                 elif "localhost" in origin or "127.0.0.1" in origin:
-                    cors_warnings.append(f"Localhost CORS origin '{origin}' should be removed in production")
+                    cors_errors.append(f"Localhost CORS origin '{origin}' is forbidden in production")
 
-            if cors_warnings:
-                logger.warning(
-                    "P3-15 CORS WARNINGS in production:\n" +
-                    "\n".join(f"  - {w}" for w in cors_warnings)
-                )
+            if cors_errors:
+                errors.extend(cors_errors)
 
             if errors:
                 raise ValueError(
