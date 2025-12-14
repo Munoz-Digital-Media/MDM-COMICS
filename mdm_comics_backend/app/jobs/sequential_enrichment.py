@@ -654,7 +654,7 @@ async def query_pricecharting(
                         if response.status_code == 200:
                             products = response.json().get("products", [])
                             if products:
-                                updates["pricecharting_id"] = products[0]["id"]
+                                updates["pricecharting_id"] = int(products[0]["id"])
                                 pc_id = products[0]["id"]
 
                 # If no UPC match, try title search
@@ -678,7 +678,7 @@ async def query_pricecharting(
                         products = response.json().get("products", [])
                         best = _find_best_pc_match(comic, products)
                         if best:
-                            updates["pricecharting_id"] = best["id"]
+                            updates["pricecharting_id"] = int(best["id"])
                             pc_id = best["id"]
 
             # If we have PC ID, get prices

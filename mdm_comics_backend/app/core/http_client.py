@@ -126,6 +126,21 @@ class ResilientHTTPClient:
         if self._client:
             await self._client.aclose()
             self._client = None
+
+    async def init(self):
+        """Initialize client without context manager. Must call close() when done."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout,
+                headers=self.default_headers,
+            )
+        return self
+
+    async def close(self):
+        """Close the client. Use this when not using context manager."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
             
     def _get_host(self, url: str) -> str:
         """Extract host from URL for per-host tracking."""
@@ -325,8 +340,9 @@ class ResilientHTTPClient:
             httpx.HTTPStatusError: On non-retryable error
             Exception: On circuit breaker rejection or max retries exceeded
         """
+        # Auto-initialize if not using context manager
         if not self._client:
-            raise RuntimeError("Client not initialized. Use 'async with' context manager.")
+            await self.init()
             
         host = self._get_host(url)
         cfg = self.retry_config
