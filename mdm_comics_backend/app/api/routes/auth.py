@@ -47,6 +47,8 @@ from app.services.audit_service import AuditService
 from app.services.session_service import SessionService
 from app.services.user_service import UserService
 from app.services.role_service import RoleService
+# OPT-004: Email service for password reset and verification
+from app.services.auth_email_service import auth_email_service
 
 router = APIRouter()
 
@@ -380,12 +382,13 @@ async def logout_all_devices(
 ):
     """
     P2-8: Logout from all devices.
+    NASTY-003: Uses Redis-backed token revocation for persistence.
 
     Revokes all tokens issued before now for this user.
     Clears current session cookies.
     """
-    # Revoke all tokens for this user
-    token_blacklist.revoke_all_user_tokens(current_user.id)
+    # Revoke all tokens for this user (uses Redis if available)
+    await token_blacklist.revoke_all_user_tokens_async(current_user.id)
 
     # Clear current session cookies
     clear_auth_cookies(response, request)
@@ -521,9 +524,12 @@ async def request_password_reset(
                 user_agent=get_user_agent(request),
             )
 
-        # TODO: Send email with token
-        # For now, token would be sent via email service
-        # email_service.send_password_reset(data.email, token)
+            # OPT-004: Send password reset email
+            await auth_email_service.send_password_reset_email(
+                to_email=data.email,
+                reset_token=token,
+                user_name=user.name,
+            )
 
     await db.commit()
 
@@ -658,8 +664,12 @@ async def request_email_verification(
         user_agent=get_user_agent(request),
     )
 
-    # TODO: Send verification email
-    # email_service.send_verification(current_user.email, token)
+    # OPT-004: Send verification email
+    await auth_email_service.send_email_verification(
+        to_email=current_user.email,
+        verification_token=token,
+        user_name=current_user.name,
+    )
 
     await db.commit()
 
