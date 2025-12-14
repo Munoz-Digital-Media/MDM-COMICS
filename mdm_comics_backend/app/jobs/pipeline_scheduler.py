@@ -1137,13 +1137,19 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                     logger.info(f"[{job_name}] PHASE 2: Matching Comics (from id={comic_last_id})")
 
                     while True:
+                        # v1.10.5: Prioritize ISBN (most precise), then UPC, then fallback
                         result = await db.execute(text("""
-                            SELECT id, upc, isbn, issue_name, number
+                            SELECT id, upc, isbn, isbn_normalized, issue_name, number
                             FROM comic_issues
                             WHERE pricecharting_id IS NULL
                               AND id > :last_id
                             ORDER BY
-                              CASE WHEN upc IS NOT NULL THEN 0 ELSE 1 END,
+                              CASE
+                                WHEN isbn_normalized IS NOT NULL THEN 0
+                                WHEN isbn IS NOT NULL THEN 1
+                                WHEN upc IS NOT NULL THEN 2
+                                ELSE 3
+                              END,
                               id
                             LIMIT :limit
                         """), {"last_id": comic_last_id, "limit": batch_size})
@@ -1165,8 +1171,22 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                 pc_id = None
                                 match_method = None
 
-                                # Method 1: UPC lookup
-                                if comic.upc and len(comic.upc) >= 10:
+                                # Method 0: ISBN lookup (most precise - v1.10.5)
+                                isbn_to_search = comic.isbn_normalized or comic.isbn
+                                if isbn_to_search and len(isbn_to_search) >= 10:
+                                    response = await client.get(
+                                        "https://www.pricecharting.com/api/products",
+                                        params={"t": pc_token, "upc": isbn_to_search}  # PC uses UPC param for ISBN too
+                                    )
+                                    if response.status_code == 200:
+                                        data = response.json()
+                                        products = data.get("products", [])
+                                        if products and len(products) == 1:
+                                            pc_id = products[0].get("id")
+                                            match_method = "isbn"
+
+                                # Method 1: UPC lookup (if ISBN didn't match)
+                                if not pc_id and comic.upc and len(comic.upc) >= 10:
                                     response = await client.get(
                                         "https://www.pricecharting.com/api/products",
                                         params={"t": pc_token, "upc": comic.upc}
