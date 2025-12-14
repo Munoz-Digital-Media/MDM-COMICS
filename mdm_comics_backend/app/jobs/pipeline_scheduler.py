@@ -1170,31 +1170,44 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                 match_method = None
 
                                 # Method 0: ISBN lookup (most precise - v1.10.5)
+                                # v1.11.2: Accept first match for barcode lookups (high confidence)
                                 isbn_to_search = comic.isbn_normalized or comic.isbn
                                 if isbn_to_search and len(isbn_to_search) >= 10:
-                                    response = await client.get(
-                                        "https://www.pricecharting.com/api/products",
-                                        params={"t": pc_token, "upc": isbn_to_search}  # PC uses UPC param for ISBN too
-                                    )
-                                    if response.status_code == 200:
-                                        data = response.json()
-                                        products = data.get("products", [])
-                                        if products and len(products) == 1:
-                                            pc_id = products[0].get("id")
-                                            match_method = "isbn"
+                                    # Clean ISBN - digits only
+                                    clean_isbn = ''.join(filter(str.isdigit, isbn_to_search))
+                                    if len(clean_isbn) >= 10:
+                                        response = await client.get(
+                                            "https://www.pricecharting.com/api/products",
+                                            params={"t": pc_token, "upc": clean_isbn}  # PC uses UPC param for ISBN too
+                                        )
+                                        if response.status_code == 200:
+                                            data = response.json()
+                                            products = data.get("products", [])
+                                            # Accept first match - barcode lookups are high confidence
+                                            if products:
+                                                # v1.11.2: PC API returns ID as string, convert to int
+                                                pc_id = int(products[0].get("id"))
+                                                match_method = f"isbn_of_{len(products)}"
 
                                 # Method 1: UPC lookup (if ISBN didn't match)
+                                # v1.11.2: Accept first match for barcode lookups (high confidence)
                                 if not pc_id and comic.upc and len(comic.upc) >= 10:
-                                    response = await client.get(
-                                        "https://www.pricecharting.com/api/products",
-                                        params={"t": pc_token, "upc": comic.upc}
-                                    )
-                                    if response.status_code == 200:
-                                        data = response.json()
-                                        products = data.get("products", [])
-                                        if products and len(products) == 1:
-                                            pc_id = products[0].get("id")
-                                            match_method = "upc"
+                                    # Clean UPC - digits only, filter out placeholders
+                                    clean_upc = ''.join(filter(str.isdigit, comic.upc))
+                                    # Skip obvious placeholder UPCs
+                                    if len(clean_upc) >= 12 and clean_upc != '00123456789' and not clean_upc.startswith('00123456789'):
+                                        response = await client.get(
+                                            "https://www.pricecharting.com/api/products",
+                                            params={"t": pc_token, "upc": clean_upc}
+                                        )
+                                        if response.status_code == 200:
+                                            data = response.json()
+                                            products = data.get("products", [])
+                                            # Accept first match - barcode lookups are high confidence
+                                            if products:
+                                                # v1.11.2: PC API returns ID as string, convert to int
+                                                pc_id = int(products[0].get("id"))
+                                                match_method = f"upc_of_{len(products)}"
 
                                 # Method 2: Multi-element fuzzy match (v1.10.5)
                                 # Uses: publisher, series_name, volume, issue_number, variant
@@ -1272,7 +1285,8 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                         
                                         # Require minimum score of 5 (series + number match at least)
                                         if best_match and best_score >= 5:
-                                            pc_id = best_match.get("id")
+                                            # v1.11.2: PC API returns ID as string, convert to int
+                                            pc_id = int(best_match.get("id"))
                                             match_method = f"fuzzy_score_{best_score}"
 
                                 if pc_id:
