@@ -1936,6 +1936,7 @@ async def trigger_upc_backfill(
 
     Prioritizes US publishers (Marvel, DC, Image, etc.) and comics from 1980+.
     """
+    import asyncio
     from app.jobs.pipeline_scheduler import run_upc_backfill_job
 
     # Check if already running
@@ -2094,6 +2095,7 @@ async def trigger_sequential_enrichment(
     - Rate-limited sources get exponential backoff
     - Blocked sources are skipped (others continue)
     """
+    import asyncio
     from app.jobs.sequential_enrichment import run_sequential_exhaustive_enrichment_job
 
     # Check if already running
