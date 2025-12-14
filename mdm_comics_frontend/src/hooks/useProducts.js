@@ -92,8 +92,9 @@ export function useProducts() {
       
       console.error('Failed to fetch products:', err);
       setError(err.message || 'Failed to load products');
-      // Use fallback products when API fails
-      setProducts(FALLBACK_PRODUCTS);
+      // OPT-001: Use empty array on error - no stale fallback data
+      // User will see error state with option to retry
+      setProducts([]);
     } finally {
       // Only update loading state if component is still mounted
       if (mountedRef.current) {
