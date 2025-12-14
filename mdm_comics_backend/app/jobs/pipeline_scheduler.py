@@ -1038,13 +1038,15 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                     logger.info(f"[{job_name}] PHASE 1: Matching Funkos (from id={funko_last_id})")
 
                     while True:
+                        # Note: Funkos table has box_number, not UPC
+                        # Prioritize those with box_number for matching
                         result = await db.execute(text("""
-                            SELECT id, title, upc
+                            SELECT id, title, box_number
                             FROM funkos
                             WHERE pricecharting_id IS NULL
                               AND id > :last_id
                             ORDER BY
-                              CASE WHEN upc IS NOT NULL THEN 0 ELSE 1 END,
+                              CASE WHEN box_number IS NOT NULL THEN 0 ELSE 1 END,
                               id
                             LIMIT :limit
                         """), {"last_id": funko_last_id, "limit": batch_size})
@@ -1067,21 +1069,9 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                 pc_id = None
                                 match_method = None
 
-                                # Method 1: UPC lookup (most reliable)
-                                if funko.upc and len(str(funko.upc)) >= 10:
-                                    response = await client.get(
-                                        "https://www.pricecharting.com/api/products",
-                                        params={"t": pc_token, "upc": str(funko.upc)}
-                                    )
-                                    if response.status_code == 200:
-                                        data = response.json()
-                                        products = data.get("products", [])
-                                        if products and len(products) == 1:
-                                            pc_id = products[0].get("id")
-                                            match_method = "upc"
-
-                                # Method 2: Title search for Funko Pop
-                                if not pc_id and funko.title:
+                                # Method 1: Title search for Funko Pop (primary method for Funkos)
+                                # Note: Funkos don't have UPC in this database, use title matching
+                                if funko.title:
                                     search_query = f"Funko Pop {funko.title}"[:100]
                                     response = await client.get(
                                         "https://www.pricecharting.com/api/products",
