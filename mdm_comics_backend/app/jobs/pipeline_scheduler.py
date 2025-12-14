@@ -1305,6 +1305,11 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                             except Exception as e:
                                 stats["errors"] += 1
                                 logger.warning(f"[{job_name}] Error matching Comic {comic_id}: {e}")
+                                # v1.12.1: Rollback to clear failed transaction state
+                                try:
+                                    await db.rollback()
+                                except:
+                                    pass
 
                         # Commit and checkpoint
                         await db.commit()
