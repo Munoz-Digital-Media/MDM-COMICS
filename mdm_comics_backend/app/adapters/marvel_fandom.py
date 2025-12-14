@@ -1,27 +1,35 @@
 """
-Marvel Fandom (Marvel Database) Adapter v1.0.0
+Marvel Fandom (Marvel Database) Adapter v2.0.0
 
 Adapter for Marvel Database on Fandom - editorial story/character depth.
 https://marvel.fandom.com/
 
 Per pipeline spec:
-- Type: MediaWiki API
+- Type: MediaWiki API + HTML scraping for structured data
 - License: CC BY-SA 3.0 - TEXT ONLY
 - DO NOT USE IMAGES - Fair Use only on Fandom, not redistributable
 - Priority: P3 for wiki-powered lore and community insights
+
+v2.0.0: Added story-level credit extraction
+- Per-story credits (writer, penciler, inker, colorist, letterer, editor)
+- Character appearances per story
+- Cover variants
+- Editor-in-chief
 
 Allowed content:
 - Character bios and descriptions (TEXT ONLY)
 - Story arc summaries
 - Issue descriptions and synopses
-- Creator information
+- Creator information with specific roles
 - Publisher data
 - Team rosters and affiliations
 - Event timelines
 """
 import logging
+import re
 from typing import Any, Dict, Optional, List
-from urllib.parse import quote
+from urllib.parse import quote, unquote
+from bs4 import BeautifulSoup
 
 from app.core.adapter_registry import (
     DataSourceAdapter,
@@ -290,6 +298,293 @@ class MarvelFandomAdapter(DataSourceAdapter):
             "categories": [c.get("*") for c in page_data.get("categories", [])],
             "sections": [s.get("line") for s in page_data.get("sections", [])],
         }
+
+    async def fetch_issue_credits(
+        self,
+        series_name: str,
+        volume: int,
+        issue_number: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fetch full issue data with story-level credits.
+
+        Args:
+            series_name: e.g., "Amazing Fantasy"
+            volume: e.g., 1
+            issue_number: e.g., "15"
+
+        Returns:
+            Dict with stories, credits, characters, cover variants
+        """
+        # Build the wiki page title
+        # Format: "Amazing_Fantasy_Vol_1_15"
+        page_title = f"{series_name.replace(' ', '_')}_Vol_{volume}_{issue_number}"
+
+        try:
+            # Get the raw HTML
+            response = await self.client.get(
+                self.BASE_URL,
+                params={
+                    "action": "parse",
+                    "page": page_title,
+                    "prop": "text|categories",
+                    "format": "json",
+                }
+            )
+
+            if response.status_code != 200:
+                logger.warning(f"[{self.name}] Failed to fetch {page_title}: {response.status_code}")
+                return None
+
+            data = response.json()
+            if "error" in data:
+                logger.debug(f"[{self.name}] Page not found: {page_title}")
+                return None
+
+            parse_data = data.get("parse", {})
+            html = parse_data.get("text", {}).get("*", "")
+
+            if not html:
+                return None
+
+            # Parse the HTML
+            soup = BeautifulSoup(html, "html.parser")
+
+            # Extract issue metadata
+            result = {
+                "page_title": page_title,
+                "fandom_url": f"https://marvel.fandom.com/wiki/{page_title}",
+                "stories": [],
+                "cover_variants": [],
+                "editor_in_chief": None,
+                "release_date": None,
+                "cover_date": None,
+                "marvel_unlimited": False,
+            }
+
+            # Find the issue info box
+            info_box = soup.find("aside", class_="portable-infobox")
+            if info_box:
+                result.update(self._parse_info_box(info_box))
+
+            # Find all story sections
+            result["stories"] = self._parse_stories(soup)
+
+            # Find cover variants
+            result["cover_variants"] = self._parse_cover_variants(soup)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Error fetching {page_title}: {e}")
+            return None
+
+    def _parse_info_box(self, info_box: BeautifulSoup) -> Dict[str, Any]:
+        """Parse the issue info box for metadata."""
+        result = {}
+
+        for row in info_box.find_all("div", class_="pi-item"):
+            label_elem = row.find("h3", class_="pi-data-label")
+            value_elem = row.find("div", class_="pi-data-value")
+
+            if not label_elem or not value_elem:
+                continue
+
+            label = label_elem.get_text(strip=True).lower()
+
+            if "editor-in-chief" in label or "editor in chief" in label:
+                # Get the first link's text
+                link = value_elem.find("a")
+                if link:
+                    result["editor_in_chief"] = link.get_text(strip=True)
+
+            elif "release date" in label:
+                result["release_date"] = value_elem.get_text(strip=True)
+
+            elif "cover date" in label:
+                result["cover_date"] = value_elem.get_text(strip=True)
+
+            elif "marvel unlimited" in label:
+                text = value_elem.get_text(strip=True).lower()
+                result["marvel_unlimited"] = "available" in text or "yes" in text
+
+        return result
+
+    def _parse_stories(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Parse individual stories with their credits."""
+        stories = []
+        current_story = None
+
+        # Iterate through all h2 and h3 elements
+        for elem in soup.find_all(["h2", "h3"]):
+            text = elem.get_text(strip=True)
+
+            # Story header pattern: '1. "Spider-Man!"' or '1. Spider-Man!'
+            match = re.match(r'^(\d+)\.\s*"?(.+?)"?\s*$', text)
+            if match and elem.name == "h2":
+                # Save previous story if exists
+                if current_story:
+                    stories.append(current_story)
+
+                current_story = {
+                    "story_number": int(match.group(1)),
+                    "title": match.group(2).strip('"'),
+                    "credits": {},
+                    "characters": [],
+                    "synopsis": None,
+                }
+                continue
+
+            # Credit roles are h3 elements under each story
+            if current_story and elem.name == "h3":
+                for role in ["Writer", "Penciler", "Inker", "Colorist", "Letterer", "Editor"]:
+                    if role in text:
+                        # The creator names are in links in the next sibling element
+                        next_elem = elem.find_next_sibling()
+                        if next_elem:
+                            links = next_elem.find_all("a") if hasattr(next_elem, "find_all") else []
+                            names = [a.get_text(strip=True) for a in links if a.get_text(strip=True)]
+                            if names:
+                                current_story["credits"][role.lower()] = names
+                        break
+
+                # Check for Appearances section
+                if "Appearances" in text:
+                    next_elem = elem.find_next_sibling()
+                    while next_elem and next_elem.name not in ["h2", "h3"]:
+                        if hasattr(next_elem, "find_all"):
+                            for link in next_elem.find_all("a"):
+                                char_name = link.get_text(strip=True)
+                                # Skip category links and empty names
+                                if char_name and not char_name.startswith("Category:"):
+                                    current_story["characters"].append(char_name)
+                        next_elem = next_elem.find_next_sibling()
+
+        # Don't forget the last story
+        if current_story:
+            stories.append(current_story)
+
+        # If no numbered stories found, try alternative parsing
+        if not stories:
+            stories = self._parse_stories_table(soup)
+
+        return stories
+
+    def _parse_stories_table(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Parse stories from table format (some pages use tables)."""
+        stories = []
+
+        # Look for tables with story credits
+        for table in soup.find_all("table", class_="wikitable"):
+            rows = table.find_all("tr")
+
+            current_story = None
+            for row in rows:
+                cells = row.find_all(["th", "td"])
+                if len(cells) < 2:
+                    continue
+
+                label = cells[0].get_text(strip=True).lower()
+                value = cells[1].get_text(strip=True)
+
+                # New story starts with a story title cell
+                if "story" in label or label.isdigit():
+                    if current_story:
+                        stories.append(current_story)
+                    current_story = {
+                        "story_number": len(stories) + 1,
+                        "title": value,
+                        "credits": {},
+                        "characters": [],
+                    }
+
+                elif current_story:
+                    # Credit roles
+                    for role in ["writer", "penciler", "inker", "colorist", "letterer", "editor"]:
+                        if role in label:
+                            creators = [c.strip() for c in value.split(",")]
+                            current_story["credits"][role] = creators
+                            break
+
+            if current_story:
+                stories.append(current_story)
+
+        return stories
+
+    def _parse_cover_variants(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Parse cover variant information."""
+        variants = []
+
+        # Look for "Alternate Covers" or "Cover Gallery" section
+        for heading in soup.find_all(["h2", "h3"]):
+            if "cover" in heading.get_text(strip=True).lower():
+                # Find gallery or thumbnail links after this heading
+                sibling = heading.find_next_sibling()
+                variant_num = 0
+
+                while sibling and sibling.name not in ["h2", "h3"]:
+                    # Look for thumbnail captions
+                    captions = sibling.find_all("div", class_="thumbcaption") if hasattr(sibling, 'find_all') else []
+                    for caption in captions:
+                        variant_num += 1
+                        text = caption.get_text(strip=True)
+                        variants.append({
+                            "variant_number": variant_num,
+                            "variant_name": text,
+                            "variant_type": self._classify_variant(text),
+                        })
+
+                    sibling = sibling.find_next_sibling()
+
+                break
+
+        return variants
+
+    def _classify_variant(self, text: str) -> str:
+        """Classify variant type from description."""
+        text_lower = text.lower()
+
+        if "virgin" in text_lower:
+            return "virgin"
+        elif "incentive" in text_lower or "1:" in text_lower:
+            return "incentive"
+        elif "newsstand" in text_lower:
+            return "newsstand"
+        elif "direct" in text_lower:
+            return "direct"
+        elif "variant" in text_lower:
+            return "variant"
+        else:
+            return "standard"
+
+    async def search_issue(
+        self,
+        series_name: str,
+        issue_number: str,
+        year: Optional[int] = None
+    ) -> Optional[str]:
+        """
+        Search for an issue and return the best matching page title.
+
+        Useful when volume number is unknown.
+        """
+        query = f"{series_name} {issue_number}"
+        if year:
+            query += f" {year}"
+
+        result = await self.search(query, limit=10)
+
+        if not result.success or not result.records:
+            return None
+
+        # Look for a page that matches the issue pattern
+        for record in result.records:
+            title = record.get("title", "")
+            # Match pattern like "Series_Name_Vol_X_Issue"
+            if re.search(rf'{re.escape(series_name)}.*Vol.*{issue_number}', title, re.IGNORECASE):
+                return title
+
+        return None
 
     def normalize(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """
