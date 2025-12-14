@@ -10,7 +10,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import PropTypes from 'prop-types';
-import { api } from '../../../services/api';
+import { matchReviewAPI } from '../../../services/api';
 
 const ManualSearchModal = ({
   entityType,
@@ -60,14 +60,10 @@ const ManualSearchModal = ({
     setError(null);
 
     try {
-      const response = await api.post('/api/admin/match-queue/search', {
-        query: searchQuery,
-        entity_type: entityType
-      });
-
-      setResults(response.data.results || []);
+      const response = await matchReviewAPI.search(searchQuery, entityType);
+      setResults(response.results || []);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Search failed');
+      setError(err.message || 'Search failed');
       setResults([]);
     } finally {
       setLoading(false);
