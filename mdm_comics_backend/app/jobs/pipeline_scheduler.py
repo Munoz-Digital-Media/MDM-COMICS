@@ -1140,7 +1140,7 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                         # v1.10.5: Prioritize ISBN (most precise), then UPC, then fallback
                         result = await db.execute(text("""
                             SELECT id, upc, isbn, isbn_normalized, 
-                                   publisher_name, series_name, volume, issue_name, number, variant_name
+                                   publisher_name, series_name, volume, issue_name, number, variant_name, cover_date
                             FROM comic_issues
                             WHERE pricecharting_id IS NULL
                               AND id > :last_id
@@ -1254,11 +1254,20 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                             if comic.publisher_name and comic.publisher_name.lower() in prod_name:
                                                 score += 1
                                             
-                                            # Check variant (-0.5 if we have variant but product doesn't mention it)
+                                            # Check variant (+1 point if matches)
                                             if comic.variant_name:
                                                 variant_lower = comic.variant_name.lower()
                                                 if variant_lower in prod_name or "variant" in prod_name:
                                                     score += 1
+                                            
+                                            # Check publish year (+2 points - critical for series relaunches)
+                                            if comic.cover_date:
+                                                try:
+                                                    pub_year = str(comic.cover_date.year) if hasattr(comic.cover_date, 'year') else str(comic.cover_date)[:4]
+                                                    if pub_year in prod_name:
+                                                        score += 2
+                                                except:
+                                                    pass
                                             
                                             if score > best_score:
                                                 best_score = score
