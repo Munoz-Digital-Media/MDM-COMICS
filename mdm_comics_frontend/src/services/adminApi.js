@@ -490,6 +490,22 @@ export const adminAPI = {
     return fetchAPI('/admin/pipeline/stats');
   },
 
+  // Get UPC backfill status
+  getUPCBackfillStatus: async () => {
+    return fetchAPI('/admin/pipeline/upc-backfill/status');
+  },
+
+  // Trigger UPC backfill job
+  triggerUPCBackfill: async (options = {}) => {
+    return fetchAPI('/admin/pipeline/upc-backfill/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        batch_size: options.batch_size || 100,
+        max_records: options.max_records || 0,
+      }),
+    });
+  },
+
   // ==================== ADMIN SHIPPING MANAGEMENT ====================
 
   // Get shipping label for a shipment

@@ -1091,11 +1091,13 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                                         break
 
                                     if pc_id:
+                                        # v1.11.3: Ensure pc_id is int and use explicit SQL cast
+                                        pc_id_int = int(pc_id) if pc_id else None
                                         await db.execute(text("""
                                             UPDATE funkos
-                                            SET pricecharting_id = :pc_id, updated_at = NOW()
+                                            SET pricecharting_id = CAST(:pc_id AS INTEGER), updated_at = NOW()
                                             WHERE id = :id
-                                        """), {"id": funko_id, "pc_id": pc_id})
+                                        """), {"id": funko_id, "pc_id": pc_id_int})
                                         stats["funkos_matched"] += 1
                                         logger.debug(f"[{job_name}] Matched Funko {funko_id} -> PC:{pc_id} via {match_method}")
 
@@ -1290,11 +1292,13 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
                                             match_method = f"fuzzy_score_{best_score}"
 
                                 if pc_id:
+                                    # v1.11.3: Ensure pc_id is int and use explicit SQL cast
+                                    pc_id_int = int(pc_id) if pc_id else None
                                     await db.execute(text("""
                                         UPDATE comic_issues
-                                        SET pricecharting_id = :pc_id, updated_at = NOW()
+                                        SET pricecharting_id = CAST(:pc_id AS INTEGER), updated_at = NOW()
                                         WHERE id = :id
-                                    """), {"id": comic_id, "pc_id": pc_id})
+                                    """), {"id": comic_id, "pc_id": pc_id_int})
                                     stats["comics_matched"] += 1
                                     logger.debug(f"[{job_name}] Matched Comic {comic_id} -> PC:{pc_id} via {match_method}")
 
@@ -2383,6 +2387,335 @@ async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
         f"{stats['enriched']} enriched, {stats['stories_created']} stories, "
         f"{stats['creators_created']} creators, {stats['credits_linked']} credits, "
         f"{stats['not_found']} not found, {stats['failed']} failed"
+    )
+
+    return {"status": "completed", "batch_id": batch_id, "stats": stats}
+
+
+# =============================================================================
+# UPC BACKFILL JOB (v1.12.0 - Multi-Source UPC Recovery)
+# =============================================================================
+
+async def run_upc_backfill_job(batch_size: int = 100, max_records: int = 0):
+    """
+    Multi-Source UPC Backfill Job - Recovers missing UPCs from external sources.
+
+    PROBLEM: Only 16% of comics have UPCs despite barcodes being standard since 1980s.
+    This is a DATA GAP, not a "comics don't have barcodes" issue.
+
+    SOURCES (in priority order):
+    1. Metron API - If we have metron_id, direct lookup (fast, authoritative)
+    2. ComicBookRealm - Scrape by series/issue, has UPC extraction
+    3. ComicVine - May have UPC in API response
+
+    STRATEGY:
+    - Prioritize US publishers (Marvel, DC, Image, Dark Horse, etc.) - they have barcodes
+    - Skip UK/European publishers (D.C. Thomson, IPC, etc.) - different barcode systems
+    - Match by series_name + issue_number when no external ID available
+
+    Args:
+        batch_size: Comics to process per batch (default 100)
+        max_records: Max total to process (0 = unlimited)
+    """
+    import httpx
+    import os
+    from app.adapters.metron_adapter import MetronAdapter
+    from app.adapters.comicbookrealm_adapter import create_comicbookrealm_adapter
+
+    job_name = "upc_backfill"
+    batch_id = str(uuid4())
+
+    # US publishers that definitely use UPCs (prioritize these)
+    US_PUBLISHERS = [
+        'Marvel', 'DC', 'DC Comics', 'Image', 'Image Comics', 'Dark Horse',
+        'Dark Horse Comics', 'IDW', 'IDW Publishing', 'Dynamite', 'BOOM! Studios',
+        'Valiant', 'Archie', 'Archie Comics', 'Oni Press', 'AfterShock',
+        'Scout Comics', 'Vault Comics', 'AWA', 'Mad Cave', 'Ablaze',
+        'Titan', 'Titan Comics', 'Antarctic Press'
+    ]
+
+    logger.info(f"[{job_name}] Starting UPC Backfill (batch: {batch_id})")
+
+    stats = {
+        "processed": 0,
+        "upcs_found": 0,
+        "isbns_found": 0,
+        "by_source": {"metron": 0, "comicbookrealm": 0, "comicvine": 0},
+        "no_match": 0,
+        "errors": 0,
+    }
+
+    # Initialize adapters
+    metron_adapter = None
+    cbr_adapter = None
+
+    try:
+        metron_adapter = MetronAdapter()
+        if await metron_adapter.health_check():
+            logger.info(f"[{job_name}] Metron adapter ready")
+        else:
+            metron_adapter = None
+            logger.warning(f"[{job_name}] Metron not available")
+    except Exception as e:
+        logger.warning(f"[{job_name}] Metron init failed: {e}")
+
+    try:
+        cbr_adapter = await create_comicbookrealm_adapter()
+        logger.info(f"[{job_name}] ComicBookRealm adapter ready")
+    except Exception as e:
+        logger.warning(f"[{job_name}] ComicBookRealm init failed: {e}")
+
+    async with AsyncSessionLocal() as db:
+        claimed, checkpoint = await try_claim_job(db, job_name, "enrichment", batch_id)
+
+        if not claimed:
+            logger.warning(f"[{job_name}] Job already running, skipping")
+            return {"status": "skipped"}
+
+        try:
+            state_data = checkpoint.get("state_data") or {}
+            last_id = state_data.get("last_id", 0) if isinstance(state_data, dict) else 0
+
+            # Build publisher filter for SQL
+            publisher_list = ", ".join([f"'{p}'" for p in US_PUBLISHERS])
+
+            while True:
+                # Find comics missing UPCs from US publishers (they should have barcodes)
+                # Also include comics from 1980+ (barcode era)
+                result = await db.execute(text(f"""
+                    SELECT id, metron_id, comicvine_id, gcd_id,
+                           series_name, number, issue_name, publisher_name,
+                           cover_date, upc, isbn
+                    FROM comic_issues
+                    WHERE (upc IS NULL OR upc = '')
+                    AND (isbn IS NULL OR isbn = '')
+                    AND id > :last_id
+                    AND (
+                        publisher_name IN ({publisher_list})
+                        OR (cover_date IS NOT NULL AND cover_date >= '1980-01-01')
+                    )
+                    ORDER BY
+                        CASE WHEN metron_id IS NOT NULL THEN 0 ELSE 1 END,  -- Prioritize those with metron_id
+                        cover_date DESC NULLS LAST,  -- Newer comics more likely to have data
+                        id
+                    LIMIT :limit
+                """), {"last_id": last_id, "limit": batch_size})
+
+                comics = result.fetchall()
+
+                if not comics:
+                    logger.info(f"[{job_name}] No more comics to process")
+                    break
+
+                logger.info(f"[{job_name}] Processing {len(comics)} comics")
+
+                for comic in comics:
+                    comic_id = comic.id
+                    last_id = comic_id
+                    stats["processed"] += 1
+
+                    found_upc = None
+                    found_isbn = None
+                    source = None
+
+                    try:
+                        # =========================================================
+                        # SOURCE 1: Metron API - SEARCH by series/issue, fuzzy match
+                        # We don't assume metron_id exists - we SEARCH and MATCH
+                        # =========================================================
+                        if metron_adapter and comic.series_name and not found_upc:
+                            try:
+                                # Rate limit: 1 sec between Metron requests
+                                await asyncio.sleep(1.0)
+
+                                # Search Metron by series name and issue number
+                                search_result = await metron_adapter.search_issues(
+                                    series_name=comic.series_name,
+                                    number=str(comic.number) if comic.number else None,
+                                    publisher_name=comic.publisher_name,
+                                )
+
+                                if search_result.success and search_result.records:
+                                    # Score each result with fuzzy matching
+                                    best_match = None
+                                    best_score = 0
+
+                                    for record in search_result.records[:5]:
+                                        score = 0
+
+                                        # Series name match (+3)
+                                        rec_series = (record.get("series_name") or "").lower()
+                                        our_series = comic.series_name.lower()
+                                        if our_series in rec_series or rec_series in our_series:
+                                            score += 3
+                                        else:
+                                            continue  # Series must match
+
+                                        # Issue number match (+2)
+                                        if comic.number:
+                                            rec_num = str(record.get("number") or "").lstrip("0") or "0"
+                                            our_num = str(comic.number).lstrip("0") or "0"
+                                            if rec_num == our_num:
+                                                score += 2
+
+                                        # Publisher match (+1)
+                                        if comic.publisher_name:
+                                            rec_pub = (record.get("publisher_name") or "").lower()
+                                            our_pub = comic.publisher_name.lower()
+                                            if our_pub in rec_pub or rec_pub in our_pub:
+                                                score += 1
+
+                                        # Cover year match (+2)
+                                        if comic.cover_date:
+                                            try:
+                                                our_year = comic.cover_date.year if hasattr(comic.cover_date, 'year') else int(str(comic.cover_date)[:4])
+                                                rec_year = record.get("cover_year") or record.get("cover_date", "")[:4]
+                                                if str(our_year) == str(rec_year)[:4]:
+                                                    score += 2
+                                            except:
+                                                pass
+
+                                        if score > best_score:
+                                            best_score = score
+                                            best_match = record
+
+                                    # Require minimum score of 5 (series + number at least)
+                                    if best_match and best_score >= 5:
+                                        # Fetch full details for UPC
+                                        metron_id = best_match.get("id")
+                                        if metron_id:
+                                            await asyncio.sleep(1.0)
+                                            full_data = await metron_adapter.fetch_by_id(str(metron_id), endpoint="issue")
+                                            if full_data:
+                                                if full_data.get("upc"):
+                                                    found_upc = full_data["upc"]
+                                                    source = "metron"
+                                                if full_data.get("isbn") and not found_isbn:
+                                                    found_isbn = full_data["isbn"]
+                                                    if not source:
+                                                        source = "metron"
+                                                # Also store the metron_id for future reference
+                                                if found_upc or found_isbn:
+                                                    await db.execute(text("""
+                                                        UPDATE comic_issues SET metron_id = :mid WHERE id = :id AND metron_id IS NULL
+                                                    """), {"id": comic_id, "mid": metron_id})
+
+                            except Exception as e:
+                                logger.debug(f"[{job_name}] Metron search failed for {comic_id}: {e}")
+
+                        # =========================================================
+                        # SOURCE 2: ComicBookRealm (scrape by series/issue)
+                        # =========================================================
+                        if cbr_adapter and not found_upc and comic.series_name:
+                            try:
+                                # Rate limit: 2 sec between requests
+                                await asyncio.sleep(2.0)
+
+                                search_result = await cbr_adapter.search_issues(
+                                    series_name=comic.series_name,
+                                    issue_number=comic.number,
+                                    limit=3
+                                )
+
+                                if search_result.success and search_result.records:
+                                    # Try to get detail page for UPC
+                                    for record in search_result.records[:2]:
+                                        if record.get("url"):
+                                            await asyncio.sleep(2.0)
+                                            detail = await cbr_adapter.fetch_by_id(record["url"])
+                                            if detail:
+                                                if detail.get("upc"):
+                                                    found_upc = detail["upc"]
+                                                    source = "comicbookrealm"
+                                                    break
+                                                if detail.get("isbn") and not found_isbn:
+                                                    found_isbn = detail["isbn"]
+                                                    if not source:
+                                                        source = "comicbookrealm"
+                            except Exception as e:
+                                logger.debug(f"[{job_name}] CBR lookup failed for {comic_id}: {e}")
+
+                        # =========================================================
+                        # Update comic if we found identifiers
+                        # =========================================================
+                        if found_upc or found_isbn:
+                            update_parts = []
+                            params = {"id": comic_id}
+
+                            if found_upc:
+                                # Clean UPC - digits only
+                                clean_upc = ''.join(filter(str.isdigit, found_upc))
+                                if len(clean_upc) >= 10:
+                                    update_parts.append("upc = :upc")
+                                    params["upc"] = clean_upc
+                                    stats["upcs_found"] += 1
+                                    stats["by_source"][source] = stats["by_source"].get(source, 0) + 1
+
+                            if found_isbn:
+                                # Clean ISBN - digits and X only
+                                clean_isbn = ''.join(c for c in found_isbn.upper() if c.isdigit() or c == 'X')
+                                if len(clean_isbn) in (10, 13):
+                                    update_parts.append("isbn = :isbn")
+                                    update_parts.append("isbn_normalized = :isbn_norm")
+                                    params["isbn"] = clean_isbn
+                                    params["isbn_norm"] = clean_isbn
+                                    stats["isbns_found"] += 1
+
+                            if update_parts:
+                                update_parts.append("updated_at = NOW()")
+                                await db.execute(text(f"""
+                                    UPDATE comic_issues
+                                    SET {', '.join(update_parts)}
+                                    WHERE id = :id
+                                """), params)
+
+                                logger.debug(
+                                    f"[{job_name}] Comic {comic_id}: "
+                                    f"UPC={found_upc or 'N/A'}, ISBN={found_isbn or 'N/A'} "
+                                    f"from {source}"
+                                )
+                        else:
+                            stats["no_match"] += 1
+
+                    except Exception as e:
+                        stats["errors"] += 1
+                        logger.warning(f"[{job_name}] Error processing comic {comic_id}: {e}")
+
+                # Commit batch and checkpoint
+                await db.commit()
+                await db.execute(text("""
+                    UPDATE pipeline_checkpoints
+                    SET state_data = jsonb_build_object('last_id', :last_id)
+                    WHERE job_name = :name
+                """), {"name": job_name, "last_id": last_id})
+                await db.commit()
+
+                logger.info(
+                    f"[{job_name}] Batch complete: {stats['processed']} processed, "
+                    f"{stats['upcs_found']} UPCs found, {stats['isbns_found']} ISBNs found"
+                )
+
+                if max_records and stats["processed"] >= max_records:
+                    break
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
+
+        finally:
+            await update_checkpoint(
+                db, job_name,
+                is_running=False,
+                processed_delta=stats["processed"],
+                updated_delta=stats["upcs_found"] + stats["isbns_found"],
+                errors_delta=stats["errors"],
+            )
+
+    logger.info(
+        f"[{job_name}] COMPLETE: {stats['processed']} processed, "
+        f"{stats['upcs_found']} UPCs, {stats['isbns_found']} ISBNs, "
+        f"by source: {stats['by_source']}, {stats['errors']} errors"
     )
 
     return {"status": "completed", "batch_id": batch_id, "stats": stats}
@@ -4278,6 +4611,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("cover_enrichment", run_cover_enrichment_job, interval_minutes=60)),
             # v1.10.8: Marvel Fandom Enrichment - Story-level credits
             asyncio.create_task(self._run_job_loop("marvel_fandom", run_marvel_fandom_job, interval_minutes=60)),
+            # v1.12.0: UPC Backfill - Recover missing UPCs from Metron/CBR
+            asyncio.create_task(self._run_job_loop("upc_backfill", run_upc_backfill_job, interval_minutes=60)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -4344,6 +4679,7 @@ class PipelineScheduler:
             "comprehensive_enrichment": run_comprehensive_enrichment_job,  # v1.10.3 - All sources, all fields, parallel
             "cover_enrichment": run_cover_enrichment_job,  # v1.10.5 - Phase 3: covers + creators from ComicVine
             "marvel_fandom": run_marvel_fandom_job,  # v1.10.8 - Story-level credits from Marvel Database
+            "upc_backfill": run_upc_backfill_job,  # v1.12.0 - Multi-source UPC recovery from Metron/CBR
         }
 
         if job_name not in jobs:

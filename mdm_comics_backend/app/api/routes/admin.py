@@ -1911,3 +1911,142 @@ async def get_pricecharting_matching_status(
         },
         "price_changes_24h": price_changes_24h,
     }
+
+
+# ----- UPC Backfill Job (v1.12.0) -----
+
+class UPCBackfillRequest(BaseModel):
+    """UPC backfill job request."""
+    batch_size: int = Field(default=100, ge=1, le=500)
+    max_records: int = Field(default=0, ge=0)  # 0 = unlimited
+
+
+@router.post("/pipeline/upc-backfill/run")
+async def trigger_upc_backfill(
+    request: UPCBackfillRequest,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Trigger UPC backfill job manually.
+
+    Recovers missing UPCs/ISBNs from multiple sources:
+    1. Metron API (if metron_id exists)
+    2. ComicBookRealm (scrape by series/issue)
+
+    Prioritizes US publishers (Marvel, DC, Image, etc.) and comics from 1980+.
+    """
+    from app.jobs.pipeline_scheduler import run_upc_backfill_job
+
+    # Check if already running
+    running_check = await db.execute(text("""
+        SELECT is_running FROM pipeline_checkpoints
+        WHERE job_name = 'upc_backfill'
+    """))
+    row = running_check.fetchone()
+    if row and row[0]:
+        raise HTTPException(
+            status_code=409,
+            detail="UPC backfill job is already running"
+        )
+
+    logger.info(f"UPC backfill triggered by admin {current_user.id}")
+
+    async def run_job():
+        try:
+            await run_upc_backfill_job(
+                batch_size=request.batch_size,
+                max_records=request.max_records
+            )
+        except Exception as e:
+            logger.error(f"UPC backfill job failed: {e}")
+
+    if not hasattr(trigger_upc_backfill, '_tasks'):
+        trigger_upc_backfill._tasks = set()
+    trigger_upc_backfill._tasks = {t for t in trigger_upc_backfill._tasks if not t.done()}
+    task = asyncio.create_task(run_job())
+    trigger_upc_backfill._tasks.add(task)
+
+    return {
+        "status": "started",
+        "message": f"UPC backfill started (batch_size={request.batch_size})",
+        "check_status": "/api/admin/pipeline/upc-backfill/status"
+    }
+
+
+@router.get("/pipeline/upc-backfill/status")
+async def get_upc_backfill_status(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get UPC backfill job status and statistics."""
+    # Get checkpoint
+    checkpoint_result = await db.execute(text("""
+        SELECT id, job_name, is_running, total_processed, total_updated, total_errors,
+               state_data, last_run_started, last_run_completed, last_error, updated_at
+        FROM pipeline_checkpoints
+        WHERE job_name = 'upc_backfill'
+    """))
+    row = checkpoint_result.fetchone()
+
+    checkpoint = None
+    if row:
+        checkpoint = {
+            "id": row[0],
+            "job_name": row[1],
+            "is_running": row[2],
+            "total_processed": row[3],
+            "total_updated": row[4],
+            "total_errors": row[5],
+            "state_data": row[6],
+            "last_run_started": row[7].isoformat() if row[7] else None,
+            "last_run_completed": row[8].isoformat() if row[8] else None,
+            "last_error": row[9],
+            "updated_at": row[10].isoformat() if row[10] else None,
+        }
+
+    # Get UPC/ISBN coverage stats
+    coverage_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_comics,
+            COUNT(CASE WHEN upc IS NOT NULL AND upc <> '' THEN 1 END) as with_upc,
+            COUNT(CASE WHEN isbn IS NOT NULL AND isbn <> '' THEN 1 END) as with_isbn,
+            COUNT(CASE WHEN (upc IS NULL OR upc = '') AND (isbn IS NULL OR isbn = '') THEN 1 END) as missing_both,
+            COUNT(CASE WHEN upc IS NOT NULL AND upc <> '' OR isbn IS NOT NULL AND isbn <> '' THEN 1 END) as has_identifier
+        FROM comic_issues
+    """))
+    coverage = coverage_result.fetchone()
+
+    # Get US publisher breakdown
+    us_publishers_result = await db.execute(text("""
+        SELECT
+            publisher_name,
+            COUNT(*) as total,
+            COUNT(CASE WHEN upc IS NOT NULL AND upc <> '' THEN 1 END) as with_upc
+        FROM comic_issues
+        WHERE publisher_name IN (
+            'Marvel', 'DC', 'DC Comics', 'Image', 'Image Comics', 'Dark Horse',
+            'IDW', 'IDW Publishing', 'BOOM! Studios', 'Dynamite', 'Valiant'
+        )
+        GROUP BY publisher_name
+        ORDER BY total DESC
+        LIMIT 10
+    """))
+    us_breakdown = [
+        {"publisher": row[0], "total": row[1], "with_upc": row[2], "pct": round(row[2]/row[1]*100, 1) if row[1] else 0}
+        for row in us_publishers_result.fetchall()
+    ]
+
+    return {
+        "checkpoint": checkpoint,
+        "coverage": {
+            "total_comics": coverage[0] if coverage else 0,
+            "with_upc": coverage[1] if coverage else 0,
+            "with_isbn": coverage[2] if coverage else 0,
+            "missing_both": coverage[3] if coverage else 0,
+            "has_identifier": coverage[4] if coverage else 0,
+            "upc_pct": round(coverage[1]/coverage[0]*100, 1) if coverage and coverage[0] else 0,
+            "isbn_pct": round(coverage[2]/coverage[0]*100, 1) if coverage and coverage[0] else 0,
+        },
+        "us_publishers": us_breakdown,
+    }

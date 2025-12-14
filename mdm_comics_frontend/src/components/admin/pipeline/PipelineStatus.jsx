@@ -53,11 +53,12 @@ function formatRate(rate) {
 export default function PipelineStatus({ compact = false }) {
   const [gcdStatus, setGcdStatus] = useState(null);
   const [pcStatus, setPcStatus] = useState(null);
+  const [upcStatus, setUpcStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('gcd'); // 'gcd' or 'pricecharting'
+  const [activeTab, setActiveTab] = useState('gcd'); // 'gcd', 'pricecharting', or 'upc'
 
   // Option 1: Rate tracking state with exponential moving average (EMA)
   const [importRate, setImportRate] = useState(0);
@@ -66,10 +67,11 @@ export default function PipelineStatus({ compact = false }) {
 
   const fetchStatus = useCallback(async () => {
     try {
-      // Fetch both pipeline statuses in parallel
-      const [gcdData, pcData] = await Promise.all([
+      // Fetch all pipeline statuses in parallel
+      const [gcdData, pcData, upcData] = await Promise.all([
         adminAPI.getGCDStatus().catch(e => null),
         adminAPI.getPriceChartingStatus().catch(e => null),
+        adminAPI.getUPCBackfillStatus().catch(e => null),
       ]);
 
       const data = gcdData; // For backwards compatibility with rate calculation
@@ -102,6 +104,7 @@ export default function PipelineStatus({ compact = false }) {
 
       setGcdStatus(gcdData);
       setPcStatus(pcData);
+      setUpcStatus(upcData);
       setError(null);
     } catch (err) {
       console.error('Pipeline status fetch error:', err);
@@ -117,12 +120,12 @@ export default function PipelineStatus({ compact = false }) {
 
   // Auto-refresh every 5 seconds when ANY pipeline is running
   useEffect(() => {
-    const anyRunning = gcdStatus?.checkpoint?.is_running || pcStatus?.checkpoint?.is_running;
+    const anyRunning = gcdStatus?.checkpoint?.is_running || pcStatus?.checkpoint?.is_running || upcStatus?.checkpoint?.is_running;
     if (!autoRefresh || !anyRunning) return;
 
     const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
-  }, [autoRefresh, gcdStatus?.checkpoint?.is_running, pcStatus?.checkpoint?.is_running, fetchStatus]);
+  }, [autoRefresh, gcdStatus?.checkpoint?.is_running, pcStatus?.checkpoint?.is_running, upcStatus?.checkpoint?.is_running, fetchStatus]);
 
   const handleTriggerImport = async () => {
     setActionLoading(true);
@@ -152,6 +155,18 @@ export default function PipelineStatus({ compact = false }) {
     setActionLoading(true);
     try {
       await adminAPI.triggerPriceChartingMatch({ batch_size: 500, max_records: 0 });
+      await fetchStatus();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleTriggerUPCBackfill = async () => {
+    setActionLoading(true);
+    try {
+      await adminAPI.triggerUPCBackfill({ batch_size: 100, max_records: 0 });
       await fetchStatus();
     } catch (err) {
       setError(err.message);
@@ -223,8 +238,20 @@ export default function PipelineStatus({ compact = false }) {
   const pcRemainingRecords = pcComicsTotal - pcComicLastId;
   const pcEta = pcEstRate > 0 ? pcRemainingRecords / pcEstRate : null;
 
+  // UPC Backfill Status extraction
+  const upcCheckpoint = upcStatus?.checkpoint || {};
+  const upcCoverage = upcStatus?.coverage || {};
+  const upcPublishers = upcStatus?.us_publishers || [];
+  const upcIsRunning = upcCheckpoint.is_running;
+  const upcTotalComics = upcCoverage.total_comics || 0;
+  const upcWithUpc = upcCoverage.with_upc || 0;
+  const upcWithIsbn = upcCoverage.with_isbn || 0;
+  const upcMissingBoth = upcCoverage.missing_both || 0;
+  const upcPct = upcCoverage.upc_pct || 0;
+  const isbnPct = upcCoverage.isbn_pct || 0;
+
   // Check which jobs are running
-  const anyRunning = gcdIsRunning || pcIsRunning;
+  const anyRunning = gcdIsRunning || pcIsRunning || upcIsRunning;
 
   // Compact view for dashboard - shows BOTH pipelines
   if (compact) {
@@ -383,6 +410,18 @@ export default function PipelineStatus({ compact = false }) {
             <DollarSign className="w-4 h-4" />
             <span className="text-sm font-medium">PriceCharting</span>
             {pcIsRunning && <Loader2 className="w-3 h-3 animate-spin" />}
+          </button>
+          <button
+            onClick={() => setActiveTab('upc')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              activeTab === 'upc'
+                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span className="text-sm font-medium">UPC Backfill</span>
+            {upcIsRunning && <Loader2 className="w-3 h-3 animate-spin" />}
           </button>
         </div>
         <button
@@ -778,6 +817,166 @@ export default function PipelineStatus({ compact = false }) {
             <div className="flex items-center justify-between text-xs text-zinc-500">
               <span>Matching via PriceCharting API (UPC/ISBN lookup)</span>
               <span>Batch Size: 500</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ==================== UPC BACKFILL TAB ==================== */}
+      {activeTab === 'upc' && (
+        <>
+          {/* Status Badge */}
+          <div className="flex items-center gap-3">
+            {upcIsRunning ? (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded-lg text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                UPC Backfill Running
+              </span>
+            ) : upcPct > 50 ? (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
+                <CheckCircle className="w-4 h-4" />
+                {upcPct}% Coverage
+              </span>
+            ) : (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-zinc-400 rounded-lg text-sm">
+                <Pause className="w-4 h-4" />
+                Idle
+              </span>
+            )}
+
+            {!upcIsRunning && (
+              <button
+                onClick={handleTriggerUPCBackfill}
+                disabled={actionLoading}
+                className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded-lg text-sm hover:bg-orange-500/30 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                {upcWithUpc > 0 ? 'Continue Backfill' : 'Start Backfill'}
+              </button>
+            )}
+          </div>
+
+          {/* Progress Bars */}
+          <div className="space-y-3">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm text-zinc-400">UPC Coverage</span>
+                <span className="text-sm font-medium text-orange-400">{formatPercent(upcPct)}%</span>
+              </div>
+              <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-500 ${upcIsRunning ? 'bg-orange-500' : 'bg-orange-600'}`}
+                  style={{ width: `${Math.min(upcPct, 100)}%` }}
+                />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm text-zinc-400">ISBN Coverage</span>
+                <span className="text-sm font-medium text-blue-400">{formatPercent(isbnPct)}%</span>
+              </div>
+              <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full transition-all duration-500 bg-blue-600"
+                  style={{ width: `${Math.min(isbnPct, 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Total Comics</p>
+              <p className="text-lg font-bold text-white">{formatNumber(upcTotalComics)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">With UPC</p>
+              <p className="text-lg font-bold text-orange-400">{formatNumber(upcWithUpc)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">With ISBN</p>
+              <p className="text-lg font-bold text-blue-400">{formatNumber(upcWithIsbn)}</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3">
+              <p className="text-xs text-zinc-500 mb-1">Missing Both</p>
+              <p className="text-lg font-bold text-red-400">{formatNumber(upcMissingBoth)}</p>
+            </div>
+          </div>
+
+          {/* US Publisher Breakdown */}
+          {upcPublishers.length > 0 && (
+            <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Building2 className="w-4 h-4 text-orange-400" />
+                <h4 className="text-sm font-medium text-orange-400">US Publisher UPC Coverage</h4>
+              </div>
+              <div className="space-y-2">
+                {upcPublishers.map(pub => (
+                  <div key={pub.publisher} className="flex items-center justify-between text-sm">
+                    <span className="text-zinc-400">{pub.publisher}</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-24 h-2 bg-zinc-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-orange-500"
+                          style={{ width: `${pub.pct}%` }}
+                        />
+                      </div>
+                      <span className="text-zinc-300 w-12 text-right">{pub.pct}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Checkpoint Stats */}
+          {upcCheckpoint && (
+            <div className="bg-zinc-800/50 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 className="w-4 h-4 text-zinc-400" />
+                <h4 className="text-sm font-medium text-zinc-400">Backfill Stats</h4>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Total Processed:</span>
+                  <span className="text-zinc-300">{formatNumber(upcCheckpoint.total_processed || 0)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">UPCs Found:</span>
+                  <span className="text-orange-400">{formatNumber(upcCheckpoint.total_updated || 0)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Errors:</span>
+                  <span className={upcCheckpoint.total_errors > 0 ? 'text-red-400' : 'text-zinc-300'}>
+                    {formatNumber(upcCheckpoint.total_errors || 0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Error Display */}
+          {upcCheckpoint.last_error && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-red-400 mb-1">Last Error</p>
+                  <p className="text-xs text-red-400/80 font-mono break-all">
+                    {upcCheckpoint.last_error.substring(0, 200)}
+                    {upcCheckpoint.last_error.length > 200 && '...'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Sources Info */}
+          <div className="pt-3 border-t border-zinc-800">
+            <div className="flex items-center justify-between text-xs text-zinc-500">
+              <span>Sources: Metron API, ComicBookRealm</span>
+              <span>Batch Size: 100</span>
             </div>
           </div>
         </>
