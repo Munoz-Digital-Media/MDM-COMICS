@@ -56,6 +56,9 @@ from app.models.pipeline import (
     FieldProvenance,
 )
 
+# v1.13.0: Sequential exhaustive enrichment
+from app.jobs.sequential_enrichment import run_sequential_exhaustive_enrichment_job
+
 logger = logging.getLogger(__name__)
 
 
@@ -4686,6 +4689,7 @@ class PipelineScheduler:
             "cover_enrichment": run_cover_enrichment_job,  # v1.10.5 - Phase 3: covers + creators from ComicVine
             "marvel_fandom": run_marvel_fandom_job,  # v1.10.8 - Story-level credits from Marvel Database
             "upc_backfill": run_upc_backfill_job,  # v1.12.0 - Multi-source UPC recovery from Metron/CBR
+            "sequential_enrichment": run_sequential_exhaustive_enrichment_job,  # v1.13.0 - Sequential exhaustive enrichment
         }
 
         if job_name not in jobs:

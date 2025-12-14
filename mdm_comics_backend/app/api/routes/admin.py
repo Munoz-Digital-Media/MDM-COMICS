@@ -2050,3 +2050,152 @@ async def get_upc_backfill_status(
         },
         "us_publishers": us_breakdown,
     }
+
+
+# ============================================================================
+# SEQUENTIAL EXHAUSTIVE ENRICHMENT ENDPOINTS - v1.13.0
+# ============================================================================
+
+class SequentialEnrichmentRequest(BaseModel):
+    """Request model for sequential enrichment job."""
+    batch_size: int = Field(default=10, ge=1, le=100, description="Number of comics to process per batch (lower = more thorough)")
+    max_records: int = Field(default=0, ge=0, description="Maximum records to process (0 = unlimited)")
+
+
+@router.post("/pipeline/sequential-enrichment/run")
+async def trigger_sequential_enrichment(
+    request: SequentialEnrichmentRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Trigger Sequential Exhaustive Enrichment job.
+
+    This job processes ONE comic at a time and exhaustively queries ALL available sources
+    in sequence, re-evaluating missing fields after each source. This ensures maximum
+    data completeness by refining searches based on newly acquired information.
+
+    Algorithm:
+    1. For each comic, identify ALL missing fields
+    2. Query Source 1 (healthiest), import deltas
+    3. RE-EVALUATE what's still missing
+    4. Query Source 2, import deltas  
+    5. Repeat until ALL sources exhausted
+    6. Move to next comic
+
+    Sources (in health-priority order):
+    - Metron API (high-quality structured data)
+    - ComicVine API (comprehensive coverage)
+    - PriceCharting API (pricing data)
+    - ComicBookRealm (market metrics via scraping)
+
+    Rate limiting is intelligent per-source:
+    - Healthy sources run with minimal delay
+    - Rate-limited sources get exponential backoff
+    - Blocked sources are skipped (others continue)
+    """
+    from app.jobs.sequential_enrichment import run_sequential_exhaustive_enrichment_job
+
+    # Check if already running
+    running_check = await db.execute(text("""
+        SELECT is_running FROM pipeline_checkpoints
+        WHERE job_name = 'sequential_enrichment'
+    """))
+    row = running_check.fetchone()
+    if row and row[0]:
+        raise HTTPException(
+            status_code=409,
+            detail="Sequential enrichment job is already running"
+        )
+
+    logger.info(f"Sequential enrichment triggered by admin {current_user.id}")
+
+    async def run_job():
+        try:
+            await run_sequential_exhaustive_enrichment_job(
+                batch_size=request.batch_size,
+                max_records=request.max_records
+            )
+        except Exception as e:
+            logger.error(f"Sequential enrichment job failed: {e}")
+
+    if not hasattr(trigger_sequential_enrichment, '_tasks'):
+        trigger_sequential_enrichment._tasks = set()
+    trigger_sequential_enrichment._tasks = {t for t in trigger_sequential_enrichment._tasks if not t.done()}
+    task = asyncio.create_task(run_job())
+    trigger_sequential_enrichment._tasks.add(task)
+
+    return {
+        "status": "started",
+        "message": f"Sequential enrichment started (batch_size={request.batch_size})",
+        "check_status": "/api/admin/pipeline/sequential-enrichment/status"
+    }
+
+
+@router.get("/pipeline/sequential-enrichment/status")
+async def get_sequential_enrichment_status(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get Sequential Enrichment job status and source health metrics."""
+    # Get checkpoint
+    checkpoint_result = await db.execute(text("""
+        SELECT id, job_name, is_running, total_processed, total_updated, total_errors,
+               state_data, last_run_started, last_run_completed, last_error, updated_at
+        FROM pipeline_checkpoints
+        WHERE job_name = 'sequential_enrichment'
+    """))
+    row = checkpoint_result.fetchone()
+
+    checkpoint = None
+    if row:
+        checkpoint = {
+            "id": row[0],
+            "job_name": row[1],
+            "is_running": row[2],
+            "total_processed": row[3],
+            "total_updated": row[4],
+            "total_errors": row[5],
+            "state_data": row[6],
+            "last_run_started": row[7].isoformat() if row[7] else None,
+            "last_run_completed": row[8].isoformat() if row[8] else None,
+            "last_error": row[9],
+            "updated_at": row[10].isoformat() if row[10] else None,
+        }
+
+    # Get enrichment coverage stats
+    coverage_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_comics,
+            COUNT(CASE WHEN description IS NOT NULL AND description <> '' THEN 1 END) as with_description,
+            COUNT(CASE WHEN metron_id IS NOT NULL THEN 1 END) as with_metron,
+            COUNT(CASE WHEN comicvine_id IS NOT NULL THEN 1 END) as with_comicvine,
+            COUNT(CASE WHEN pricecharting_id IS NOT NULL THEN 1 END) as with_pricecharting,
+            COUNT(CASE WHEN upc IS NOT NULL AND upc <> '' THEN 1 END) as with_upc,
+            COUNT(CASE WHEN isbn IS NOT NULL AND isbn <> '' THEN 1 END) as with_isbn,
+            COUNT(CASE WHEN est_print_run IS NOT NULL THEN 1 END) as with_market_metrics
+        FROM comic_issues
+    """))
+    coverage = coverage_result.fetchone()
+
+    total = coverage[0] if coverage else 0
+    
+    return {
+        "checkpoint": checkpoint,
+        "coverage": {
+            "total_comics": total,
+            "with_description": coverage[1] if coverage else 0,
+            "with_metron": coverage[2] if coverage else 0,
+            "with_comicvine": coverage[3] if coverage else 0,
+            "with_pricecharting": coverage[4] if coverage else 0,
+            "with_upc": coverage[5] if coverage else 0,
+            "with_isbn": coverage[6] if coverage else 0,
+            "with_market_metrics": coverage[7] if coverage else 0,
+            "description_pct": round(coverage[1]/total*100, 1) if total else 0,
+            "metron_pct": round(coverage[2]/total*100, 1) if total else 0,
+            "comicvine_pct": round(coverage[3]/total*100, 1) if total else 0,
+            "pricecharting_pct": round(coverage[4]/total*100, 1) if total else 0,
+        },
+        "sources": ["metron", "comicvine", "pricecharting", "comicbookrealm"],
+        "algorithm": "sequential_exhaustive"
+    }
