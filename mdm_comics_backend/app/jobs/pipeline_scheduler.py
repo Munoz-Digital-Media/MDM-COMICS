@@ -3288,11 +3288,36 @@ async def run_gcd_import_job(
             f"({stats['inserted']:,} new, {stats['updated']:,} updated, {stats['errors']:,} errors)"
         )
 
+        # v1.11.0: Job chaining - trigger PriceCharting matching when GCD import completes
+        try:
+            actual_count_check = await db.execute(text("""
+                SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
+            """))
+            current_count = actual_count_check.scalar() or 0
+            # Trigger when 95%+ of GCD records imported
+            if current_count >= 2400000 and stats["processed"] > 0:
+                logger.info(f"[{job_name}] GCD import complete ({current_count:,} records). Queuing PriceCharting matching...")
+                asyncio.create_task(_trigger_pricecharting_matching_after_gcd())
+        except Exception as chain_err:
+            logger.warning(f"[{job_name}] Job chain trigger failed: {chain_err}")
+
         return {
             "status": "completed",
             "batch_id": batch_id,
             "stats": stats,
         }
+
+
+async def _trigger_pricecharting_matching_after_gcd():
+    """Trigger PriceCharting matching after GCD import (v1.11.0 job chaining)."""
+    await asyncio.sleep(5)
+    try:
+        logger.info("[job_chain] Starting PriceCharting matching for Funkos + Comics...")
+        result = await run_pricecharting_matching_job(batch_size=100, max_records=0)
+        logger.info(f"[job_chain] PriceCharting matching completed: {result}")
+    except Exception as e:
+        logger.error(f"[job_chain] PriceCharting matching failed: {e}")
+        traceback.print_exc()
 
 
 # =============================================================================
