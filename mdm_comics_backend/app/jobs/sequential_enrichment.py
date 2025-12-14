@@ -1,5 +1,17 @@
 """
-Sequential Exhaustive Enrichment Job v1.13.0
+Sequential Exhaustive Enrichment Job v1.15.0
+
+MSE-002+: Complete Fandom wiki expansion + MyComicShop sources
+- Marvel Fandom: TEXT ONLY per CC BY-SA license (no images)
+- DC Fandom: TEXT ONLY - DC/Vertigo/WildStorm only
+- Image Fandom: TEXT ONLY - Image Comics only
+- IDW Fandom: TEXT ONLY - IDW Publishing only
+- Dark Horse Fandom: TEXT ONLY - Dark Horse Comics only
+- Dynamite Fandom: TEXT ONLY - Dynamite Entertainment only
+- MyComicShop: Bibliographic data only (no inventory/availability)
+- Expanded CBR coverage for isbn, description, cover_date, store_date
+
+All Fandom sources are publisher-filtered - won't query wrong wikis for content.
 
 Implements the USER-REQUESTED algorithm:
 1. Process ONE row at a time
@@ -180,11 +192,18 @@ class RateLimitManager:
 
         # Configure base delays per source (known limits)
         self._base_delays = {
-            "metron": 1.0,       # Metron is generous, 1 req/sec is safe
-            "comicvine": 1.5,    # ComicVine: ~200/hour = 1 per 18s, but bursty OK
-            "pricecharting": 2.0,  # PriceCharting: aggressive rate limiting
-            "comicbookrealm": 1.5,  # CBR: Unknown, be conservative
-            "mycomicshop": 2.0,    # MCS: Scraping, be polite
+            "metron": 1.0,           # Metron is generous, 1 req/sec is safe
+            "comicvine": 1.5,        # ComicVine: ~200/hour = 1 per 18s, but bursty OK
+            "pricecharting": 2.0,    # PriceCharting: aggressive rate limiting
+            "comicbookrealm": 1.5,   # CBR: Unknown, be conservative
+            "mycomicshop": 3.0,      # MCS: Scraping, be polite (conservative)
+            # Fandom wikis (MediaWiki API) - all generous, 1 req/sec is safe
+            "marvel_fandom": 1.0,
+            "dc_fandom": 1.0,
+            "image_fandom": 1.0,
+            "idw_fandom": 1.0,
+            "darkhorse_fandom": 1.0,
+            "dynamite_fandom": 1.0,
         }
 
     def get_limiter(self, source_name: str) -> SourceRateLimiter:
@@ -265,29 +284,38 @@ rate_limiter = RateLimitManager()
 # =============================================================================
 
 # Fields we want to enrich and which sources can provide them
+# MSE-002+: Expanded sources - All Fandom wikis (publisher-filtered), MyComicShop, CBR expansion
+# Fandom sources are publisher-specific: each only queries for its publisher's comics
+#   - marvel_fandom: Marvel only
+#   - dc_fandom: DC/Vertigo/WildStorm only
+#   - image_fandom: Image Comics only
+#   - idw_fandom: IDW Publishing only
+#   - darkhorse_fandom: Dark Horse only
+#   - dynamite_fandom: Dynamite Entertainment only
 ENRICHABLE_FIELDS = {
     # Core identifiers
     "metron_id": {"sources": ["metron"], "required_for_lookup": False},
     "comicvine_id": {"sources": ["comicvine"], "required_for_lookup": False},
     "pricecharting_id": {"sources": ["pricecharting"], "required_for_lookup": False},
 
-    # Barcodes
-    "upc": {"sources": ["metron", "comicvine", "comicbookrealm"], "required_for_lookup": False},
-    "isbn": {"sources": ["metron", "comicvine"], "required_for_lookup": False},
+    # Barcodes - EXPANDED with mycomicshop
+    "upc": {"sources": ["metron", "comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "isbn": {"sources": ["metron", "comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
 
-    # Bibliographic
-    "description": {"sources": ["metron", "comicvine"], "required_for_lookup": False},
-    "page_count": {"sources": ["metron", "comicvine", "comicbookrealm"], "required_for_lookup": False},
+    # Bibliographic - EXPANDED with ALL Fandom wikis (TEXT ONLY), mycomicshop, cbr
+    # NOTE: Fandom sources filter by publisher automatically - no cross-wiki queries
+    "description": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "page_count": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
     "price": {"sources": ["metron", "comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
-    "cover_date": {"sources": ["metron", "comicvine"], "required_for_lookup": False},
-    "store_date": {"sources": ["metron", "comicvine"], "required_for_lookup": False},
+    "cover_date": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "store_date": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
 
     # Market data (from PriceCharting once we have PC ID)
     "price_loose": {"sources": ["pricecharting"], "required_for_lookup": True},
     "price_graded": {"sources": ["pricecharting"], "required_for_lookup": True},
 
-    # Images
-    "image": {"sources": ["metron", "comicvine", "comicbookrealm"], "required_for_lookup": False},
+    # Images - NO Fandom (CC BY-SA license prohibits image redistribution)
+    "image": {"sources": ["metron", "comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
 }
 
 
@@ -745,6 +773,381 @@ async def query_comicbookrealm(
     return updates
 
 
+async def query_marvel_fandom(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Query Marvel Fandom (Marvel Database) for missing fields.
+
+    TEXT ONLY per CC BY-SA license - NO images allowed.
+    Provides: description, cover_date, store_date, page_count
+    """
+    updates = {}
+    source = "marvel_fandom"
+
+    # Only useful for Marvel comics
+    publisher = str(comic.get("publisher_name", "")).lower()
+    if "marvel" not in publisher:
+        return updates
+
+    # Fields Marvel Fandom can provide (TEXT ONLY)
+    fandom_fields = {"description", "cover_date", "store_date", "page_count"}
+    relevant_missing = missing_fields & fandom_fields
+    if not relevant_missing:
+        return updates
+
+    try:
+        from app.adapters.marvel_fandom import MarvelFandomAdapter
+
+        adapter = MarvelFandomAdapter()
+
+        if not await rate_mgr.wait_for_source(source):
+            return updates
+
+        series_name = comic.get("series_name", "")
+        issue_number = str(comic.get("number", ""))
+
+        if not series_name or not issue_number:
+            return updates
+
+        # Try to determine volume (default to 1)
+        volume = 1
+        if comic.get("series_year_began"):
+            # Use year to estimate volume if we have it
+            pass  # Keep default
+
+        # Fetch issue data from Marvel Fandom
+        data = await adapter.fetch_issue_credits(series_name, volume, issue_number)
+
+        if data:
+            rate_mgr.get_limiter(source).record_success()
+
+            # Extract description (synopsis) - TEXT ONLY
+            if "description" in missing_fields:
+                # Try multiple synopsis fields
+                synopsis = None
+                for story in data.get("stories", []):
+                    if story.get("synopsis"):
+                        synopsis = story["synopsis"]
+                        break
+                if synopsis:
+                    updates["description"] = synopsis[:5000]  # Limit length
+
+            # Extract cover_date
+            if "cover_date" in missing_fields and data.get("cover_date"):
+                updates["cover_date"] = data["cover_date"]
+
+            # Extract store_date (release_date)
+            if "store_date" in missing_fields and data.get("release_date"):
+                updates["store_date"] = data["release_date"]
+
+            # page_count not typically available from Marvel Fandom
+        else:
+            rate_mgr.get_limiter(source).record_success()  # API worked, just no match
+
+        # Cleanup
+        if hasattr(adapter, 'client') and adapter.client:
+            try:
+                await adapter.client.close()
+            except:
+                pass
+
+    except Exception as e:
+        error_str = str(e).lower()
+        if "429" in error_str or "rate" in error_str:
+            rate_mgr.get_limiter(source).record_rate_limit()
+        else:
+            logger.warning(f"[{source}] Error querying: {e}")
+
+    if updates:
+        logger.info(f"[{source}] Found {len(updates)} fields for comic {comic.get('id')}")
+
+    return updates
+
+
+async def query_dc_fandom(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Query DC Fandom (DC Database) for missing fields.
+
+    TEXT ONLY per CC BY-SA license - NO images allowed.
+    Provides: description, cover_date, store_date, page_count
+    """
+    return await _query_generic_fandom(
+        comic, missing_fields, rate_mgr,
+        wiki_key="dc_fandom",
+        publisher_patterns=["dc", "dc comics", "vertigo", "wildstorm"]
+    )
+
+
+async def query_image_fandom(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Query Image Comics Fandom for missing fields.
+
+    TEXT ONLY per CC BY-SA license - NO images allowed.
+    Provides: description, cover_date, store_date, page_count
+    """
+    return await _query_generic_fandom(
+        comic, missing_fields, rate_mgr,
+        wiki_key="image_fandom",
+        publisher_patterns=["image", "image comics"]
+    )
+
+
+async def query_idw_fandom(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Query IDW Publishing Database (Fandom) for missing fields.
+
+    TEXT ONLY per CC BY-SA license - NO images allowed.
+    Provides: description, cover_date, store_date, page_count
+    """
+    return await _query_generic_fandom(
+        comic, missing_fields, rate_mgr,
+        wiki_key="idw_fandom",
+        publisher_patterns=["idw", "idw publishing"]
+    )
+
+
+async def query_darkhorse_fandom(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Query Dark Horse Comics Database (Fandom) for missing fields.
+
+    TEXT ONLY per CC BY-SA license - NO images allowed.
+    Provides: description, cover_date, store_date, page_count
+    """
+    return await _query_generic_fandom(
+        comic, missing_fields, rate_mgr,
+        wiki_key="darkhorse_fandom",
+        publisher_patterns=["dark horse", "dark horse comics"]
+    )
+
+
+async def query_dynamite_fandom(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Query Dynamite Entertainment Database (Fandom) for missing fields.
+
+    TEXT ONLY per CC BY-SA license - NO images allowed.
+    Provides: description, cover_date, store_date, page_count
+    """
+    return await _query_generic_fandom(
+        comic, missing_fields, rate_mgr,
+        wiki_key="dynamite_fandom",
+        publisher_patterns=["dynamite", "dynamite entertainment"]
+    )
+
+
+async def _query_generic_fandom(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager,
+    wiki_key: str,
+    publisher_patterns: List[str]
+) -> Dict[str, Any]:
+    """
+    Generic Fandom query function for publisher-specific wikis.
+
+    TEXT ONLY per CC BY-SA license - NO images allowed.
+    Provides: description, cover_date, store_date, page_count
+    """
+    updates = {}
+    source = wiki_key
+
+    # Only query if publisher matches
+    publisher = str(comic.get("publisher_name", "")).lower()
+    if not any(p in publisher for p in publisher_patterns):
+        return updates
+
+    # Fields Fandom can provide (TEXT ONLY)
+    fandom_fields = {"description", "cover_date", "store_date", "page_count"}
+    relevant_missing = missing_fields & fandom_fields
+    if not relevant_missing:
+        return updates
+
+    try:
+        from app.adapters.fandom_adapter import FandomAdapter
+
+        adapter = FandomAdapter(wiki_key)
+
+        if not await rate_mgr.wait_for_source(source):
+            return updates
+
+        series_name = comic.get("series_name", "")
+        issue_number = str(comic.get("number", ""))
+
+        if not series_name or not issue_number:
+            return updates
+
+        # Try to determine volume (default to 1)
+        volume = 1
+
+        # Fetch issue data from Fandom wiki
+        data = await adapter.fetch_issue_data(series_name, volume, issue_number)
+
+        if data:
+            rate_mgr.get_limiter(source).record_success()
+
+            # Extract description - TEXT ONLY
+            if "description" in missing_fields and data.get("description"):
+                updates["description"] = data["description"][:5000]  # Limit length
+
+            # Extract cover_date
+            if "cover_date" in missing_fields and data.get("cover_date"):
+                updates["cover_date"] = data["cover_date"]
+
+            # Extract store_date (release_date)
+            if "store_date" in missing_fields and data.get("release_date"):
+                updates["store_date"] = data["release_date"]
+
+            # Extract page_count
+            if "page_count" in missing_fields and data.get("page_count"):
+                updates["page_count"] = data["page_count"]
+        else:
+            rate_mgr.get_limiter(source).record_success()  # API worked, just no match
+
+        # Cleanup
+        await adapter.close()
+
+    except Exception as e:
+        error_str = str(e).lower()
+        if "429" in error_str or "rate" in error_str:
+            rate_mgr.get_limiter(source).record_rate_limit()
+        else:
+            logger.warning(f"[{source}] Error querying: {e}")
+
+    if updates:
+        logger.info(f"[{source}] Found {len(updates)} fields for comic {comic.get('id')}")
+
+    return updates
+
+
+async def query_mycomicshop(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Query MyComicShop for missing fields (bibliographic data only).
+
+    Provides: upc, isbn, description, cover_date, price, image
+    EXCLUDED per user spec: inventory/availability data
+    """
+    updates = {}
+    source = "mycomicshop"
+
+    # Fields MyComicShop can provide
+    mcs_fields = {"upc", "isbn", "description", "cover_date", "price", "image"}
+    relevant_missing = missing_fields & mcs_fields
+    if not relevant_missing:
+        return updates
+
+    try:
+        from app.adapters.mycomicshop_adapter import create_mycomicshop_adapter
+
+        adapter = await create_mycomicshop_adapter()
+
+        if not await rate_mgr.wait_for_source(source):
+            return updates
+
+        series_name = comic.get("series_name", "")
+        issue_number = str(comic.get("number", ""))
+
+        if not series_name or not issue_number:
+            return updates
+
+        # Search for the issue
+        search_result = await adapter.search_issues(
+            series_name=series_name,
+            issue_number=issue_number,
+            limit=5
+        )
+
+        if search_result.success and search_result.records:
+            rate_mgr.get_limiter(source).record_success()
+
+            # Find best match from results
+            best = None
+            our_series = series_name.lower()
+            our_num = issue_number.lstrip("0") or "0"
+
+            for record in search_result.records:
+                title = record.get("title", "").lower()
+                # Check if series and number appear in title
+                if our_series.split()[0] in title and f"#{our_num}" in title:
+                    best = record
+                    break
+
+            if not best and search_result.records:
+                best = search_result.records[0]  # Fall back to first result
+
+            if best:
+                # Get full details if we have a URL
+                detail = None
+                if best.get("url"):
+                    if not await rate_mgr.wait_for_source(source):
+                        return updates
+                    detail = await adapter.fetch_by_id(best["url"])
+                    if detail:
+                        rate_mgr.get_limiter(source).record_success()
+
+                # Use detail data or search result
+                data = detail or best
+
+                # Extract fields (bibliographic only, no inventory)
+                if "image" in missing_fields and data.get("cover_url"):
+                    updates["image"] = data["cover_url"]
+
+                if "description" in missing_fields and data.get("description"):
+                    updates["description"] = data["description"][:5000]
+
+                if "cover_date" in missing_fields and data.get("cover_date"):
+                    updates["cover_date"] = data["cover_date"]
+
+                if "price" in missing_fields and data.get("cover_price"):
+                    updates["price"] = data["cover_price"]
+
+                # UPC/ISBN from detail page if available
+                if "upc" in missing_fields and data.get("upc"):
+                    updates["upc"] = data["upc"]
+
+                if "isbn" in missing_fields and data.get("isbn"):
+                    updates["isbn"] = data["isbn"]
+        else:
+            rate_mgr.get_limiter(source).record_success()  # Request worked, no results
+
+    except Exception as e:
+        error_str = str(e).lower()
+        if "429" in error_str or "rate" in error_str or "too many" in error_str:
+            rate_mgr.get_limiter(source).record_rate_limit()
+        else:
+            logger.warning(f"[{source}] Error querying: {e}")
+
+    if updates:
+        logger.info(f"[{source}] Found {len(updates)} fields for comic {comic.get('id')}")
+
+    return updates
+
+
 # =============================================================================
 # MATCHING HELPERS
 # =============================================================================
@@ -870,9 +1273,20 @@ async def run_sequential_exhaustive_enrichment_job(
     logger.info(f"[{job_name}] Starting Sequential Exhaustive Enrichment (batch: {batch_id})")
 
     # Source query functions in preferred order
+    # MSE-002+: All Fandom wikis + MyComicShop sources
+    # NOTE: Fandom sources auto-filter by publisher - won't query wrong wikis
     SOURCES = [
         ("metron", query_metron),
         ("comicvine", query_comicvine),
+        # Fandom wikis (TEXT ONLY per CC BY-SA - no images)
+        # Each filters by publisher_name - no cross-wiki queries
+        ("marvel_fandom", query_marvel_fandom),      # Marvel only
+        ("dc_fandom", query_dc_fandom),              # DC/Vertigo/WildStorm only
+        ("image_fandom", query_image_fandom),        # Image Comics only
+        ("idw_fandom", query_idw_fandom),            # IDW only
+        ("darkhorse_fandom", query_darkhorse_fandom),  # Dark Horse only
+        ("dynamite_fandom", query_dynamite_fandom),    # Dynamite only
+        ("mycomicshop", query_mycomicshop),          # Bibliographic only, no inventory
         ("pricecharting", query_pricecharting),
         ("comicbookrealm", query_comicbookrealm),
     ]
