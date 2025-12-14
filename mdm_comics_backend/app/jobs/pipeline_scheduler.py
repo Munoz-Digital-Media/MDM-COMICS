@@ -1032,96 +1032,103 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
             async with get_pricecharting_client() as client:
 
                 # =============================================================
-                # PHASE 1: Match Funkos
+                # PHASE 1: Match Funkos (independent - errors don't block comics)
                 # =============================================================
                 if phase == "funkos":
-                    logger.info(f"[{job_name}] PHASE 1: Matching Funkos (from id={funko_last_id})")
+                    try:
+                        logger.info(f"[{job_name}] PHASE 1: Matching Funkos (from id={funko_last_id})")
 
-                    while True:
-                        # Note: Funkos table has box_number, not UPC
-                        # Prioritize those with box_number for matching
-                        result = await db.execute(text("""
-                            SELECT id, title, box_number
-                            FROM funkos
-                            WHERE pricecharting_id IS NULL
-                              AND id > :last_id
-                            ORDER BY
-                              CASE WHEN box_number IS NOT NULL THEN 0 ELSE 1 END,
-                              id
-                            LIMIT :limit
-                        """), {"last_id": funko_last_id, "limit": batch_size})
+                        while True:
+                            # Note: Funkos table has box_number, not UPC
+                            # Prioritize those with box_number for matching
+                            result = await db.execute(text("""
+                                SELECT id, title, box_number
+                                FROM funkos
+                                WHERE pricecharting_id IS NULL
+                                  AND id > :last_id
+                                ORDER BY
+                                  CASE WHEN box_number IS NOT NULL THEN 0 ELSE 1 END,
+                                  id
+                                LIMIT :limit
+                            """), {"last_id": funko_last_id, "limit": batch_size})
 
-                        funkos = result.fetchall()
+                            funkos = result.fetchall()
 
-                        if not funkos:
-                            logger.info(f"[{job_name}] Funkos phase complete, switching to Comics")
-                            phase = "comics"
-                            break
+                            if not funkos:
+                                logger.info(f"[{job_name}] Funkos phase complete, switching to Comics")
+                                phase = "comics"
+                                break
 
-                        logger.info(f"[{job_name}] Processing {len(funkos)} Funkos")
+                            logger.info(f"[{job_name}] Processing {len(funkos)} Funkos")
 
-                        for funko in funkos:
-                            funko_id = funko.id
-                            funko_last_id = funko_id
-                            stats["funkos_processed"] += 1
+                            for funko in funkos:
+                                funko_id = funko.id
+                                funko_last_id = funko_id
+                                stats["funkos_processed"] += 1
 
-                            try:
-                                pc_id = None
-                                match_method = None
+                                try:
+                                    pc_id = None
+                                    match_method = None
 
-                                # Method 1: Title search for Funko Pop (primary method for Funkos)
-                                # Note: Funkos don't have UPC in this database, use title matching
-                                if funko.title:
-                                    search_query = f"Funko Pop {funko.title}"[:100]
-                                    response = await client.get(
-                                        "https://www.pricecharting.com/api/products",
-                                        params={"t": pc_token, "q": search_query}
-                                    )
-                                    if response.status_code == 200:
-                                        data = response.json()
-                                        products = data.get("products", [])
-                                        # Find best match
-                                        for prod in products[:5]:
-                                            prod_name = prod.get("product-name", "").lower()
-                                            if funko.title and funko.title.lower() in prod_name:
-                                                if "funko" in prod_name or "pop" in prod_name:
-                                                    pc_id = prod.get("id")
-                                                    match_method = "title"
-                                                    break
+                                    # Method 1: Title search for Funko Pop (primary method for Funkos)
+                                    # Note: Funkos don't have UPC in this database, use title matching
+                                    if funko.title:
+                                        search_query = f"Funko Pop {funko.title}"[:100]
+                                        response = await client.get(
+                                            "https://www.pricecharting.com/api/products",
+                                            params={"t": pc_token, "q": search_query}
+                                        )
+                                        if response.status_code == 200:
+                                            data = response.json()
+                                            products = data.get("products", [])
+                                            # Find best match
+                                            for prod in products[:5]:
+                                                prod_name = prod.get("product-name", "").lower()
+                                                if funko.title and funko.title.lower() in prod_name:
+                                                    if "funko" in prod_name or "pop" in prod_name:
+                                                        pc_id = prod.get("id")
+                                                        match_method = "title"
+                                                        break
 
-                                if pc_id:
-                                    await db.execute(text("""
-                                        UPDATE funkos
-                                        SET pricecharting_id = :pc_id, updated_at = NOW()
-                                        WHERE id = :id
-                                    """), {"id": funko_id, "pc_id": pc_id})
-                                    stats["funkos_matched"] += 1
-                                    logger.debug(f"[{job_name}] Matched Funko {funko_id} -> PC:{pc_id} via {match_method}")
+                                    if pc_id:
+                                        await db.execute(text("""
+                                            UPDATE funkos
+                                            SET pricecharting_id = :pc_id, updated_at = NOW()
+                                            WHERE id = :id
+                                        """), {"id": funko_id, "pc_id": pc_id})
+                                        stats["funkos_matched"] += 1
+                                        logger.debug(f"[{job_name}] Matched Funko {funko_id} -> PC:{pc_id} via {match_method}")
 
-                            except Exception as e:
-                                stats["errors"] += 1
-                                logger.warning(f"[{job_name}] Error matching Funko {funko_id}: {e}")
+                                except Exception as e:
+                                    stats["errors"] += 1
+                                    logger.warning(f"[{job_name}] Error matching Funko {funko_id}: {e}")
 
-                        # Commit and checkpoint
-                        await db.commit()
-                        await db.execute(text("""
-                            UPDATE pipeline_checkpoints
-                            SET state_data = jsonb_build_object(
-                                'phase', 'funkos',
-                                'funko_last_id', CAST(:funko_id AS integer),
-                                'comic_last_id', CAST(:comic_id AS integer)
-                            )
-                            WHERE job_name = :name
-                        """), {"name": job_name, "funko_id": funko_last_id, "comic_id": comic_last_id})
-                        await db.commit()
+                            # Commit and checkpoint
+                            await db.commit()
+                            await db.execute(text("""
+                                UPDATE pipeline_checkpoints
+                                SET state_data = jsonb_build_object(
+                                    'phase', 'funkos',
+                                    'funko_last_id', CAST(:funko_id AS integer),
+                                    'comic_last_id', CAST(:comic_id AS integer)
+                                )
+                                WHERE job_name = :name
+                            """), {"name": job_name, "funko_id": funko_last_id, "comic_id": comic_last_id})
+                            await db.commit()
 
-                        logger.info(f"[{job_name}] Funko batch: {stats['funkos_processed']} processed, {stats['funkos_matched']} matched")
+                            logger.info(f"[{job_name}] Funko batch: {stats['funkos_processed']} processed, {stats['funkos_matched']} matched")
 
-                        if max_records and (stats["funkos_processed"] + stats["comics_processed"]) >= max_records:
-                            break
+                            if max_records and (stats["funkos_processed"] + stats["comics_processed"]) >= max_records:
+                                break
+
+                    except Exception as funko_err:
+                        # v1.11.1: Funkos phase errors don't block comics
+                        logger.error(f"[{job_name}] Funkos phase failed: {funko_err} - continuing to Comics")
+                        stats["errors"] += 1
+                        phase = "comics"  # Force transition to comics phase
 
                 # =============================================================
-                # PHASE 2: Match Comics
+                # PHASE 2: Match Comics (independent of Funkos phase)
                 # =============================================================
                 if phase == "comics":
                     logger.info(f"[{job_name}] PHASE 2: Matching Comics (from id={comic_last_id})")
