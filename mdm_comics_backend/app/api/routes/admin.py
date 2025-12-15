@@ -2198,6 +2198,12 @@ async def get_sequential_enrichment_status(
             "comicvine_pct": round(coverage[3]/total*100, 1) if total else 0,
             "pricecharting_pct": round(coverage[4]/total*100, 1) if total else 0,
         },
-        "sources": ["metron", "comicvine", "pricecharting", "comicbookrealm"],
+        # MSE-002: Full list of implemented sources (11 total)
+        "sources": [
+            "metron", "comicvine",
+            "marvel_fandom", "dc_fandom", "image_fandom",
+            "idw_fandom", "darkhorse_fandom", "dynamite_fandom",
+            "mycomicshop", "pricecharting", "comicbookrealm"
+        ],
         "algorithm": "sequential_exhaustive"
     }
