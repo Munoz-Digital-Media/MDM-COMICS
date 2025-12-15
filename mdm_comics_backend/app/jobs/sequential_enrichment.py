@@ -843,12 +843,20 @@ async def query_comicvine(
                     # Estimate volume using intelligent detection
                     volume = estimate_volume(series_name, year) if year else 1
 
-                    # Build query with volume for better matching
-                    # Format: "Amazing Spider-Man Vol. 1 #300" or "Amazing Spider-Man Vol 1 300"
+                    # Build query with volume + year for better matching (v1.19.2)
+                    # Minimum fuzzy matching: series + volume + issue + year
+                    # Format: "Amazing Spider-Man Vol. 2 #300 1988"
+                    query_parts = [series_name]
+
                     if volume > 1:
-                        query = f"{series_name} Vol. {volume} {issue_number}"
-                    else:
-                        query = f"{series_name} {issue_number}"
+                        query_parts.append(f"Vol. {volume}")
+
+                    query_parts.append(str(issue_number))
+
+                    if year:
+                        query_parts.append(str(year))
+
+                    query = " ".join(query_parts)
 
                     logger.debug(f"[comicvine] Searching: {query} (year={year}, vol={volume})")
 
