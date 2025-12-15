@@ -506,6 +506,23 @@ export const adminAPI = {
     });
   },
 
+  // Get Sequential Enrichment (MSE) status
+  getSequentialEnrichmentStatus: async () => {
+    return fetchAPI('/admin/pipeline/sequential-enrichment/status');
+  },
+
+  // Trigger Sequential Enrichment (MSE) job
+  triggerSequentialEnrichment: async (options = {}) => {
+    return fetchAPI('/admin/pipeline/sequential-enrichment/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        batch_size: options.batch_size || 100,
+        max_records: options.max_records || 0,
+      }),
+    });
+  },
+
+
   // ==================== ADMIN SHIPPING MANAGEMENT ====================
 
   // Get shipping label for a shipment
