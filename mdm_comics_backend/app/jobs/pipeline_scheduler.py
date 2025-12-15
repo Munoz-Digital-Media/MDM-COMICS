@@ -59,6 +59,9 @@ from app.models.pipeline import (
 # v1.13.0: Sequential exhaustive enrichment
 from app.jobs.sequential_enrichment import run_sequential_exhaustive_enrichment_job
 
+# v1.21.0: Inbound cover processor
+from app.services.inbound_processor import run_inbound_processor
+
 logger = logging.getLogger(__name__)
 
 
@@ -4624,6 +4627,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("upc_backfill", run_upc_backfill_job, interval_minutes=60)),
             # v1.13.0: Sequential Exhaustive Enrichment - ONE row at a time, ALL sources exhausted
             asyncio.create_task(self._run_job_loop("sequential_enrichment", run_sequential_exhaustive_enrichment_job, interval_minutes=30)),
+            # v1.21.0: Inbound cover processor - watches Inbound folder, queues to Match Review
+            asyncio.create_task(self._run_job_loop("inbound_processor", run_inbound_processor, interval_minutes=5)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -4640,6 +4645,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - cover_enrichment: every 60 minutes (Phase 3: covers + creators from ComicVine)")
         print("[SCHEDULER]   - marvel_fandom: every 60 minutes (Story-level credits from Marvel Database)")
         print("[SCHEDULER]   - sequential_enrichment: every 30 minutes (ONE row, ALL sources exhausted)")
+        print("[SCHEDULER]   - inbound_processor: every 5 minutes (watch Inbound folder, queue to Match Review)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
