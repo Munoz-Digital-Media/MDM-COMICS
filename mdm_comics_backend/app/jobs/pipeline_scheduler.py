@@ -4622,6 +4622,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("marvel_fandom", run_marvel_fandom_job, interval_minutes=60)),
             # v1.12.0: UPC Backfill - Recover missing UPCs from Metron/CBR
             asyncio.create_task(self._run_job_loop("upc_backfill", run_upc_backfill_job, interval_minutes=60)),
+            # v1.13.0: Sequential Exhaustive Enrichment - ONE row at a time, ALL sources exhausted
+            asyncio.create_task(self._run_job_loop("sequential_enrichment", run_sequential_exhaustive_enrichment_job, interval_minutes=30)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -4637,6 +4639,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - gcd_import: every 60 minutes (finish remaining ~170k records)")
         print("[SCHEDULER]   - cover_enrichment: every 60 minutes (Phase 3: covers + creators from ComicVine)")
         print("[SCHEDULER]   - marvel_fandom: every 60 minutes (Story-level credits from Marvel Database)")
+        print("[SCHEDULER]   - sequential_enrichment: every 30 minutes (ONE row, ALL sources exhausted)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
