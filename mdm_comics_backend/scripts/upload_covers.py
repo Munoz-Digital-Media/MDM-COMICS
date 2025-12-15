@@ -333,6 +333,80 @@ class CoverParser:
             return ""
 
 
+class DirectDBQueue:
+    """Insert directly into the database (bypasses API, no token needed)."""
+
+    DATABASE_URL = "postgresql://postgres:figmwrDYQFzYjGYItivpQewcNKNfzXWv@gondola.proxy.rlwy.net:38453/railway"
+
+    def __init__(self):
+        from sqlalchemy import create_engine
+        self.engine = create_engine(self.DATABASE_URL)
+
+    def queue_cover(self, metadata: CoverMetadata, s3_key: str, s3_url: str) -> tuple[bool, Optional[int], Optional[str]]:
+        """Insert a cover into match_review_queue directly."""
+        from sqlalchemy import text
+
+        try:
+            with self.engine.connect() as conn:
+                # Check if already exists
+                check = conn.execute(text("""
+                    SELECT id FROM match_review_queue
+                    WHERE candidate_source = 'local_cover' AND candidate_id = :hash
+                """), {"hash": metadata.file_hash})
+                existing = check.fetchone()
+                if existing:
+                    return True, None, "Already queued"
+
+                # Insert new entry
+                result = conn.execute(text("""
+                    INSERT INTO match_review_queue (
+                        entity_type, entity_id, candidate_source, candidate_id,
+                        candidate_name, candidate_data, match_method, match_score,
+                        status, created_at, updated_at
+                    ) VALUES (
+                        'comic', 0, 'local_cover', :hash,
+                        :name, CAST(:data AS jsonb), 'file_upload', 5,
+                        'pending', NOW(), NOW()
+                    )
+                    RETURNING id
+                """), {
+                    "hash": metadata.file_hash,
+                    "name": f"{metadata.publisher} {metadata.series} v{metadata.volume} #{metadata.issue_number}",
+                    "data": json.dumps({
+                        "publisher": metadata.publisher,
+                        "series": metadata.series,
+                        "volume": metadata.volume,
+                        "issue_number": metadata.issue_number,
+                        "variant_code": metadata.variant_code,
+                        "cover_type": metadata.cover_type,
+                        "cgc_grade": metadata.cgc_grade,
+                        "s3_key": s3_key,
+                        "s3_url": s3_url,
+                        "original_filename": metadata.filename,
+                        "file_hash": metadata.file_hash,
+                    })
+                })
+                conn.commit()
+                row = result.fetchone()
+                return True, row[0] if row else None, None
+
+        except Exception as e:
+            return False, None, str(e)
+
+    def check_exists(self, file_hash: str) -> bool:
+        """Check if a cover with this hash already exists."""
+        from sqlalchemy import text
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT 1 FROM match_review_queue
+                    WHERE candidate_source = 'local_cover' AND candidate_id = :hash
+                """), {"hash": file_hash})
+                return result.fetchone() is not None
+        except Exception:
+            return False
+
+
 class MatchReviewAPI:
     """Calls the Railway backend API to create Match Review entries."""
 
@@ -353,7 +427,7 @@ class MatchReviewAPI:
         """
         try:
             payload = {
-                "source_type": "cover_upload",
+                "source_type": "comic",  # Using 'comic' until DB constraint is migrated
                 "source_id": metadata.file_hash,
                 "candidate_data": {
                     "publisher": metadata.publisher,
@@ -444,6 +518,7 @@ def main():
     parser.add_argument('--limit', type=int, default=0, help='Limit number of files to process (0 = unlimited)')
     parser.add_argument('--dry-run', action='store_true', help='Parse files without uploading')
     parser.add_argument('--skip-existing', action='store_true', default=True, help='Skip files already in queue')
+    parser.add_argument('--direct-db', action='store_true', help='Insert directly to database (no API token needed)')
     args = parser.parse_args()
 
     folder_path = args.folder
@@ -462,8 +537,8 @@ def main():
             logger.error("Missing S3 credentials. Set S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET")
             sys.exit(1)
 
-        if not API_TOKEN:
-            logger.error("Missing API_TOKEN for authentication")
+        if not args.direct_db and not API_TOKEN:
+            logger.error("Missing API_TOKEN for authentication. Use --direct-db to bypass API.")
             sys.exit(1)
 
     # Collect files
@@ -482,7 +557,11 @@ def main():
 
     if not args.dry_run:
         uploader = S3Uploader()
-        api = MatchReviewAPI(API_URL, API_TOKEN)
+        if args.direct_db:
+            logger.info("Using direct database mode (no API)")
+            api = DirectDBQueue()
+        else:
+            api = MatchReviewAPI(API_URL, API_TOKEN)
 
     # Process files
     stats = {

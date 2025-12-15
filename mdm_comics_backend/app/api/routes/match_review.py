@@ -288,7 +288,7 @@ async def manual_link(
     from datetime import datetime
 
     if link.entity_type == 'comic':
-        from app.models.comic_issue import ComicIssue
+        from app.models.comic_data import ComicIssue
         entity = await db.get(ComicIssue, link.entity_id)
     else:
         from app.models.funko import Funko
@@ -386,7 +386,7 @@ async def search_pricecharting(
 async def _get_entity_summary(db: AsyncSession, entity_type: str, entity_id: int) -> EntitySummary:
     """Get summary of entity for display."""
     if entity_type == 'comic':
-        from app.models.comic_issue import ComicIssue
+        from app.models.comic_data import ComicIssue
         entity = await db.get(ComicIssue, entity_id)
         if entity:
             return EntitySummary(

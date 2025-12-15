@@ -163,10 +163,20 @@ async def replay_preflight():
     """
     Handle CORS preflight for replay endpoint.
 
-    The CORSMiddleware should handle this, but adding explicit handler
-    to ensure OPTIONS doesn't hit the POST handler's validation.
+    Explicit CORS headers required because this endpoint uses raw binary data
+    with custom headers (X-Session-ID, X-Chunk-Index, etc.) that trigger
+    preflight requests. The CORSMiddleware handles standard preflight, but
+    explicit headers ensure non-standard headers are permitted.
     """
-    return Response(status_code=200)
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",  # CORSMiddleware will override with specific origin
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Content-Encoding, X-Session-ID, X-Chunk-Index, X-Event-Count, X-Start-Timestamp, X-End-Timestamp, X-Has-Errors",
+            "Access-Control-Max-Age": "86400",
+        }
+    )
 
 
 @router.post("/beacon/replay", status_code=status.HTTP_202_ACCEPTED)

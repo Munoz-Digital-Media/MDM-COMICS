@@ -297,7 +297,7 @@ class MatchReviewService:
 
         # Update entity with pricecharting_id
         if match.entity_type == 'comic':
-            from app.models.comic_issue import ComicIssue
+            from app.models.comic_data import ComicIssue
             entity = await self.db.get(ComicIssue, match.entity_id)
             if entity:
                 before_state["pricecharting_id"] = entity.pricecharting_id
