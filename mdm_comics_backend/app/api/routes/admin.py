@@ -1846,10 +1846,11 @@ async def get_pricecharting_matching_status(
     db: AsyncSession = Depends(get_db)
 ):
     """Get PriceCharting matching job status for both Funkos and Comics."""
-    # Get checkpoint
+    # Get checkpoint - v1.20.0: Include control_signal for pause/stop state
     result = await db.execute(text("""
         SELECT job_name, is_running, total_processed, total_updated, total_errors,
-               last_run_started, last_run_completed, last_error, state_data
+               last_run_started, last_run_completed, last_error, state_data,
+               control_signal, paused_at
         FROM pipeline_checkpoints
         WHERE job_name = 'pricecharting_matching'
     """))
@@ -1866,6 +1867,8 @@ async def get_pricecharting_matching_status(
             "last_run_completed": row[6].isoformat() if row[6] else None,
             "last_error": row[7],
             "state_data": row[8],
+            "control_signal": row[9] if len(row) > 9 else "run",
+            "paused_at": row[10].isoformat() if len(row) > 10 and row[10] else None,
         }
 
     # Get matching stats for BOTH entity types

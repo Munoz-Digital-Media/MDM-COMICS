@@ -200,6 +200,31 @@ export default function PipelineStatus({ compact = false }) {
     }
   };
 
+  // v1.20.0: PriceCharting job control handlers
+  const handlePausePC = async () => {
+    setActionLoading(true);
+    try {
+      await adminAPI.pauseJob('pricecharting_matching');
+      await fetchStatus();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleStopPC = async () => {
+    setActionLoading(true);
+    try {
+      await adminAPI.stopJob('pricecharting_matching');
+      await fetchStatus();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
@@ -245,6 +270,9 @@ export default function PipelineStatus({ compact = false }) {
   const pcCheckpoint = pcStatus?.checkpoint || {};
   const pcStats = pcStatus?.matching_stats || {};
   const pcIsRunning = pcCheckpoint.is_running;
+  const pcControlSignal = pcCheckpoint.control_signal || 'run';  // v1.20.0
+  const pcIsPaused = pcControlSignal === 'pause' && !pcIsRunning;
+  const pcIsStopped = pcControlSignal === 'stop' && !pcIsRunning;
   const pcComicsMatched = pcStats.comics_matched || 0;
   const pcComicsTotal = pcStats.comics_total || 0;
   const pcFunkosMatched = pcStats.funkos_matched || 0;
@@ -694,6 +722,16 @@ export default function PipelineStatus({ compact = false }) {
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Matching Running
               </span>
+            ) : pcIsPaused ? (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">
+                <Pause className="w-4 h-4" />
+                Paused (will auto-resume on cron)
+              </span>
+            ) : pcIsStopped ? (
+              <span className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">
+                <Square className="w-4 h-4" />
+                Stopped
+              </span>
             ) : pcComicsMatched > 0 ? (
               <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
                 <Link2 className="w-4 h-4" />
@@ -713,8 +751,32 @@ export default function PipelineStatus({ compact = false }) {
                 className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm hover:bg-green-500/30 transition-colors disabled:opacity-50"
               >
                 {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                {pcComicsMatched > 0 ? 'Continue Matching' : 'Start Matching'}
+                {pcIsPaused || pcIsStopped ? 'Resume' : pcComicsMatched > 0 ? 'Continue Matching' : 'Start Matching'}
               </button>
+            )}
+
+            {/* v1.20.0: Pause/Stop controls when running */}
+            {pcIsRunning && (
+              <>
+                <button
+                  onClick={handlePausePC}
+                  disabled={actionLoading}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm hover:bg-yellow-500/30 transition-colors disabled:opacity-50"
+                  title="Pause - saves checkpoint, cron will auto-resume"
+                >
+                  {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Pause className="w-4 h-4" />}
+                  Pause
+                </button>
+                <button
+                  onClick={handleStopPC}
+                  disabled={actionLoading}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm hover:bg-red-500/30 transition-colors disabled:opacity-50"
+                  title="Stop - saves checkpoint, releases lock"
+                >
+                  {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                  Stop
+                </button>
+              </>
             )}
           </div>
 
