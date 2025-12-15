@@ -158,6 +158,17 @@ async def ingest_vitals(
     return {"accepted": True}
 
 
+@router.options("/beacon/replay")
+async def replay_preflight():
+    """
+    Handle CORS preflight for replay endpoint.
+
+    The CORSMiddleware should handle this, but adding explicit handler
+    to ensure OPTIONS doesn't hit the POST handler's validation.
+    """
+    return Response(status_code=200)
+
+
 @router.post("/beacon/replay", status_code=status.HTTP_202_ACCEPTED)
 async def ingest_replay(
     request: Request,
