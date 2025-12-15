@@ -255,6 +255,222 @@ def estimate_volume(series_name: str, year: Optional[int]) -> int:
     return 1
 
 
+# =============================================================================
+# FUZZY MATCHING - AGNOSTIC SEARCH QUERY BUILDER
+# =============================================================================
+
+@dataclass
+class FuzzyMatchComponents:
+    """Components extracted for fuzzy matching across any data source."""
+    series_name: str
+    issue_number: str
+    volume: int
+    year: Optional[int]
+    publisher: Optional[str]
+    query: str  # Pre-built search query string
+
+
+def build_fuzzy_match_query(
+    comic: Dict[str, Any],
+    include_volume: bool = True,
+    include_year: bool = True,
+    include_publisher: bool = False,
+    query_format: str = "standard"
+) -> FuzzyMatchComponents:
+    """
+    Build a fuzzy match search query from comic data.
+
+    This is the MINIMUM fuzzy matching technique that should be applied
+    to ALL data source queries for consistent, accurate matching.
+
+    Args:
+        comic: Dictionary containing comic data with keys:
+               - series_name (required)
+               - number (required)
+               - cover_date (optional, for year extraction)
+               - publisher_name (optional)
+        include_volume: Include estimated volume in query (default True)
+        include_year: Include publication year in query (default True)
+        include_publisher: Include publisher name in query (default False)
+        query_format: Query string format:
+                     - "standard": "Series Vol. X #N YYYY"
+                     - "compact": "Series X N YYYY"
+                     - "natural": "Series #N (YYYY)"
+
+    Returns:
+        FuzzyMatchComponents with extracted data and pre-built query
+
+    Example:
+        >>> comic = {"series_name": "Amazing Spider-Man", "number": "300",
+        ...          "cover_date": "1988-05-01", "publisher_name": "Marvel"}
+        >>> result = build_fuzzy_match_query(comic)
+        >>> result.query
+        'Amazing Spider-Man Vol. 1 300 1988'
+        >>> result.volume
+        1
+        >>> result.year
+        1988
+    """
+    series_name = comic.get("series_name", "").strip()
+    issue_number = str(comic.get("number", "")).strip()
+    publisher = comic.get("publisher_name")
+
+    # Extract year from cover_date
+    year = None
+    cover_date = comic.get("cover_date")
+    if cover_date:
+        if hasattr(cover_date, 'year'):
+            year = cover_date.year
+        elif isinstance(cover_date, str) and len(cover_date) >= 4:
+            try:
+                year = int(cover_date[:4])
+            except ValueError:
+                pass
+
+    # Estimate volume using intelligent detection
+    volume = estimate_volume(series_name, year) if year else 1
+
+    # Build query based on format
+    query_parts = []
+
+    if include_publisher and publisher:
+        query_parts.append(publisher)
+
+    query_parts.append(series_name)
+
+    if include_volume and volume > 1:
+        if query_format == "compact":
+            query_parts.append(str(volume))
+        else:
+            query_parts.append(f"Vol. {volume}")
+
+    if query_format == "natural":
+        query_parts.append(f"#{issue_number}")
+    else:
+        query_parts.append(issue_number)
+
+    if include_year and year:
+        if query_format == "natural":
+            query_parts.append(f"({year})")
+        else:
+            query_parts.append(str(year))
+
+    query = " ".join(query_parts)
+
+    return FuzzyMatchComponents(
+        series_name=series_name,
+        issue_number=issue_number,
+        volume=volume,
+        year=year,
+        publisher=publisher,
+        query=query
+    )
+
+
+def normalize_for_comparison(text: str) -> str:
+    """
+    Normalize text for fuzzy comparison.
+
+    Strips punctuation, lowercases, and normalizes whitespace.
+    Used to compare search results against our data.
+
+    Args:
+        text: Raw text to normalize
+
+    Returns:
+        Normalized string for comparison
+    """
+    if not text:
+        return ""
+
+    import re
+    # Lowercase
+    text = text.lower()
+    # Remove punctuation except hyphens in series names
+    text = re.sub(r'[^\w\s-]', '', text)
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def calculate_match_score(
+    comic: Dict[str, Any],
+    candidate: Dict[str, Any],
+    source_format: str = "generic"
+) -> float:
+    """
+    Calculate a match score between our comic and a search result candidate.
+
+    Args:
+        comic: Our comic data
+        candidate: Search result from external source
+        source_format: How to extract fields from candidate:
+                      - "generic": Use common field names
+                      - "comicvine": ComicVine API format
+                      - "metron": Metron API format
+
+    Returns:
+        Score from 0.0 (no match) to 1.0 (perfect match)
+    """
+    score = 0.0
+    weights = {"series": 0.4, "issue": 0.3, "year": 0.2, "volume": 0.1}
+
+    our_data = build_fuzzy_match_query(comic)
+
+    # Extract candidate fields based on source format
+    if source_format == "comicvine":
+        cand_series = candidate.get("volume", {}).get("name", "") if candidate.get("volume") else ""
+        cand_issue = str(candidate.get("issue_number", ""))
+        cand_year = None
+        if candidate.get("cover_date"):
+            try:
+                cand_year = int(candidate["cover_date"][:4])
+            except (ValueError, TypeError):
+                pass
+    elif source_format == "metron":
+        cand_series = candidate.get("series", {}).get("name", "") if candidate.get("series") else ""
+        cand_issue = str(candidate.get("number", ""))
+        cand_year = None
+        if candidate.get("cover_date"):
+            try:
+                cand_year = int(str(candidate["cover_date"])[:4])
+            except (ValueError, TypeError):
+                pass
+    else:
+        # Generic format
+        cand_series = candidate.get("series_name", "") or candidate.get("name", "")
+        cand_issue = str(candidate.get("issue_number", "") or candidate.get("number", ""))
+        cand_year = candidate.get("year")
+
+    # Series name match (fuzzy)
+    our_series_norm = normalize_for_comparison(our_data.series_name)
+    cand_series_norm = normalize_for_comparison(cand_series)
+    if our_series_norm and cand_series_norm:
+        if our_series_norm == cand_series_norm:
+            score += weights["series"]
+        elif our_series_norm in cand_series_norm or cand_series_norm in our_series_norm:
+            score += weights["series"] * 0.8
+
+    # Issue number match (exact)
+    our_issue_norm = our_data.issue_number.lstrip("0") or "0"
+    cand_issue_norm = cand_issue.lstrip("0") or "0"
+    if our_issue_norm == cand_issue_norm:
+        score += weights["issue"]
+
+    # Year match (within 1 year tolerance for cover date variations)
+    if our_data.year and cand_year:
+        year_diff = abs(our_data.year - cand_year)
+        if year_diff == 0:
+            score += weights["year"]
+        elif year_diff == 1:
+            score += weights["year"] * 0.5
+
+    # Volume is implicit in year matching for most cases
+    # but we still give partial credit for having year data
+    if our_data.year and cand_year:
+        score += weights["volume"] * 0.5
+
+    return min(score, 1.0)
 
 
 # =============================================================================
@@ -823,42 +1039,16 @@ async def query_comicvine(
                     if "image" in missing_fields and data.get("image", {}).get("original_url"):
                         updates["image"] = data["image"]["original_url"]
             else:
-                # Search by series + volume + issue (v1.19.0 enhancement)
+                # Search using agnostic fuzzy matching (v1.19.3)
                 if comic.get("series_name") and comic.get("number"):
-                    series_name = comic['series_name']
-                    issue_number = comic['number']
+                    # Use the standard fuzzy match query builder
+                    match_data = build_fuzzy_match_query(comic)
+                    query = match_data.query
 
-                    # Extract year from cover_date for volume estimation
-                    year = None
-                    cover_date = comic.get("cover_date")
-                    if cover_date:
-                        if hasattr(cover_date, 'year'):
-                            year = cover_date.year
-                        elif isinstance(cover_date, str) and len(cover_date) >= 4:
-                            try:
-                                year = int(cover_date[:4])
-                            except ValueError:
-                                pass
-
-                    # Estimate volume using intelligent detection
-                    volume = estimate_volume(series_name, year) if year else 1
-
-                    # Build query with volume + year for better matching (v1.19.2)
-                    # Minimum fuzzy matching: series + volume + issue + year
-                    # Format: "Amazing Spider-Man Vol. 2 #300 1988"
-                    query_parts = [series_name]
-
-                    if volume > 1:
-                        query_parts.append(f"Vol. {volume}")
-
-                    query_parts.append(str(issue_number))
-
-                    if year:
-                        query_parts.append(str(year))
-
-                    query = " ".join(query_parts)
-
-                    logger.debug(f"[comicvine] Searching: {query} (year={year}, vol={volume})")
+                    logger.debug(
+                        f"[comicvine] Searching: {query} "
+                        f"(year={match_data.year}, vol={match_data.volume})"
+                    )
 
                     response = await client.get(
                         "https://comicvine.gamespot.com/api/search/",
