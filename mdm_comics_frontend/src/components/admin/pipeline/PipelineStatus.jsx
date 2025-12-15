@@ -254,6 +254,7 @@ export default function PipelineStatus({ compact = false }) {
   const mseWithDescription = mseCoverage.with_description || 0;
   const mseWithUpc = mseCoverage.with_upc || 0;
   const mseWithIsbn = mseCoverage.with_isbn || 0;
+  const mseWithImage = mseCoverage.with_image || 0;
   const mseWithMarketMetrics = mseCoverage.with_market_metrics || 0;
   // Calculate percentages locally for better precision display
   const calcPct = (count) => mseTotalComics > 0 ? (count / mseTotalComics * 100) : 0;
@@ -900,6 +901,39 @@ export default function PipelineStatus({ compact = false }) {
             </div>
           </div>
 
+          {/* Content Coverage - Description & Image */}
+          <div className="bg-zinc-800/30 rounded-lg p-4">
+            <h4 className="text-sm font-medium text-zinc-300 mb-3">Content Coverage</h4>
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-zinc-400">Description</span>
+                  <span className="text-sm">
+                    <span className="font-medium text-purple-400">{formatNumber(mseWithDescription)}</span>
+                    <span className="text-zinc-500"> / {formatNumber(mseTotalComics)}</span>
+                    <span className="text-zinc-500 ml-2">({calcPct(mseWithDescription).toFixed(1)}%)</span>
+                  </span>
+                </div>
+                <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-purple-500" style={{ width: `${Math.min(calcPct(mseWithDescription), 100)}%` }} />
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-zinc-400">Cover Image</span>
+                  <span className="text-sm">
+                    <span className="font-medium text-pink-400">{formatNumber(mseWithImage)}</span>
+                    <span className="text-zinc-500"> / {formatNumber(mseTotalComics)}</span>
+                    <span className="text-zinc-500 ml-2">({calcPct(mseWithImage).toFixed(1)}%)</span>
+                  </span>
+                </div>
+                <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-pink-500" style={{ width: `${Math.min(calcPct(mseWithImage), 100)}%` }} />
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Source ID Coverage */}
           <div className="bg-zinc-800/30 rounded-lg p-4">
             <h4 className="text-sm font-medium text-zinc-300 mb-3">Source ID Coverage</h4>
@@ -931,14 +965,33 @@ export default function PipelineStatus({ compact = false }) {
                 <h4 className="text-sm font-medium text-purple-400">Active Enrichment Sources</h4>
               </div>
               <div className="flex flex-wrap gap-2">
-                {mseSources.map(source => (
-                  <span
-                    key={source}
-                    className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs font-medium capitalize"
-                  >
-                    {source.replace('comicbookrealm', 'CBR').replace('comicvine', 'ComicVine').replace('pricecharting', 'PriceCharting')}
-                  </span>
-                ))}
+                {mseSources.map(source => {
+                  // Format source names with proper case and acronyms
+                  const formatSource = (s) => {
+                    const nameMap = {
+                      'metron': 'Metron',
+                      'comicvine': 'ComicVine',
+                      'pricecharting': 'PriceCharting',
+                      'comicbookrealm': 'CBR',
+                      'marvel_fandom': 'Marvel Fandom',
+                      'mycomicshop': 'MyComicShop',
+                      'dc_fandom': 'DC Fandom',
+                      'image_fandom': 'Image Fandom',
+                      'idw_fandom': 'IDW Fandom',
+                      'darkhorse_fandom': 'Dark Horse Fandom',
+                      'dynamite_fandom': 'Dynamite Fandom',
+                    };
+                    return nameMap[s] || s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                  };
+                  return (
+                    <span
+                      key={source}
+                      className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs font-medium"
+                    >
+                      {formatSource(source)}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           )}
