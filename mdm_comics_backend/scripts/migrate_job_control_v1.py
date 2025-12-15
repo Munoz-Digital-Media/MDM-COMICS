@@ -39,7 +39,7 @@ def get_token(base_url: str, email: str, password: str) -> str:
 def run_migration(base_url: str, token: str) -> dict:
     """Run the job-control migration."""
     response = httpx.post(
-        f"{base_url}/api/data-health/migrations/job-control",
+        f"{base_url}/api/admin/data-health/migrations/job-control",
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -86,7 +86,7 @@ def main():
         sys.exit(1)
 
     print("\nDone! Job control is now available.")
-    print("Use /api/data-health/jobs/{job_name}/start|pause|stop endpoints.")
+    print("Use /api/admin/data-health/jobs/{job_name}/start|pause|stop endpoints.")
 
 
 if __name__ == "__main__":
