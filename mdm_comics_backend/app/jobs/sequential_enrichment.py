@@ -1696,16 +1696,22 @@ async def run_sequential_exhaustive_enrichment_job(
 
                     # Checkpoint every 10 rows
                     if stats["processed"] % 10 == 0:
+                        # Calculate enriched since last checkpoint
+                        enriched_delta = stats["enriched"] - stats.get("_last_checkpoint_enriched", 0)
+                        stats["_last_checkpoint_enriched"] = stats["enriched"]
+
                         await db.execute(text("""
                             UPDATE pipeline_checkpoints
                             SET state_data = jsonb_build_object('last_id', CAST(:last_id AS integer)),
                                 total_processed = COALESCE(total_processed, 0) + :batch_processed,
+                                total_updated = COALESCE(total_updated, 0) + :batch_updated,
                                 updated_at = NOW()
                             WHERE job_name = :name
                         """), {
                             "name": job_name,
                             "last_id": last_id,
-                            "batch_processed": 10
+                            "batch_processed": 10,
+                            "batch_updated": enriched_delta
                         })
                         await db.commit()
 
@@ -1715,19 +1721,22 @@ async def run_sequential_exhaustive_enrichment_job(
                 if max_records > 0 and stats["processed"] >= max_records:
                     break
 
-            # Final checkpoint update
+            # Final checkpoint update - include remaining enriched since last checkpoint
+            final_enriched_delta = stats["enriched"] - stats.get("_last_checkpoint_enriched", 0)
             await db.execute(text("""
                 UPDATE pipeline_checkpoints
                 SET is_running = false,
                     state_data = jsonb_build_object('last_id', CAST(:last_id AS integer)),
                     total_processed = COALESCE(total_processed, 0) + :batch_processed,
+                    total_updated = COALESCE(total_updated, 0) + :batch_updated,
                     last_run_completed = NOW(),
                     updated_at = NOW()
                 WHERE job_name = :name
             """), {
                 "name": job_name,
                 "last_id": last_id,
-                "batch_processed": stats["processed"] % 10  # Remaining
+                "batch_processed": stats["processed"] % 10,  # Remaining processed
+                "batch_updated": final_enriched_delta  # Remaining enriched
             })
             await db.commit()
 
