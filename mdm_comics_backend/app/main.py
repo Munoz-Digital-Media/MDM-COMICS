@@ -446,7 +446,8 @@ app.add_middleware(
         "X-RateLimit-Remaining",
         "X-RateLimit-Reset",
     ],
-    max_age=86400,  # Cache preflight for 24 hours
+    # Cache preflight: 1 hour for dev (faster iteration), 24 hours for prod
+    max_age=3600 if settings.ENVIRONMENT == "development" else 86400,
 )
 
 # Include routers

@@ -447,6 +447,42 @@ class CoverIngestionService:
             # Build product name for display
             product_name = self._build_product_name(metadata)
 
+            # Upload to S3 if configured (enables cover display in Match Review)
+            s3_url = None
+            s3_key = None
+            storage = StorageService()
+            if storage.is_configured():
+                try:
+                    with open(file_path, 'rb') as f:
+                        content = f.read()
+
+                    # Determine content type from extension
+                    ext = Path(file_path).suffix.lower()
+                    content_types = {
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.png': 'image/png',
+                        '.webp': 'image/webp',
+                    }
+                    content_type = content_types.get(ext, 'image/jpeg')
+
+                    # Upload to S3 under covers folder
+                    upload_result = await storage.upload_product_image(
+                        content=content,
+                        filename=metadata.filename,
+                        content_type=content_type,
+                        product_type="covers",
+                    )
+
+                    if upload_result.success:
+                        s3_url = upload_result.url
+                        s3_key = upload_result.key
+                        logger.info(f"Uploaded cover to S3: {s3_key}")
+                    else:
+                        logger.warning(f"S3 upload failed for {file_path}: {upload_result.error}")
+                except Exception as e:
+                    logger.warning(f"S3 upload error for {file_path}: {e}")
+
             # Queue to Match Review - ALL items go here for human approval
             queue_item = await self.review_service.add_to_queue(
                 entity_type="cover_ingestion",
@@ -459,6 +495,9 @@ class CoverIngestionService:
                     "file_path": metadata.full_path,
                     "filename": metadata.filename,
                     "cover_type": metadata.cover_type,
+                    # S3 URL for cover display (if uploaded)
+                    "s3_url": s3_url,
+                    "s3_key": s3_key,
                     # Parsed metadata
                     "publisher": metadata.publisher,
                     "series": metadata.series,
