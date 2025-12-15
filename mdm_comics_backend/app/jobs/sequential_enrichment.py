@@ -823,9 +823,34 @@ async def query_comicvine(
                     if "image" in missing_fields and data.get("image", {}).get("original_url"):
                         updates["image"] = data["image"]["original_url"]
             else:
-                # Search by series + issue
+                # Search by series + volume + issue (v1.19.0 enhancement)
                 if comic.get("series_name") and comic.get("number"):
-                    query = f"{comic['series_name']} {comic['number']}"
+                    series_name = comic['series_name']
+                    issue_number = comic['number']
+
+                    # Extract year from cover_date for volume estimation
+                    year = None
+                    cover_date = comic.get("cover_date")
+                    if cover_date:
+                        if hasattr(cover_date, 'year'):
+                            year = cover_date.year
+                        elif isinstance(cover_date, str) and len(cover_date) >= 4:
+                            try:
+                                year = int(cover_date[:4])
+                            except ValueError:
+                                pass
+
+                    # Estimate volume using intelligent detection
+                    volume = estimate_volume(series_name, year) if year else 1
+
+                    # Build query with volume for better matching
+                    # Format: "Amazing Spider-Man Vol. 1 #300" or "Amazing Spider-Man Vol 1 300"
+                    if volume > 1:
+                        query = f"{series_name} Vol. {volume} {issue_number}"
+                    else:
+                        query = f"{series_name} {issue_number}"
+
+                    logger.debug(f"[comicvine] Searching: {query} (year={year}, vol={volume})")
 
                     response = await client.get(
                         "https://comicvine.gamespot.com/api/search/",
