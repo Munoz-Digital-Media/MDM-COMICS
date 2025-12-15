@@ -269,9 +269,9 @@ export default function CoverIngestion() {
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2">
               <Package className="w-5 h-5 text-orange-400" />
-              <span className="text-zinc-500 text-sm">Products Created</span>
+              <span className="text-zinc-500 text-sm">Total Queued</span>
             </div>
-            <p className="text-2xl font-bold text-white">{stats.products_created?.total || 0}</p>
+            <p className="text-2xl font-bold text-white">{stats.queue?.total_queued || 0}</p>
           </div>
 
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
