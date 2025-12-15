@@ -2175,13 +2175,14 @@ async def get_sequential_enrichment_status(
             COUNT(CASE WHEN pricecharting_id IS NOT NULL THEN 1 END) as with_pricecharting,
             COUNT(CASE WHEN upc IS NOT NULL AND upc <> '' THEN 1 END) as with_upc,
             COUNT(CASE WHEN isbn IS NOT NULL AND isbn <> '' THEN 1 END) as with_isbn,
-            COUNT(CASE WHEN est_print_run IS NOT NULL THEN 1 END) as with_market_metrics
+            COUNT(CASE WHEN est_print_run IS NOT NULL THEN 1 END) as with_market_metrics,
+            COUNT(CASE WHEN image IS NOT NULL AND image <> '' THEN 1 END) as with_image
         FROM comic_issues
     """))
     coverage = coverage_result.fetchone()
 
     total = coverage[0] if coverage else 0
-    
+
     return {
         "checkpoint": checkpoint,
         "coverage": {
@@ -2193,10 +2194,15 @@ async def get_sequential_enrichment_status(
             "with_upc": coverage[5] if coverage else 0,
             "with_isbn": coverage[6] if coverage else 0,
             "with_market_metrics": coverage[7] if coverage else 0,
+            "with_image": coverage[8] if coverage else 0,
             "description_pct": round(coverage[1]/total*100, 1) if total else 0,
             "metron_pct": round(coverage[2]/total*100, 1) if total else 0,
             "comicvine_pct": round(coverage[3]/total*100, 1) if total else 0,
             "pricecharting_pct": round(coverage[4]/total*100, 1) if total else 0,
+            "upc_pct": round(coverage[5]/total*100, 1) if total else 0,
+            "isbn_pct": round(coverage[6]/total*100, 1) if total else 0,
+            "market_metrics_pct": round(coverage[7]/total*100, 1) if total else 0,
+            "image_pct": round(coverage[8]/total*100, 1) if total else 0,
         },
         # MSE-002: Full list of implemented sources (11 total)
         "sources": [
