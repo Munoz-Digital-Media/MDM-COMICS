@@ -430,6 +430,14 @@ app.add_middleware(
         "Access-Control-Request-Method",
         "Access-Control-Request-Headers",
         "X-CSRF-Token",
+        # Analytics beacon custom headers
+        "Content-Encoding",
+        "X-Session-ID",
+        "X-Chunk-Index",
+        "X-Event-Count",
+        "X-Start-Timestamp",
+        "X-End-Timestamp",
+        "X-Has-Errors",
     ],
     expose_headers=[
         "Content-Length",
