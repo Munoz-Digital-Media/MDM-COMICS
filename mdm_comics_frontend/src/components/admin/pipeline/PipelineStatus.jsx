@@ -269,6 +269,9 @@ export default function PipelineStatus({ compact = false }) {
   const mseSources = mseStatus?.sources || [];
   const mseAlgorithm = mseStatus?.algorithm || 'sequential_exhaustive';
   const mseIsRunning = mseCheckpoint.is_running;
+  const mseControlSignal = mseCheckpoint.control_signal || 'run';  // v1.20.0
+  const mseIsPaused = mseControlSignal === 'pause' && !mseIsRunning;
+  const mseIsStopped = mseControlSignal === 'stop' && !mseIsRunning;
   const mseProcessed = mseCheckpoint.total_processed || 0;
   const mseUpdated = mseCheckpoint.total_updated || 0;
   const mseErrors = mseCheckpoint.total_errors || 0;
@@ -867,6 +870,16 @@ export default function PipelineStatus({ compact = false }) {
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Sequential Enrichment Running
                 </span>
+              ) : mseIsPaused ? (
+                <span className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">
+                  <Pause className="w-4 h-4" />
+                  Paused (will auto-resume on cron)
+                </span>
+              ) : mseIsStopped ? (
+                <span className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">
+                  <Square className="w-4 h-4" />
+                  Stopped
+                </span>
               ) : mseProcessed > 0 ? (
                 <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
                   <CheckCircle className="w-4 h-4" />
@@ -886,7 +899,7 @@ export default function PipelineStatus({ compact = false }) {
                   className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 text-purple-400 rounded-lg text-sm hover:bg-purple-500/30 transition-colors disabled:opacity-50"
                 >
                   {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                  {mseProcessed > 0 ? 'Continue' : 'Start'}
+                  {mseIsPaused || mseIsStopped ? 'Resume' : mseProcessed > 0 ? 'Continue' : 'Start'}
                 </button>
               )}
 
