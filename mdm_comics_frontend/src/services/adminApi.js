@@ -583,6 +583,46 @@ export const adminAPI = {
       body: JSON.stringify(shipmentData),
     });
   },
+
+  // ==================== COVER INGESTION ====================
+
+  // Preview cover ingestion from a folder
+  previewCoverIngestion: async (folderPath, limit = 100) => {
+    return fetchAPI('/admin/cover-ingestion/preview', {
+      method: 'POST',
+      body: JSON.stringify({
+        folder_path: folderPath,
+        limit: limit,
+      }),
+    });
+  },
+
+  // Ingest covers from a folder (queues to Match Review)
+  ingestCovers: async (options) => {
+    return fetchAPI('/admin/cover-ingestion/ingest', {
+      method: 'POST',
+      body: JSON.stringify({
+        folder_path: options.folderPath,
+        limit: options.limit,
+      }),
+    });
+  },
+
+  // Ingest single cover (queues to Match Review)
+  ingestSingleCover: async (filePath, basePath) => {
+    return fetchAPI('/admin/cover-ingestion/single', {
+      method: 'POST',
+      body: JSON.stringify({
+        file_path: filePath,
+        base_path: basePath,
+      }),
+    });
+  },
+
+  // Get cover ingestion statistics
+  getCoverIngestionStats: async () => {
+    return fetchAPI('/admin/cover-ingestion/stats');
+  },
 };
 
 export default adminAPI;

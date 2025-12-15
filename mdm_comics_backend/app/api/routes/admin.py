@@ -2219,3 +2219,227 @@ async def get_sequential_enrichment_status(
         ],
         "algorithm": "sequential_exhaustive"
     }
+
+
+# ============================================================================
+# COVER INGESTION ENDPOINTS (v1.21.0)
+# ============================================================================
+
+class CoverIngestionPreviewRequest(BaseModel):
+    """Request to preview cover ingestion from a folder."""
+    folder_path: str = Field(..., description="Path to folder containing cover images")
+    limit: int = Field(default=100, ge=1, le=500, description="Max files to preview")
+
+
+class CoverIngestionRequest(BaseModel):
+    """Request to ingest covers from a folder.
+
+    All items are queued to Match Review for human approval.
+    Products are only created after approval.
+    """
+    folder_path: str = Field(..., description="Path to folder containing cover images")
+    limit: Optional[int] = Field(default=None, ge=1, description="Max files to process (for testing)")
+
+
+class SingleCoverIngestionRequest(BaseModel):
+    """Request to ingest a single cover image.
+
+    Queued to Match Review for human approval.
+    """
+    file_path: str = Field(..., description="Path to single cover image")
+    base_path: str = Field(..., description="Base folder path for metadata extraction")
+
+
+@router.post("/cover-ingestion/preview")
+async def preview_cover_ingestion(
+    request: CoverIngestionPreviewRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Preview what would be ingested from a folder.
+
+    Returns parsed metadata and match results without creating any records.
+    Use this to validate folder structure before actual ingestion.
+    """
+    import os
+    from app.services.cover_ingestion import get_cover_ingestion_service
+
+    # Validate folder exists
+    if not os.path.exists(request.folder_path):
+        raise HTTPException(status_code=404, detail=f"Folder not found: {request.folder_path}")
+
+    if not os.path.isdir(request.folder_path):
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {request.folder_path}")
+
+    service = get_cover_ingestion_service(db)
+    previews = await service.scan_folder_preview(request.folder_path, request.limit)
+
+    # Aggregate stats
+    stats = {
+        "total_files": len(previews),
+        "will_create": len([p for p in previews if p["disposition"] in ("auto_link", "review")]),
+        "high_confidence": len([p for p in previews if p["match_score"] >= 8]),
+        "low_confidence": len([p for p in previews if 0 < p["match_score"] < 5]),
+        "no_match": len([p for p in previews if p["match_score"] == 0]),
+        "publishers": list(set(p["publisher"] for p in previews if p["publisher"])),
+    }
+
+    return {
+        "stats": stats,
+        "previews": previews
+    }
+
+
+@router.post("/cover-ingestion/ingest")
+async def ingest_covers(
+    request: CoverIngestionRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Ingest cover images from a folder.
+
+    All items are queued to Match Review for human approval.
+    Products are only created after approval in the Match Review screen.
+
+    This supports:
+    - Current inventory (create product on approval)
+    - Historical/sold items (link to comic_issue for model training)
+    """
+    import os
+    from app.services.cover_ingestion import get_cover_ingestion_service
+
+    # Validate folder exists
+    if not os.path.exists(request.folder_path):
+        raise HTTPException(status_code=404, detail=f"Folder not found: {request.folder_path}")
+
+    if not os.path.isdir(request.folder_path):
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {request.folder_path}")
+
+    service = get_cover_ingestion_service(db)
+    result = await service.ingest_folder(
+        folder_path=request.folder_path,
+        user_id=current_user.id,
+        limit=request.limit
+    )
+
+    return {
+        "success": True,
+        "total_files": result.total_files,
+        "processed": result.processed,
+        "queued_for_review": result.queued_for_review,
+        "high_confidence": result.high_confidence,
+        "medium_confidence": result.medium_confidence,
+        "low_confidence": result.low_confidence,
+        "skipped": result.skipped,
+        "errors": result.errors,
+        "error_details": result.error_details[:10] if result.error_details else []
+    }
+
+
+@router.post("/cover-ingestion/single")
+async def ingest_single_cover(
+    request: SingleCoverIngestionRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Ingest a single cover image.
+
+    Queued to Match Review for human approval.
+    Useful for testing or mobile scanning workflow.
+    """
+    import os
+    from app.services.cover_ingestion import get_cover_ingestion_service
+
+    # Validate file exists
+    if not os.path.exists(request.file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {request.file_path}")
+
+    if not os.path.isfile(request.file_path):
+        raise HTTPException(status_code=400, detail=f"Path is not a file: {request.file_path}")
+
+    service = get_cover_ingestion_service(db)
+    result = await service.ingest_single_cover(
+        file_path=request.file_path,
+        base_path=request.base_path,
+        user_id=current_user.id
+    )
+
+    return {
+        "success": result.success,
+        "file_path": result.file_path,
+        "queue_id": result.queue_id,
+        "comic_issue_id": result.comic_issue_id,
+        "match_score": result.match_score,
+        "disposition": result.disposition,
+        "skipped": result.skipped,
+        "skip_reason": result.skip_reason,
+        "error": result.error,
+        "metadata": {
+            "publisher": result.metadata.publisher if result.metadata else None,
+            "series": result.metadata.series if result.metadata else None,
+            "volume": result.metadata.volume if result.metadata else None,
+            "issue_number": result.metadata.issue_number if result.metadata else None,
+            "variant_code": result.metadata.variant_code if result.metadata else None,
+            "cgc_grade": result.metadata.cgc_grade if result.metadata else None,
+        } if result.metadata else None
+    }
+
+
+@router.get("/cover-ingestion/stats")
+async def get_cover_ingestion_stats(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get statistics about cover ingestion.
+
+    Shows queue status, processed items, and confidence breakdowns.
+    """
+    # Queue items for cover ingestion (all statuses)
+    queue_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_queued,
+            COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
+            COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved,
+            COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected,
+            COUNT(CASE WHEN status = 'pending' AND match_score >= 8 THEN 1 END) as pending_high,
+            COUNT(CASE WHEN status = 'pending' AND match_score >= 5 AND match_score < 8 THEN 1 END) as pending_medium,
+            COUNT(CASE WHEN status = 'pending' AND match_score < 5 THEN 1 END) as pending_low
+        FROM match_review_queue
+        WHERE entity_type = 'cover_ingestion'
+    """))
+    queue_row = queue_result.fetchone()
+
+    # Products created via cover ingestion approval
+    products_result = await db.execute(text("""
+        SELECT
+            COUNT(*) as total_products,
+            COUNT(CASE WHEN is_graded = true THEN 1 END) as graded_products,
+            COUNT(CASE WHEN pricecharting_id IS NOT NULL THEN 1 END) as linked_to_pricecharting,
+            COALESCE(SUM(price * stock), 0) as total_value
+        FROM products
+        WHERE update_reason LIKE '%Cover ingestion%'
+        AND deleted_at IS NULL
+    """))
+    products_row = products_result.fetchone()
+
+    return {
+        "queue": {
+            "total_queued": queue_row[0] if queue_row else 0,
+            "pending": queue_row[1] if queue_row else 0,
+            "approved": queue_row[2] if queue_row else 0,
+            "rejected": queue_row[3] if queue_row else 0,
+            "pending_high_confidence": queue_row[4] if queue_row else 0,
+            "pending_medium_confidence": queue_row[5] if queue_row else 0,
+            "pending_low_confidence": queue_row[6] if queue_row else 0,
+        },
+        "products_created": {
+            "total": products_row[0] if products_row else 0,
+            "graded": products_row[1] if products_row else 0,
+            "linked_to_pricecharting": products_row[2] if products_row else 0,
+            "total_value": float(products_row[3]) if products_row else 0.0,
+        }
+    }
