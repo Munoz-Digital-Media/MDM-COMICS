@@ -1,11 +1,11 @@
 /**
- * MatchComparison - Side-by-side comparison modal for detailed review
+ * MatchComparison - Review modal for cover uploads
  *
- * Per constitution_ui.json:
- * - WCAG 2.2 AA compliant
- * - Focus trap
- * - Escape to close
- * - ARIA labels
+ * Layout:
+ * - Header: Title (from filename) + Match Score badge
+ * - Left: Cover image prominently displayed
+ * - Right: Editable fields for pricing data
+ * - Bottom: Action buttons
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -20,22 +20,41 @@ const MatchComparison = ({
   isProcessing
 }) => {
   const [rejectReason, setRejectReason] = useState('');
-  const [notes, setNotes] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
   const modalRef = useRef(null);
   const closeButtonRef = useRef(null);
 
-  const { entity, candidate, match_method, match_score, match_details } = match;
+  // Editable fields
+  const [editedData, setEditedData] = useState({
+    upc: '',
+    isbn: '',
+    price_loose: '',
+    price_graded: '',
+  });
+
+  const { entity, candidate, match_method, match_score } = match;
+
+  // Initialize editable fields from entity/candidate data
+  useEffect(() => {
+    setEditedData({
+      upc: entity.upc || '',
+      isbn: entity.isbn || '',
+      price_loose: candidate.price_loose ? candidate.price_loose.toFixed(2) : '',
+      price_graded: candidate.price_graded ? candidate.price_graded.toFixed(2) : '',
+    });
+  }, [entity, candidate]);
 
   // Focus trap and escape key
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         onClose();
+      } else if (e.key === 'Enter' && !showRejectForm) {
+        e.preventDefault();
+        onApprove();
       }
     };
 
-    // Focus first element
     if (closeButtonRef.current) {
       closeButtonRef.current.focus();
     }
@@ -47,9 +66,12 @@ const MatchComparison = ({
       document.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = 'auto';
     };
-  }, [onClose]);
+  }, [onClose, onApprove, showRejectForm]);
 
-  // Handle reject with reason
+  const handleFieldChange = (field, value) => {
+    setEditedData(prev => ({ ...prev, [field]: value }));
+  };
+
   const handleReject = () => {
     if (!rejectReason) {
       setShowRejectForm(true);
@@ -58,267 +80,276 @@ const MatchComparison = ({
     onReject(rejectReason);
   };
 
-  // Handle confirm reject
   const handleConfirmReject = () => {
     if (rejectReason) {
       onReject(rejectReason);
     }
   };
 
-  // Format price
-  const formatPrice = (price) => {
-    if (price == null) return '—';
-    return `$${price.toFixed(2)}`;
-  };
-
   // Get score color
-  const getScoreClass = (score) => {
-    if (score >= 9) return 'score-high';
-    if (score >= 7) return 'score-medium';
-    if (score >= 5) return 'score-low';
-    return 'score-very-low';
+  const getScoreColor = (score) => {
+    if (score >= 8) return 'bg-green-500';
+    if (score >= 5) return 'bg-yellow-500';
+    return 'bg-red-500';
   };
 
   return (
     <div
-      className="match-comparison-overlay"
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="comparison-title"
+      aria-labelledby="modal-title"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="match-comparison-modal" ref={modalRef}>
-        {/* Header */}
-        <header className="comparison-header">
-          <h2 id="comparison-title">Review Match</h2>
-          <button
-            ref={closeButtonRef}
-            onClick={onClose}
-            className="btn-close"
-            aria-label="Close comparison"
-          >
-            ×
-          </button>
+      <div
+        className="bg-zinc-900 border border-zinc-700 rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        ref={modalRef}
+      >
+        {/* Header: Title + Score */}
+        <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-700">
+          <div className="flex items-center gap-4">
+            <h2 id="modal-title" className="text-xl font-bold text-white">
+              {entity.name}
+            </h2>
+            <span className="text-zinc-500 text-sm">
+              {match_method}
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className={`px-3 py-1 rounded-full ${getScoreColor(match_score)} text-white font-bold`}>
+              {match_score ?? '?'} / 10
+            </div>
+            <button
+              ref={closeButtonRef}
+              onClick={onClose}
+              className="text-zinc-400 hover:text-white text-2xl leading-none"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
         </header>
 
-        {/* Match score banner */}
-        <div className={`comparison-score-banner ${getScoreClass(match_score)}`}>
-          <div className="score-display">
-            <span className="score-value">{match_score ?? '?'}</span>
-            <span className="score-label">Match Score</span>
-          </div>
-          <div className="match-method-display">
-            <span className="method-label">Method:</span>
-            <span className="method-value">{match_method}</span>
-          </div>
-          {match.is_escalated && (
-            <div className="escalated-badge">ESCALATED</div>
-          )}
-        </div>
-
-        {/* Side-by-side comparison */}
-        <div className="comparison-content">
-          {/* Entity (source) side */}
-          <div className="comparison-side source-side">
-            <h3>Source Record</h3>
-            <div className="comparison-card">
-              <div className="type-badge">{entity.type}</div>
-
-              {entity.cover_image_url && (
-                <div className="cover-container">
+        {/* Main content: Cover left, Fields right */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Left: Cover Image */}
+            <div className="flex flex-col">
+              <h3 className="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wide">
+                Cover Image
+              </h3>
+              <div className="bg-zinc-800 rounded-lg overflow-hidden flex-1 flex items-center justify-center min-h-[400px]">
+                {entity.cover_image_url ? (
                   <img
                     src={entity.cover_image_url}
                     alt={`Cover for ${entity.name}`}
-                    className="cover-image"
+                    className="max-w-full max-h-[500px] object-contain"
                   />
+                ) : (
+                  <div className="text-zinc-600 text-center p-8">
+                    <svg className="w-16 h-16 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <p>No cover image available</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Metadata below image */}
+              {entity.publisher && (
+                <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-zinc-500">Publisher:</span>
+                    <span className="text-white ml-2">{entity.publisher}</span>
+                  </div>
+                  {entity.series_name && (
+                    <div>
+                      <span className="text-zinc-500">Series:</span>
+                      <span className="text-white ml-2">{entity.series_name}</span>
+                    </div>
+                  )}
+                  {entity.issue_number && (
+                    <div>
+                      <span className="text-zinc-500">Issue:</span>
+                      <span className="text-white ml-2">#{entity.issue_number}</span>
+                    </div>
+                  )}
+                  {entity.year && (
+                    <div>
+                      <span className="text-zinc-500">Year:</span>
+                      <span className="text-white ml-2">{entity.year}</span>
+                    </div>
+                  )}
                 </div>
               )}
-
-              <dl className="details-list">
-                <dt>Name</dt>
-                <dd>{entity.name}</dd>
-
-                {entity.series_name && (
-                  <>
-                    <dt>Series</dt>
-                    <dd>{entity.series_name}</dd>
-                  </>
-                )}
-
-                {entity.issue_number && (
-                  <>
-                    <dt>Issue</dt>
-                    <dd>#{entity.issue_number}</dd>
-                  </>
-                )}
-
-                {entity.publisher && (
-                  <>
-                    <dt>Publisher</dt>
-                    <dd>{entity.publisher}</dd>
-                  </>
-                )}
-
-                {entity.year && (
-                  <>
-                    <dt>Year</dt>
-                    <dd>{entity.year}</dd>
-                  </>
-                )}
-
-                {entity.isbn && (
-                  <>
-                    <dt>ISBN</dt>
-                    <dd className="mono">{entity.isbn}</dd>
-                  </>
-                )}
-
-                {entity.upc && (
-                  <>
-                    <dt>UPC</dt>
-                    <dd className="mono">{entity.upc}</dd>
-                  </>
-                )}
-              </dl>
             </div>
-          </div>
 
-          {/* Arrow */}
-          <div className="comparison-arrow" aria-hidden="true">
-            <span className="arrow-icon">→</span>
-          </div>
+            {/* Right: Editable Fields */}
+            <div className="flex flex-col">
+              <h3 className="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wide">
+                Product Data
+              </h3>
 
-          {/* Candidate side */}
-          <div className="comparison-side candidate-side">
-            <h3>PriceCharting Match</h3>
-            <div className="comparison-card">
-              <div className="source-badge">{candidate.source}</div>
+              <div className="space-y-4">
+                {/* UPC */}
+                <div>
+                  <label htmlFor="upc" className="block text-sm text-zinc-400 mb-1">
+                    UPC
+                  </label>
+                  <input
+                    id="upc"
+                    type="text"
+                    value={editedData.upc}
+                    onChange={(e) => handleFieldChange('upc', e.target.value)}
+                    placeholder="Enter UPC barcode"
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500 font-mono"
+                  />
+                </div>
 
-              <dl className="details-list">
-                <dt>Name</dt>
-                <dd>{candidate.name}</dd>
+                {/* ISBN */}
+                <div>
+                  <label htmlFor="isbn" className="block text-sm text-zinc-400 mb-1">
+                    ISBN
+                  </label>
+                  <input
+                    id="isbn"
+                    type="text"
+                    value={editedData.isbn}
+                    onChange={(e) => handleFieldChange('isbn', e.target.value)}
+                    placeholder="Enter ISBN"
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500 font-mono"
+                  />
+                </div>
 
-                <dt>ID</dt>
-                <dd className="mono">{candidate.id}</dd>
+                {/* Divider */}
+                <hr className="border-zinc-700 my-2" />
 
-                <dt>Loose Price</dt>
-                <dd className="price">{formatPrice(candidate.price_loose)}</dd>
+                {/* Pricing Section */}
+                <h4 className="text-sm font-medium text-zinc-400 uppercase tracking-wide">
+                  Pricing
+                </h4>
 
-                <dt>CIB Price</dt>
-                <dd className="price">{formatPrice(candidate.price_cib)}</dd>
+                {/* Loose Price */}
+                <div>
+                  <label htmlFor="price_loose" className="block text-sm text-zinc-400 mb-1">
+                    Raw / Loose Price
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500">$</span>
+                    <input
+                      id="price_loose"
+                      type="text"
+                      value={editedData.price_loose}
+                      onChange={(e) => handleFieldChange('price_loose', e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-8 pr-4 py-2.5 text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500 font-mono"
+                    />
+                  </div>
+                </div>
 
-                <dt>Graded Price</dt>
-                <dd className="price">{formatPrice(candidate.price_graded)}</dd>
-              </dl>
+                {/* Graded Price */}
+                <div>
+                  <label htmlFor="price_graded" className="block text-sm text-zinc-400 mb-1">
+                    9.8 / Near Mint Price
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500">$</span>
+                    <input
+                      id="price_graded"
+                      type="text"
+                      value={editedData.price_graded}
+                      onChange={(e) => handleFieldChange('price_graded', e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-8 pr-4 py-2.5 text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500 font-mono"
+                    />
+                  </div>
+                  <p className="text-xs text-zinc-600 mt-1">Auto-sourced from PriceCharting when available</p>
+                </div>
 
-              {candidate.url && (
-                <a
-                  href={candidate.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="external-link"
-                >
-                  View on PriceCharting ↗
-                </a>
-              )}
+                {/* External link if available */}
+                {candidate.url && (
+                  <a
+                    href={candidate.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-orange-400 hover:text-orange-300 text-sm mt-2"
+                  >
+                    View on PriceCharting
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         </div>
-
-        {/* Match details (scoring breakdown) */}
-        {match_details && Object.keys(match_details).length > 0 && (
-          <div className="match-details-section">
-            <h4>Scoring Breakdown</h4>
-            <table className="details-table">
-              <thead>
-                <tr>
-                  <th>Field</th>
-                  <th>Source</th>
-                  <th>Candidate</th>
-                  <th>Points</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(match_details).map(([field, data]) => (
-                  <tr key={field}>
-                    <td>{field}</td>
-                    <td>{data.source ?? '—'}</td>
-                    <td>{data.candidate ?? '—'}</td>
-                    <td className={data.points > 0 ? 'positive' : ''}>{data.points ?? 0}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
 
         {/* Reject reason form */}
         {showRejectForm && (
-          <div className="reject-form">
-            <label htmlFor="reject-reason">Rejection Reason</label>
-            <select
-              id="reject-reason"
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              required
-            >
-              <option value="">Select a reason...</option>
-              <option value="wrong_item">Wrong Item</option>
-              <option value="wrong_variant">Wrong Variant</option>
-              <option value="wrong_year">Wrong Year</option>
-              <option value="duplicate">Duplicate</option>
-              <option value="other">Other</option>
-            </select>
-
-            <label htmlFor="reject-notes">Notes (optional)</label>
-            <textarea
-              id="reject-notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              maxLength={500}
-              placeholder="Additional notes..."
-            />
-
-            <button
-              onClick={handleConfirmReject}
-              disabled={!rejectReason || isProcessing}
-              className="btn-confirm-reject"
-            >
-              Confirm Rejection
-            </button>
+          <div className="px-6 py-4 border-t border-zinc-700 bg-zinc-800/50">
+            <div className="flex items-center gap-4">
+              <select
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+              >
+                <option value="">Select rejection reason...</option>
+                <option value="wrong_item">Wrong Item</option>
+                <option value="wrong_variant">Wrong Variant</option>
+                <option value="wrong_year">Wrong Year</option>
+                <option value="duplicate">Duplicate</option>
+                <option value="other">Other</option>
+              </select>
+              <button
+                onClick={handleConfirmReject}
+                disabled={!rejectReason || isProcessing}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-600/50 text-white rounded-lg font-medium"
+              >
+                Confirm Reject
+              </button>
+              <button
+                onClick={() => setShowRejectForm(false)}
+                className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Actions */}
-        <footer className="comparison-actions">
-          <button
-            onClick={onSkip}
-            disabled={isProcessing}
-            className="btn-skip"
-          >
-            Skip for Later
-          </button>
-          <button
-            onClick={handleReject}
-            disabled={isProcessing}
-            className="btn-reject"
-          >
-            {showRejectForm ? 'Cancel Reject' : 'Reject'}
-          </button>
-          <button
-            onClick={onApprove}
-            disabled={isProcessing}
-            className="btn-approve"
-          >
-            {isProcessing ? 'Processing...' : 'Approve Match'}
-          </button>
-        </footer>
+        {/* Action buttons */}
+        <footer className="flex items-center justify-between px-6 py-4 border-t border-zinc-700 bg-zinc-800/30">
+          <div className="text-xs text-zinc-500">
+            <kbd className="px-1.5 py-0.5 bg-zinc-700 rounded text-zinc-400">Esc</kbd> Close
+            <span className="mx-3">|</span>
+            <kbd className="px-1.5 py-0.5 bg-zinc-700 rounded text-zinc-400">Enter</kbd> Approve
+          </div>
 
-        {/* Keyboard shortcuts reminder */}
-        <div className="modal-shortcuts">
-          <span><kbd>Esc</kbd> Close</span>
-          <span><kbd>Enter</kbd> Approve</span>
-        </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onSkip}
+              disabled={isProcessing}
+              className="px-5 py-2.5 bg-zinc-700 hover:bg-zinc-600 disabled:bg-zinc-700/50 text-white rounded-lg font-medium transition-colors"
+            >
+              Skip for Later
+            </button>
+            <button
+              onClick={handleReject}
+              disabled={isProcessing}
+              className="px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-red-600/50 text-white rounded-lg font-medium transition-colors"
+            >
+              Reject
+            </button>
+            <button
+              onClick={onApprove}
+              disabled={isProcessing}
+              className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white rounded-lg font-medium transition-colors"
+            >
+              {isProcessing ? 'Processing...' : 'Approve Match'}
+            </button>
+          </div>
+        </footer>
       </div>
     </div>
   );
@@ -344,13 +375,11 @@ MatchComparison.propTypes = {
       id: PropTypes.string.isRequired,
       name: PropTypes.string.isRequired,
       price_loose: PropTypes.number,
-      price_cib: PropTypes.number,
       price_graded: PropTypes.number,
       url: PropTypes.string
     }).isRequired,
     match_method: PropTypes.string.isRequired,
     match_score: PropTypes.number,
-    match_details: PropTypes.object,
     is_escalated: PropTypes.bool
   }).isRequired,
   onClose: PropTypes.func.isRequired,

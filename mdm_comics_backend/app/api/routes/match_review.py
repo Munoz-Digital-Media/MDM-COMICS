@@ -56,8 +56,10 @@ async def list_match_queue(
     # Transform to response
     response_items = []
     for item in items:
-        # Build entity summary
-        entity = await _get_entity_summary(db, item.entity_type, item.entity_id)
+        # Build entity summary (pass candidate_data for cover uploads where entity_id=0)
+        entity = await _get_entity_summary(
+            db, item.entity_type, item.entity_id, item.candidate_data
+        )
 
         # Build candidate summary
         candidate = CandidateSummary(
@@ -125,7 +127,9 @@ async def get_match_details(
     service = MatchReviewService(db)
     await service.acquire_lock(match_id, current_user.id)
 
-    entity = await _get_entity_summary(db, match.entity_type, match.entity_id)
+    entity = await _get_entity_summary(
+        db, match.entity_type, match.entity_id, match.candidate_data
+    )
 
     candidate = CandidateSummary(
         source=match.candidate_source,
@@ -383,8 +387,48 @@ async def search_pricecharting(
 # Helpers
 # =============================================================
 
-async def _get_entity_summary(db: AsyncSession, entity_type: str, entity_id: int) -> EntitySummary:
-    """Get summary of entity for display."""
+async def _get_entity_summary(
+    db: AsyncSession,
+    entity_type: str,
+    entity_id: int,
+    candidate_data: Optional[dict] = None
+) -> EntitySummary:
+    """
+    Get summary of entity for display.
+
+    For cover uploads (entity_id=0), uses candidate_data which contains:
+    - publisher, series, volume, issue_number, variant_code
+    - s3_url (cover image), cgc_grade, original_filename
+    """
+    # Cover upload case: entity_id=0, data is in candidate_data
+    if entity_id == 0 and candidate_data:
+        # Build display name from metadata
+        series = candidate_data.get('series', 'Unknown')
+        volume = candidate_data.get('volume', 1)
+        issue = candidate_data.get('issue_number', '1')
+        variant = candidate_data.get('variant_code', '')
+        cgc = candidate_data.get('cgc_grade')
+
+        name = f"{series} v{volume} #{issue}"
+        if variant:
+            name += f" ({variant})"
+        if cgc:
+            name += f" CGC {cgc}"
+
+        return EntitySummary(
+            id=0,
+            type=entity_type,
+            name=name,
+            series_name=series,
+            issue_number=str(issue),
+            publisher=candidate_data.get('publisher'),
+            year=None,  # Not in folder metadata
+            isbn=candidate_data.get('isbn'),
+            upc=candidate_data.get('upc'),
+            cover_image_url=candidate_data.get('s3_url')
+        )
+
+    # Standard comic lookup
     if entity_type == 'comic':
         from app.models.comic_data import ComicIssue
         entity = await db.get(ComicIssue, entity_id)
@@ -401,7 +445,9 @@ async def _get_entity_summary(db: AsyncSession, entity_type: str, entity_id: int
                 upc=entity.upc,
                 cover_image_url=entity.cover_image_url
             )
-    else:
+
+    # Standard funko lookup
+    elif entity_type == 'funko':
         from app.models.funko import Funko
         entity = await db.get(Funko, entity_id)
         if entity:
@@ -412,6 +458,7 @@ async def _get_entity_summary(db: AsyncSession, entity_type: str, entity_id: int
                 upc=entity.upc
             )
 
+    # Fallback for unknown entity
     return EntitySummary(
         id=entity_id,
         type=entity_type,
