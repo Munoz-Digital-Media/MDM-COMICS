@@ -1,15 +1,16 @@
 """
-Sequential Exhaustive Enrichment Job v1.16.0
+Sequential Exhaustive Enrichment Job v1.17.0
 
 MSE-002+: Complete Fandom wiki expansion + MyComicShop sources
-- Marvel Fandom: TEXT ONLY per CC BY-SA license (no images)
-- DC Fandom: TEXT ONLY - DC/Vertigo/WildStorm only
-- Image Fandom: TEXT ONLY - Image Comics only
-- IDW Fandom: TEXT ONLY - IDW Publishing only
-- Dark Horse Fandom: TEXT ONLY - Dark Horse Comics only
-- Dynamite Fandom: TEXT ONLY - Dynamite Entertainment only
+- Marvel Fandom: Full data including images (publisher-filtered)
+- DC Fandom: Full data including images - DC/Vertigo/WildStorm only
+- Image Fandom: Full data including images - Image Comics only
+- IDW Fandom: Full data including images - IDW Publishing only
+- Dark Horse Fandom: Full data including images - Dark Horse Comics only
+- Dynamite Fandom: Full data including images - Dynamite Entertainment only
 - MyComicShop: Bibliographic data only (no inventory/availability)
 - Expanded CBR coverage for isbn, description, cover_date, store_date
+- Images harvested for perceptual hash matching database (mobile image search)
 
 
 v1.16.0 Changes (Assessment SEJ-ASSESS-001 Solutions):
@@ -504,8 +505,8 @@ ENRICHABLE_FIELDS = {
     "price_loose": {"sources": ["pricecharting"], "required_for_lookup": True},
     "price_graded": {"sources": ["pricecharting"], "required_for_lookup": True},
 
-    # Images - NO Fandom (CC BY-SA license prohibits image redistribution)
-    "image": {"sources": ["metron", "comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    # Images - ALL sources including Fandom (for perceptual hash matching database)
+    "image": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
 }
 
 
@@ -1158,8 +1159,8 @@ async def _query_generic_fandom(
     """
     Generic Fandom query function for publisher-specific wikis.
 
-    TEXT ONLY per CC BY-SA license - NO images allowed.
-    Provides: description, cover_date, store_date, page_count
+    Provides: description, cover_date, store_date, page_count, image
+    Images harvested for perceptual hash matching database (mobile image search).
     """
     updates = {}
     source = wiki_key
@@ -1169,8 +1170,8 @@ async def _query_generic_fandom(
     if not any(p in publisher for p in publisher_patterns):
         return updates
 
-    # Fields Fandom can provide (TEXT ONLY)
-    fandom_fields = {"description", "cover_date", "store_date", "page_count"}
+    # Fields Fandom can provide (including images for hash matching)
+    fandom_fields = {"description", "cover_date", "store_date", "page_count", "image"}
     relevant_missing = missing_fields & fandom_fields
     if not relevant_missing:
         return updates
@@ -1221,6 +1222,10 @@ async def _query_generic_fandom(
             # Extract page_count
             if "page_count" in missing_fields and data.get("page_count"):
                 updates["page_count"] = data["page_count"]
+
+            # Extract image URL (for perceptual hash matching database)
+            if "image" in missing_fields and data.get("image"):
+                updates["image"] = data["image"]
         else:
             rate_mgr.get_limiter(source).record_success()  # API worked, just no match
 

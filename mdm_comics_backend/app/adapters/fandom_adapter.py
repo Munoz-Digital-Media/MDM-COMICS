@@ -1,28 +1,29 @@
 """
-Generic Fandom Wiki Adapter v1.0.0
+Generic Fandom Wiki Adapter v1.1.0
 
 Multi-wiki adapter for Fandom (MediaWiki-based) comic databases.
-Supports: DC Comics, Image Comics, IDW Publishing, and generic Comics wiki.
+Supports: DC Comics, Image Comics, IDW Publishing, Dark Horse, Dynamite.
 
 Per pipeline spec:
 - Type: MediaWiki API
-- License: CC BY-SA 3.0 - TEXT ONLY
-- DO NOT USE IMAGES - Fair Use only on Fandom, not redistributable
+- License: CC BY-SA 3.0
+- Images: Harvested for perceptual hash matching database (mobile image search)
 - Priority: P3 for wiki-powered lore and community insights
 
 Supported Wikis:
 - DC Database: https://dc.fandom.com/
 - Image Comics Database: https://imagecomics.fandom.com/
 - IDW Comics Database: https://comics.fandom.com/wiki/IDW
+- Dark Horse Database: https://darkhorse.fandom.com/
+- Dynamite Database: https://dynamiteentertainment.fandom.com/
 
 Allowed content:
-- Character bios and descriptions (TEXT ONLY)
+- Character bios and descriptions
 - Story arc summaries
 - Issue descriptions and synopses
 - Creator information with specific roles
 - Publisher data
-- Team rosters and affiliations
-- Event timelines
+- Cover images (for perceptual hash matching)
 """
 import logging
 import re
@@ -73,7 +74,7 @@ class FandomAdapter:
     """
     Generic adapter for Fandom (MediaWiki) comic databases.
 
-    TEXT ONLY - images are NOT covered by CC BY-SA.
+    Extracts metadata and cover images for perceptual hash matching.
     """
 
     def __init__(
@@ -265,15 +266,15 @@ class FandomAdapter:
                 "cover_date": None,
                 "release_date": None,
                 "page_count": None,
+                "image": None,
                 "_source": self.wiki_key,
                 "_license": "CC-BY-SA-3.0",
-                "_text_only": True,
             }
 
-            # Find the infobox
+            # Find the infobox and extract data including image
             info_box = soup.find("aside", class_="portable-infobox")
             if info_box:
-                result.update(self._parse_info_box(info_box))
+                result.update(self._parse_info_box(info_box, soup))
 
             # Get description from first paragraph or extract
             first_p = soup.find("p")
@@ -323,15 +324,15 @@ class FandomAdapter:
                 "cover_date": None,
                 "release_date": None,
                 "page_count": None,
+                "image": None,
                 "_source": self.wiki_key,
                 "_license": "CC-BY-SA-3.0",
-                "_text_only": True,
             }
 
-            # Find the infobox
+            # Find the infobox and extract data including image
             info_box = soup.find("aside", class_="portable-infobox")
             if info_box:
-                result.update(self._parse_info_box(info_box))
+                result.update(self._parse_info_box(info_box, soup))
 
             first_p = soup.find("p")
             if first_p:
@@ -345,9 +346,38 @@ class FandomAdapter:
             logger.debug(f"[{self.wiki_key}] Alt fetch failed: {e}")
             return None
 
-    def _parse_info_box(self, info_box: BeautifulSoup) -> Dict[str, Any]:
-        """Parse the issue info box for metadata."""
+    def _parse_info_box(self, info_box: BeautifulSoup, soup: BeautifulSoup = None) -> Dict[str, Any]:
+        """Parse the issue info box for metadata and cover image."""
         result = {}
+
+        # Extract cover image from infobox
+        # Fandom infoboxes usually have the cover in a figure or pi-image element
+        image_elem = info_box.find("figure", class_="pi-image")
+        if image_elem:
+            img_tag = image_elem.find("img")
+            if img_tag:
+                # Get the highest resolution image URL available
+                image_url = img_tag.get("data-src") or img_tag.get("src")
+                if image_url:
+                    # Clean up Fandom image URL to get full resolution
+                    # Fandom uses /revision/latest/scale-to-width-down/XXX format
+                    # Remove the scale-to-width-down part to get full resolution
+                    if "/scale-to-width-down/" in image_url:
+                        image_url = re.sub(r'/scale-to-width-down/\d+', '', image_url)
+                    if "/scale-to-height-down/" in image_url:
+                        image_url = re.sub(r'/scale-to-height-down/\d+', '', image_url)
+                    result["image"] = image_url
+
+        # If no image in infobox, try finding cover image elsewhere
+        if not result.get("image") and soup:
+            # Try the main page image
+            main_img = soup.find("img", class_="pi-image-thumbnail")
+            if main_img:
+                image_url = main_img.get("data-src") or main_img.get("src")
+                if image_url:
+                    if "/scale-to-width-down/" in image_url:
+                        image_url = re.sub(r'/scale-to-width-down/\d+', '', image_url)
+                    result["image"] = image_url
 
         for row in info_box.find_all("div", class_="pi-item"):
             label_elem = row.find("h3", class_="pi-data-label")
