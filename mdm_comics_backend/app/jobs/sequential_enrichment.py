@@ -1875,8 +1875,54 @@ async def run_sequential_exhaustive_enrichment_job(
             state_data = claim.state_data or {}
             last_id = state_data.get("last_id", 0) if isinstance(state_data, dict) else 0
 
+            # v1.20.0: Helper to check control signal and handle pause/stop
+            async def check_control_signal() -> Optional[Dict[str, Any]]:
+                """Check for pause/stop signal. Returns result dict if should exit, None to continue."""
+                signal_result = await db.execute(text("""
+                    SELECT control_signal FROM pipeline_checkpoints WHERE job_name = :name
+                """), {"name": job_name})
+                signal_row = signal_result.fetchone()
+                signal = signal_row.control_signal if signal_row else 'run'
+
+                if signal in ('pause', 'stop'):
+                    # Checkpoint immediately
+                    await db.execute(text("""
+                        UPDATE pipeline_checkpoints
+                        SET state_data = jsonb_build_object('last_id', CAST(:last_id AS integer)),
+                            total_processed = :processed,
+                            total_updated = :updated,
+                            total_errors = :errors,
+                            is_running = false,
+                            last_run_completed = NOW(),
+                            updated_at = NOW()
+                        WHERE job_name = :name
+                    """), {
+                        "name": job_name,
+                        "last_id": last_id,
+                        "processed": stats["processed"],
+                        "updated": stats["enriched"],
+                        "errors": stats["errors"],
+                    })
+                    await db.commit()
+
+                    status = "paused" if signal == 'pause' else "stopped"
+                    logger.info(f"[{job_name}] {status.upper()} at last_id={last_id}, processed={stats['processed']}")
+
+                    return {
+                        "status": status,
+                        "last_id": last_id,
+                        "stats": stats,
+                        "message": f"Job {status} by admin request"
+                    }
+                return None
+
             try:
                 while True:
+                    # v1.20.0: Check control signal at start of each batch
+                    exit_result = await check_control_signal()
+                    if exit_result:
+                        return exit_result
+
                     # Fetch batch of comics that need enrichment
                     result = await db.execute(text("""
                         SELECT id, metron_id, comicvine_id, gcd_id, pricecharting_id,
@@ -1898,6 +1944,10 @@ async def run_sequential_exhaustive_enrichment_job(
                         break
 
                     for comic_row in comics:
+                        # v1.20.0: Check control signal for EACH comic (immediate response)
+                        exit_result = await check_control_signal()
+                        if exit_result:
+                            return exit_result
                         # Convert to dict for easier manipulation
                         comic = {
                             "id": comic_row.id,

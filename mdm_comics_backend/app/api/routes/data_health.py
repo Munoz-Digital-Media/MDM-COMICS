@@ -602,9 +602,294 @@ async def run_job_manually(
         raise HTTPException(status_code=500, detail=f"Job failed: {str(e)}")
 
 
+@router.post("/jobs/{job_name}/start")
+async def start_job(
+    job_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Start or resume a pipeline job.
+
+    v1.20.0: Sets control_signal='run' and triggers the job.
+    If job was paused, it resumes from last checkpoint.
+    """
+    # Clear any pause/stop signal and set to run
+    result = await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET control_signal = 'run',
+            paused_at = NULL,
+            updated_at = NOW()
+        WHERE job_name = :name
+        RETURNING id, state_data, is_running
+    """), {"name": job_name})
+    row = result.fetchone()
+    await db.commit()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found")
+
+    if row.is_running:
+        return {
+            "success": True,
+            "message": f"Job '{job_name}' is already running",
+            "status": "running",
+            "last_id": row.state_data.get("last_id") if row.state_data else None
+        }
+
+    # Trigger the job
+    try:
+        from app.jobs.pipeline_scheduler import pipeline_scheduler
+        await pipeline_scheduler.run_job_now(job_name)
+        return {
+            "success": True,
+            "message": f"Job '{job_name}' started",
+            "status": "started",
+            "last_id": row.state_data.get("last_id") if row.state_data else None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start job: {str(e)}")
+
+
+@router.post("/jobs/{job_name}/pause")
+async def pause_job(
+    job_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Pause a running pipeline job.
+
+    v1.20.0: Sets control_signal='pause'. Job will checkpoint immediately
+    and stop processing. Cron will auto-resume on next cycle.
+
+    State is preserved - resume continues from last checkpoint.
+    """
+    result = await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET control_signal = 'pause',
+            paused_at = NOW(),
+            paused_by_user_id = :user_id,
+            updated_at = NOW()
+        WHERE job_name = :name
+        RETURNING id, is_running, state_data
+    """), {"name": job_name, "user_id": current_user.id})
+    row = result.fetchone()
+    await db.commit()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found")
+
+    last_id = row.state_data.get("last_id") if row.state_data else None
+
+    if not row.is_running:
+        return {
+            "success": True,
+            "message": f"Job '{job_name}' is not running (already idle)",
+            "status": "idle",
+            "last_id": last_id
+        }
+
+    logger.info(f"[JOB_CONTROL] Pause requested for {job_name} by user {current_user.id}")
+
+    return {
+        "success": True,
+        "message": f"Pause signal sent to '{job_name}'. Job will pause at next checkpoint.",
+        "status": "pause_requested",
+        "last_id": last_id,
+        "note": "Cron will auto-resume on next cycle if not manually restarted"
+    }
+
+
+@router.post("/jobs/{job_name}/stop")
+async def stop_job(
+    job_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Stop a running pipeline job.
+
+    v1.20.0: Sets control_signal='stop'. Job will checkpoint immediately,
+    stop processing, and release the lock. Cron will auto-resume on next cycle.
+
+    State is preserved - resume continues from last checkpoint.
+    NOTE: State is NEVER reset. Use /reset endpoint to start from beginning.
+    """
+    result = await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET control_signal = 'stop',
+            paused_at = NOW(),
+            paused_by_user_id = :user_id,
+            updated_at = NOW()
+        WHERE job_name = :name
+        RETURNING id, is_running, state_data
+    """), {"name": job_name, "user_id": current_user.id})
+    row = result.fetchone()
+    await db.commit()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found")
+
+    last_id = row.state_data.get("last_id") if row.state_data else None
+
+    if not row.is_running:
+        return {
+            "success": True,
+            "message": f"Job '{job_name}' is not running (already idle)",
+            "status": "idle",
+            "last_id": last_id
+        }
+
+    logger.info(f"[JOB_CONTROL] Stop requested for {job_name} by user {current_user.id}")
+
+    return {
+        "success": True,
+        "message": f"Stop signal sent to '{job_name}'. Job will stop at next checkpoint.",
+        "status": "stop_requested",
+        "last_id": last_id,
+        "note": "Cron will auto-resume on next cycle. State preserved."
+    }
+
+
+@router.get("/jobs/{job_name}/status")
+async def get_job_status(
+    job_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Get detailed status of a pipeline job.
+
+    v1.20.0: Includes control_signal state for pause/stop awareness.
+    """
+    result = await db.execute(text("""
+        SELECT
+            job_name,
+            job_type,
+            is_running,
+            control_signal,
+            total_processed,
+            total_updated,
+            total_errors,
+            state_data,
+            last_run_started,
+            last_run_completed,
+            last_error,
+            paused_at,
+            updated_at
+        FROM pipeline_checkpoints
+        WHERE job_name = :name
+    """), {"name": job_name})
+    row = result.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found")
+
+    # Determine effective status
+    if row.is_running:
+        if row.control_signal == 'pause':
+            status = "pausing"
+        elif row.control_signal == 'stop':
+            status = "stopping"
+        else:
+            status = "running"
+    else:
+        if row.control_signal == 'pause':
+            status = "paused"
+        elif row.control_signal == 'stop':
+            status = "stopped"
+        else:
+            status = "idle"
+
+    return {
+        "job_name": row.job_name,
+        "job_type": row.job_type,
+        "status": status,
+        "is_running": row.is_running,
+        "control_signal": row.control_signal,
+        "progress": {
+            "total_processed": row.total_processed,
+            "total_updated": row.total_updated,
+            "total_errors": row.total_errors,
+            "last_id": row.state_data.get("last_id") if row.state_data else None,
+        },
+        "timing": {
+            "last_run_started": row.last_run_started.isoformat() if row.last_run_started else None,
+            "last_run_completed": row.last_run_completed.isoformat() if row.last_run_completed else None,
+            "paused_at": row.paused_at.isoformat() if row.paused_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        },
+        "last_error": row.last_error[:500] if row.last_error else None,
+    }
+
+
 # ==============================================================================
 # Database Migrations (Admin-Only)
 # ==============================================================================
+
+@router.post("/migrations/job-control")
+async def run_job_control_migration(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    v1.20.0: Add job control columns to pipeline_checkpoints.
+
+    Adds:
+    - control_signal: 'run', 'pause', 'stop'
+    - paused_at: Timestamp when paused
+    - paused_by_user_id: Who paused the job
+
+    Safe to run multiple times (uses IF NOT EXISTS pattern).
+    """
+    try:
+        # Check if column already exists
+        check = await db.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.columns
+                WHERE table_name = 'pipeline_checkpoints' AND column_name = 'control_signal'
+            )
+        """))
+        exists = check.scalar()
+
+        if exists:
+            return {
+                "success": True,
+                "message": "Job control columns already exist",
+                "status": "already_migrated"
+            }
+
+        # Add the columns
+        await db.execute(text("""
+            ALTER TABLE pipeline_checkpoints
+            ADD COLUMN IF NOT EXISTS control_signal VARCHAR(20) DEFAULT 'run' NOT NULL,
+            ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE,
+            ADD COLUMN IF NOT EXISTS paused_by_user_id INTEGER REFERENCES users(id)
+        """))
+
+        # Add index for control_signal
+        await db.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_checkpoint_control
+            ON pipeline_checkpoints (control_signal)
+        """))
+
+        await db.commit()
+
+        logger.info("[MIGRATION] Job control columns added to pipeline_checkpoints")
+
+        return {
+            "success": True,
+            "message": "Job control migration completed",
+            "columns_added": ["control_signal", "paused_at", "paused_by_user_id"],
+            "index_created": "ix_checkpoint_control"
+        }
+
+    except Exception as e:
+        logger.error(f"[MIGRATION] Job control migration failed: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
+
 
 @router.post("/migrations/price-snapshots")
 async def run_price_snapshots_migration(

@@ -152,6 +152,13 @@ class DeadLetterQueue(Base):
     )
 
 
+class ControlSignal(str, Enum):
+    """Job control signals for admin management."""
+    RUN = "run"                    # Normal operation
+    PAUSE_REQUESTED = "pause"      # Pause requested, job will stop at next checkpoint
+    STOP_REQUESTED = "stop"        # Stop requested, job will stop and release lock
+
+
 class PipelineCheckpoint(Base):
     """
     Job resume checkpoints for long-running pipeline tasks.
@@ -159,6 +166,8 @@ class PipelineCheckpoint(Base):
     Per pipeline spec:
     - All fetchers persist state to survive crashes
     - Stores last-id, last-page, cursor for resumption
+
+    v1.20.0: Added control_signal for admin Start/Pause/Stop control
     """
     __tablename__ = "pipeline_checkpoints"
 
@@ -190,12 +199,21 @@ class PipelineCheckpoint(Base):
     last_run_completed = Column(DateTime(timezone=True), nullable=True)
     last_error = Column(Text, nullable=True)
 
+    # v1.20.0: Admin control signal
+    # - 'run': Normal operation (default)
+    # - 'pause': Job should pause at next checkpoint, preserve state
+    # - 'stop': Job should stop, release lock (cron will auto-resume)
+    control_signal = Column(String(20), default='run', nullable=False)
+    paused_at = Column(DateTime(timezone=True), nullable=True)
+    paused_by_user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         Index('ix_checkpoint_running', 'is_running'),
+        Index('ix_checkpoint_control', 'control_signal'),
     )
 
 

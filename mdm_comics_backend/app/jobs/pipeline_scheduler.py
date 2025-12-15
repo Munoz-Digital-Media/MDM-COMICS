@@ -4670,7 +4670,12 @@ class PipelineScheduler:
             await asyncio.sleep(interval_seconds)
 
     async def run_job_now(self, job_name: str, **kwargs):
-        """Manually trigger a job."""
+        """
+        Manually trigger a job.
+
+        v1.20.0: Auto-clears pause/stop signals before running to support
+        cron auto-resume of paused/stopped jobs.
+        """
         jobs = {
             "comic_enrichment": run_comic_enrichment_job,
             "funko_price_check": run_funko_price_check_job,
@@ -4694,6 +4699,26 @@ class PipelineScheduler:
 
         if job_name not in jobs:
             raise ValueError(f"Unknown job: {job_name}. Available: {list(jobs.keys())}")
+
+        # v1.20.0: Auto-clear pause/stop signals before running
+        # This enables cron auto-resume of paused/stopped jobs
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(text("""
+                    UPDATE pipeline_checkpoints
+                    SET control_signal = 'run',
+                        paused_at = NULL,
+                        updated_at = NOW()
+                    WHERE job_name = :name
+                    AND control_signal IN ('pause', 'stop')
+                    RETURNING control_signal
+                """), {"name": job_name})
+                cleared = result.fetchone()
+                if cleared:
+                    await db.commit()
+                    logger.info(f"[SCHEDULER] Auto-resumed {job_name} (was paused/stopped)")
+        except Exception as e:
+            logger.warning(f"[SCHEDULER] Failed to clear control signal for {job_name}: {e}")
 
         logger.info(f"[SCHEDULER] Manual trigger: {job_name}")
         return await jobs[job_name](**kwargs)
