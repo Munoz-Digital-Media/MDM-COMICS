@@ -480,11 +480,75 @@ async def run_inbound_processor():
     Run the inbound processor job.
 
     Called by cron scheduler every 5 minutes.
+
+    First run: Processes ENTIRE comic_book_covers folder (initial sweep)
+    Subsequent runs: Only watches Inbound folder for new additions
     """
+    from sqlalchemy import text
+
     logger.info("Starting inbound processor job")
 
     async with async_session_maker() as db:
+        # Check if first run has been completed
+        result = await db.execute(text("""
+            SELECT state_data FROM job_checkpoints
+            WHERE job_name = 'inbound_processor'
+        """))
+        row = result.fetchone()
+
+        first_run_completed = False
+        if row and row[0]:
+            state_data = row[0] if isinstance(row[0], dict) else {}
+            first_run_completed = state_data.get('initial_sweep_completed', False)
+
         processor = InboundProcessor(db)
+
+        if not first_run_completed:
+            # FIRST RUN: Process entire comic_book_covers folder
+            logger.info("FIRST RUN: Processing entire comic_book_covers folder")
+
+            results = {
+                "initial_sweep": True,
+                "processed": 0,
+                "queued": 0,
+                "skipped": 0,
+                "errors": 0,
+                "error_details": []
+            }
+
+            # Use cover_ingestion service to process all existing covers
+            cover_service = get_cover_ingestion_service(db)
+            ingestion_result = await cover_service.ingest_folder(
+                folder_path=COVERS_BASE_PATH,
+                user_id=1  # System user
+            )
+
+            results["processed"] = ingestion_result.get("total_files", 0)
+            results["queued"] = ingestion_result.get("queued", 0)
+            results["skipped"] = ingestion_result.get("skipped", 0)
+            results["errors"] = ingestion_result.get("errors", 0)
+
+            logger.info(
+                f"Initial sweep complete: {results['queued']} queued, "
+                f"{results['skipped']} skipped, {results['errors']} errors"
+            )
+
+            # Mark initial sweep as completed
+            await db.execute(text("""
+                INSERT INTO job_checkpoints (job_name, state_data, created_at, updated_at)
+                VALUES ('inbound_processor', :state_data, NOW(), NOW())
+                ON CONFLICT (job_name) DO UPDATE SET
+                    state_data = :state_data,
+                    updated_at = NOW()
+            """), {"state_data": '{"initial_sweep_completed": true}'})
+
+            await db.commit()
+            return results
+
+        # SUBSEQUENT RUNS: Only watch Inbound folder
+        # Ensure Inbound folder exists
+        os.makedirs(INBOUND_PATH, exist_ok=True)
+
         results = await processor.process_inbound_folder()
         await db.commit()
 
