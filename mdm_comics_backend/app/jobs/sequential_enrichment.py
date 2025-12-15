@@ -1878,11 +1878,16 @@ async def run_sequential_exhaustive_enrichment_job(
             # v1.20.0: Helper to check control signal and handle pause/stop
             async def check_control_signal() -> Optional[Dict[str, Any]]:
                 """Check for pause/stop signal. Returns result dict if should exit, None to continue."""
-                signal_result = await db.execute(text("""
-                    SELECT control_signal FROM pipeline_checkpoints WHERE job_name = :name
-                """), {"name": job_name})
-                signal_row = signal_result.fetchone()
-                signal = signal_row.control_signal if signal_row else 'run'
+                try:
+                    signal_result = await db.execute(text("""
+                        SELECT control_signal FROM pipeline_checkpoints WHERE job_name = :name
+                    """), {"name": job_name})
+                    signal_row = signal_result.fetchone()
+                    signal = signal_row.control_signal if signal_row else 'run'
+                except Exception as e:
+                    # v1.20.1: Gracefully handle missing control_signal column (pre-migration)
+                    logger.debug(f"[{job_name}] control_signal column not available (run migration): {e}")
+                    return None  # Continue running if column doesn't exist
 
                 if signal in ('pause', 'stop'):
                     # Checkpoint immediately
