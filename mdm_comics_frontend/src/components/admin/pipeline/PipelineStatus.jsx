@@ -14,7 +14,7 @@ import {
   Database, RefreshCw, Loader2, CheckCircle, XCircle,
   AlertTriangle, Play, Pause, RotateCcw, Clock, Zap,
   Image, FileText, BookOpen, Building2, BarChart3,
-  DollarSign, Link2, TrendingUp, Layers
+  DollarSign, Link2, TrendingUp, Layers, Square
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 
@@ -167,6 +167,31 @@ export default function PipelineStatus({ compact = false }) {
     setActionLoading(true);
     try {
       await adminAPI.triggerSequentialEnrichment({ batch_size: 100, max_records: 0 });
+      await fetchStatus();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // v1.20.0: Job control handlers
+  const handlePauseMSE = async () => {
+    setActionLoading(true);
+    try {
+      await adminAPI.pauseJob('sequential_enrichment');
+      await fetchStatus();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleStopMSE = async () => {
+    setActionLoading(true);
+    try {
+      await adminAPI.stopJob('sequential_enrichment');
       await fetchStatus();
     } catch (err) {
       setError(err.message);
@@ -863,6 +888,30 @@ export default function PipelineStatus({ compact = false }) {
                   {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                   {mseProcessed > 0 ? 'Continue' : 'Start'}
                 </button>
+              )}
+
+              {/* v1.20.0: Pause/Stop controls when running */}
+              {mseIsRunning && (
+                <>
+                  <button
+                    onClick={handlePauseMSE}
+                    disabled={actionLoading}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm hover:bg-yellow-500/30 transition-colors disabled:opacity-50"
+                    title="Pause - saves checkpoint, cron will auto-resume"
+                  >
+                    {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Pause className="w-4 h-4" />}
+                    Pause
+                  </button>
+                  <button
+                    onClick={handleStopMSE}
+                    disabled={actionLoading}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm hover:bg-red-500/30 transition-colors disabled:opacity-50"
+                    title="Stop - saves checkpoint, releases lock"
+                  >
+                    {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                    Stop
+                  </button>
+                </>
               )}
             </div>
             <span className="text-xs text-zinc-500 font-mono">{mseAlgorithm}</span>

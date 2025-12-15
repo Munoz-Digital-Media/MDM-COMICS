@@ -522,6 +522,34 @@ export const adminAPI = {
     });
   },
 
+  // ==================== JOB CONTROL (v1.20.0) ====================
+
+  // Pause a running job - saves checkpoint immediately
+  pauseJob: async (jobName) => {
+    return fetchAPI('/admin/data-health/jobs/' + jobName + '/pause', {
+      method: 'POST',
+    });
+  },
+
+  // Stop a running job - saves checkpoint, releases lock
+  stopJob: async (jobName) => {
+    return fetchAPI('/admin/data-health/jobs/' + jobName + '/stop', {
+      method: 'POST',
+    });
+  },
+
+  // Start/resume a job
+  startJob: async (jobName) => {
+    return fetchAPI('/admin/data-health/jobs/' + jobName + '/start', {
+      method: 'POST',
+    });
+  },
+
+  // Get detailed job status including control signal state
+  getJobStatus: async (jobName) => {
+    return fetchAPI('/admin/data-health/jobs/' + jobName + '/status');
+  },
+
 
   // ==================== ADMIN SHIPPING MANAGEMENT ====================
 
