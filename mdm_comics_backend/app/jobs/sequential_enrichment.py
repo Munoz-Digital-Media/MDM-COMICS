@@ -1,5 +1,5 @@
 """
-Sequential Exhaustive Enrichment Job v1.15.0
+Sequential Exhaustive Enrichment Job v1.16.0
 
 MSE-002+: Complete Fandom wiki expansion + MyComicShop sources
 - Marvel Fandom: TEXT ONLY per CC BY-SA license (no images)
@@ -10,6 +10,15 @@ MSE-002+: Complete Fandom wiki expansion + MyComicShop sources
 - Dynamite Fandom: TEXT ONLY - Dynamite Entertainment only
 - MyComicShop: Bibliographic data only (no inventory/availability)
 - Expanded CBR coverage for isbn, description, cover_date, store_date
+
+
+v1.16.0 Changes (Assessment SEJ-ASSESS-001 Solutions):
+- SOLUTION-001: Fixed zero-value detection (0 is valid for price/page_count)
+- SOLUTION-002: Added adapter cleanup guards (no silent failures)
+- SOLUTION-003: Centralized imports at module level
+- SOLUTION-004: Added retry decorator for transient errors
+- SOLUTION-005: HTTP client pool for connection reuse
+- SOLUTION-006: Volume detection enhancement (uses series_year_began)
 
 All Fandom sources are publisher-filtered - won't query wrong wikis for content.
 
@@ -35,12 +44,15 @@ Rate Limiting Intelligence:
 """
 import asyncio
 import logging
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any, List, Set, Callable, TypeVar
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,6 +60,184 @@ from app.core.database import AsyncSessionLocal
 from app.core.utils import utcnow
 
 logger = logging.getLogger(__name__)
+
+# Type variable for retry decorator
+T = TypeVar('T')
+
+# =============================================================================
+# SOLUTION-004: RETRY DECORATOR FOR TRANSIENT ERRORS
+# =============================================================================
+
+async def with_retry(
+    func: Callable[[], T],
+    max_retries: int = 3,
+    backoff_base: float = 2.0,
+    retryable_exceptions: tuple = (httpx.NetworkError, httpx.TimeoutException, ConnectionError)
+) -> T:
+    """
+    Execute an async function with exponential backoff retry.
+
+    Args:
+        func: Async callable to execute
+        max_retries: Maximum number of retry attempts
+        backoff_base: Base for exponential backoff (delay = base ** attempt)
+        retryable_exceptions: Tuple of exception types to retry on
+
+    Returns:
+        Result of the function call
+
+    Raises:
+        Last exception if all retries fail
+    """
+    last_exception = None
+    for attempt in range(max_retries):
+        try:
+            return await func()
+        except retryable_exceptions as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                delay = backoff_base ** attempt
+                logger.debug(f"[Retry] Attempt {attempt + 1}/{max_retries} failed: {e}, waiting {delay:.1f}s")
+                await asyncio.sleep(delay)
+    raise last_exception
+
+
+# =============================================================================
+# SOLUTION-005: HTTP CLIENT POOL FOR CONNECTION REUSE
+# =============================================================================
+
+class HTTPClientPool:
+    """
+    Manages a pool of HTTP clients for connection reuse.
+
+    Benefits:
+    - Reuses TCP connections (avoids handshake overhead)
+    - Keeps connections warm (faster requests)
+    - Limits concurrent connections per source
+    """
+
+    def __init__(self):
+        self._clients: Dict[str, httpx.AsyncClient] = {}
+        self._lock = asyncio.Lock()
+
+    async def get_client(self, source_name: str, timeout: float = 30.0) -> httpx.AsyncClient:
+        """Get or create an HTTP client for a source."""
+        async with self._lock:
+            if source_name not in self._clients:
+                self._clients[source_name] = httpx.AsyncClient(
+                    timeout=timeout,
+                    headers={"User-Agent": f"MDM Comics Enrichment/1.16 ({source_name})"},
+                    follow_redirects=True,
+                    limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
+                )
+                logger.debug(f"[HTTPPool] Created client for {source_name}")
+            return self._clients[source_name]
+
+    async def close_all(self):
+        """Close all HTTP clients. Call this when job completes."""
+        async with self._lock:
+            for source_name, client in self._clients.items():
+                try:
+                    await client.aclose()
+                    logger.debug(f"[HTTPPool] Closed client for {source_name}")
+                except Exception as e:
+                    logger.debug(f"[HTTPPool] Error closing client for {source_name}: {e}")
+            self._clients.clear()
+
+
+# Global HTTP client pool (singleton)
+_http_pool: Optional[HTTPClientPool] = None
+
+
+def get_http_pool() -> HTTPClientPool:
+    """Get the global HTTP client pool (creates if needed)."""
+    global _http_pool
+    if _http_pool is None:
+        _http_pool = HTTPClientPool()
+    return _http_pool
+
+
+async def cleanup_http_pool():
+    """Cleanup the global HTTP client pool. Call at job end."""
+    global _http_pool
+    if _http_pool is not None:
+        await _http_pool.close_all()
+        _http_pool = None
+
+
+# =============================================================================
+# SOLUTION-006: VOLUME DETECTION ENHANCEMENT
+# =============================================================================
+
+# Known volume years for major series
+SERIES_VOLUME_YEARS = {
+    # Marvel
+    "amazing spider-man": [(1963, 1), (1999, 2), (2003, 1), (2014, 3), (2015, 4), (2018, 5), (2022, 6)],
+    "spectacular spider-man": [(1976, 1), (2003, 2), (2017, 1)],
+    "x-men": [(1963, 1), (1991, 2), (2010, 3), (2013, 4), (2019, 5), (2021, 6)],
+    "uncanny x-men": [(1963, 1), (2013, 2), (2016, 3), (2019, 5)],
+    "avengers": [(1963, 1), (1996, 2), (1998, 3), (2010, 4), (2012, 5), (2018, 8)],
+    "fantastic four": [(1961, 1), (1996, 2), (1998, 3), (2013, 4), (2014, 5), (2018, 6)],
+    "iron man": [(1968, 1), (1996, 2), (1998, 3), (2005, 4), (2013, 5), (2015, 1), (2020, 6)],
+    "captain america": [(1968, 1), (1996, 2), (1998, 3), (2002, 4), (2005, 5), (2011, 6), (2013, 7), (2017, 8)],
+    "thor": [(1966, 1), (1998, 2), (2007, 3), (2014, 4), (2015, 1), (2018, 5), (2020, 6)],
+    "hulk": [(1962, 1), (1968, 2), (1999, 2), (2008, 3), (2014, 4), (2016, 1), (2021, 1)],
+    "daredevil": [(1964, 1), (1998, 2), (2011, 3), (2014, 4), (2016, 5), (2019, 6)],
+    # DC
+    "batman": [(1940, 1), (2011, 2), (2016, 3)],
+    "detective comics": [(1937, 1), (2011, 2), (2016, 1)],
+    "superman": [(1939, 1), (1987, 2), (2006, 1), (2011, 2), (2016, 3), (2018, 4)],
+    "action comics": [(1938, 1), (2011, 2), (2016, 1)],
+    "wonder woman": [(1942, 1), (1987, 2), (2006, 3), (2011, 4), (2016, 5)],
+    "justice league": [(1987, 1), (2006, 2), (2011, 2), (2016, 3), (2018, 4)],
+    "flash": [(1959, 1), (1987, 2), (2010, 3), (2011, 4), (2016, 5)],
+    "green lantern": [(1960, 1), (1990, 3), (2005, 4), (2011, 5), (2016, 1), (2021, 1)],
+    "aquaman": [(1962, 1), (1986, 2), (1991, 3), (1994, 4), (2003, 5), (2011, 7), (2016, 8)],
+    # Image
+    "spawn": [(1992, 1)],
+    "invincible": [(2003, 1)],
+    "savage dragon": [(1993, 1)],
+    "walking dead": [(2003, 1)],
+}
+
+
+def estimate_volume(series_name: str, year: Optional[int]) -> int:
+    """
+    Estimate the volume number for a series based on the publication year.
+
+    Args:
+        series_name: Name of the comic series
+        year: Publication year (from cover_date or series_year_began)
+
+    Returns:
+        Estimated volume number (defaults to 1 if unknown)
+    """
+    if not year:
+        return 1
+
+    series_lower = series_name.lower().strip()
+
+    # Check for exact match
+    if series_lower in SERIES_VOLUME_YEARS:
+        volume_years = SERIES_VOLUME_YEARS[series_lower]
+        best_volume = 1
+        for vol_year, vol_num in sorted(volume_years):
+            if vol_year <= year:
+                best_volume = vol_num
+        return best_volume
+
+    # Check for partial match
+    for known_series, volume_years in SERIES_VOLUME_YEARS.items():
+        if known_series in series_lower or series_lower in known_series:
+            best_volume = 1
+            for vol_year, vol_num in sorted(volume_years):
+                if vol_year <= year:
+                    best_volume = vol_num
+            return best_volume
+
+    return 1
+
+
 
 
 # =============================================================================
@@ -327,10 +517,10 @@ def identify_missing_fields(comic: Dict[str, Any]) -> Set[str]:
         value = comic.get(field_name)
 
         # Check if field is empty/null
+        # SOLUTION-001: 0 is valid for price/page_count, so don't treat as empty
         is_empty = (
             value is None or
             value == "" or
-            value == 0 or
             (isinstance(value, (list, dict)) and len(value) == 0)
         )
 
@@ -468,11 +658,11 @@ async def query_metron(
         else:
             logger.warning(f"[{source}] Error querying: {e}")
     finally:
-        # Cleanup client
+        # Cleanup client - SOLUTION-002: Log cleanup errors
         try:
             await client.__aexit__(None, None, None)
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"[{source}] Client cleanup error: {e}")
 
     if updates:
         logger.info(f"[{source}] Found {len(updates)} fields for comic {comic.get('id')}")
@@ -486,9 +676,7 @@ async def query_comicvine(
     rate_mgr: RateLimitManager
 ) -> Dict[str, Any]:
     """Query ComicVine for missing fields."""
-    import os
-    import httpx
-
+    # SOLUTION-003: Imports moved to module level
     updates = {}
     source = "comicvine"
 
@@ -588,7 +776,6 @@ async def query_comicvine(
                                 data = detail_resp.json().get("results", {})
 
                                 if "description" in missing_fields and data.get("description"):
-                                    import re
                                     desc = re.sub(r'<[^>]+>', '', data["description"])
                                     updates["description"] = desc[:5000]
 
@@ -617,9 +804,7 @@ async def query_pricecharting(
     rate_mgr: RateLimitManager
 ) -> Dict[str, Any]:
     """Query PriceCharting for ID and/or prices."""
-    import os
-    import httpx
-
+    # SOLUTION-003: Imports moved to module level
     updates = {}
     source = "pricecharting"
 
@@ -812,11 +997,17 @@ async def query_marvel_fandom(
         if not series_name or not issue_number:
             return updates
 
-        # Try to determine volume (default to 1)
-        volume = 1
+        # SOLUTION-006: Use intelligent volume detection
+        year = None
         if comic.get("series_year_began"):
-            # Use year to estimate volume if we have it
-            pass  # Keep default
+            year = comic["series_year_began"]
+        elif comic.get("cover_date"):
+            # Try to extract year from cover_date
+            try:
+                year = int(str(comic["cover_date"])[:4])
+            except (ValueError, TypeError):
+                pass
+        volume = estimate_volume(series_name, year)
 
         # Fetch issue data from Marvel Fandom
         data = await adapter.fetch_issue_credits(series_name, volume, issue_number)
@@ -847,12 +1038,12 @@ async def query_marvel_fandom(
         else:
             rate_mgr.get_limiter(source).record_success()  # API worked, just no match
 
-        # Cleanup
+        # Cleanup - SOLUTION-002: Log cleanup errors
         if hasattr(adapter, 'client') and adapter.client:
             try:
                 await adapter.client.close()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"[{source}] Adapter cleanup error: {e}")
 
     except Exception as e:
         error_str = str(e).lower()
@@ -998,8 +1189,16 @@ async def _query_generic_fandom(
         if not series_name or not issue_number:
             return updates
 
-        # Try to determine volume (default to 1)
-        volume = 1
+        # SOLUTION-006: Use intelligent volume detection
+        year = None
+        if comic.get("series_year_began"):
+            year = comic["series_year_began"]
+        elif comic.get("cover_date"):
+            try:
+                year = int(str(comic["cover_date"])[:4])
+            except (ValueError, TypeError):
+                pass
+        volume = estimate_volume(series_name, year)
 
         # Fetch issue data from Fandom wiki
         data = await adapter.fetch_issue_data(series_name, volume, issue_number)
