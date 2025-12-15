@@ -9,9 +9,12 @@ Per constitution_cyberSec.json:
 """
 
 import logging
+import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -106,6 +109,53 @@ async def get_queue_stats(
     """Get queue statistics for dashboard."""
     service = MatchReviewService(db)
     return await service.get_stats()
+
+
+@router.get("/cover/{match_id}")
+async def get_cover_image(
+    match_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Serve cover image for a match review item.
+
+    Handles both S3-hosted images and local files:
+    - If s3_url exists: redirect to S3
+    - If local file_path exists: serve file directly
+    """
+    match = await db.get(MatchReviewQueue, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    candidate_data = match.candidate_data or {}
+
+    # Check for S3 URL first
+    s3_url = candidate_data.get('s3_url')
+    if s3_url:
+        return RedirectResponse(url=s3_url)
+
+    # Check for local file path
+    file_path = candidate_data.get('file_path')
+    if file_path and os.path.exists(file_path):
+        # Determine content type from extension
+        ext = Path(file_path).suffix.lower()
+        content_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.webp': 'image/webp',
+            '.gif': 'image/gif',
+        }
+        content_type = content_types.get(ext, 'image/jpeg')
+
+        return FileResponse(
+            path=file_path,
+            media_type=content_type,
+            filename=Path(file_path).name
+        )
+
+    raise HTTPException(status_code=404, detail="Cover image not found")
 
 
 # =============================================================

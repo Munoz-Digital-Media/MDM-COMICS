@@ -21,6 +21,7 @@ const MatchComparison = ({
 }) => {
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
+  const [coverError, setCoverError] = useState(false);
   const modalRef = useRef(null);
   const closeButtonRef = useRef(null);
 
@@ -33,6 +34,15 @@ const MatchComparison = ({
   });
 
   const { entity, candidate, match_method, match_score } = match;
+
+  // Construct cover URL using the backend cover endpoint
+  // This handles both S3 redirects and local file serving
+  const coverUrl = `/api/admin/match-queue/cover/${match.id}`;
+
+  // Reset cover error state when match changes
+  useEffect(() => {
+    setCoverError(false);
+  }, [match.id]);
 
   // Initialize editable fields from entity/candidate data
   useEffect(() => {
@@ -139,11 +149,12 @@ const MatchComparison = ({
                 Cover Image
               </h3>
               <div className="bg-zinc-800 rounded-lg overflow-hidden flex-1 flex items-center justify-center min-h-[400px]">
-                {entity.cover_image_url ? (
+                {!coverError ? (
                   <img
-                    src={entity.cover_image_url}
+                    src={coverUrl}
                     alt={`Cover for ${entity.name}`}
                     className="max-w-full max-h-[500px] object-contain"
+                    onError={() => setCoverError(true)}
                   />
                 ) : (
                   <div className="text-zinc-600 text-center p-8">
