@@ -241,6 +241,8 @@ export default function PipelineStatus({ compact = false }) {
   // Sequential Enrichment (MSE) Status extraction
   const mseCheckpoint = mseStatus?.checkpoint || {};
   const mseCoverage = mseStatus?.coverage || {};
+  const mseSources = mseStatus?.sources || [];
+  const mseAlgorithm = mseStatus?.algorithm || 'sequential_exhaustive';
   const mseIsRunning = mseCheckpoint.is_running;
   const mseProcessed = mseCheckpoint.total_processed || 0;
   const mseUpdated = mseCheckpoint.total_updated || 0;
@@ -250,10 +252,11 @@ export default function PipelineStatus({ compact = false }) {
   const mseWithComicvine = mseCoverage.with_comicvine || 0;
   const mseWithPricecharting = mseCoverage.with_pricecharting || 0;
   const mseWithDescription = mseCoverage.with_description || 0;
-  const mseMetronPct = mseCoverage.metron_pct || 0;
-  const mseComicvinePct = mseCoverage.comicvine_pct || 0;
-  const msePricechartingPct = mseCoverage.pricecharting_pct || 0;
-  const mseDescriptionPct = mseCoverage.description_pct || 0;
+  const mseWithUpc = mseCoverage.with_upc || 0;
+  const mseWithIsbn = mseCoverage.with_isbn || 0;
+  const mseWithMarketMetrics = mseCoverage.with_market_metrics || 0;
+  // Calculate percentages locally for better precision display
+  const calcPct = (count) => mseTotalComics > 0 ? (count / mseTotalComics * 100) : 0;
 
   // Check which jobs are running
   const anyRunning = gcdIsRunning || pcIsRunning || mseIsRunning;
@@ -830,130 +833,131 @@ export default function PipelineStatus({ compact = false }) {
       {/* ==================== SEQUENTIAL ENRICHMENT (MSE) TAB ==================== */}
       {activeTab === 'mse' && (
         <>
-          {/* Status Badge */}
-          <div className="flex items-center gap-3">
-            {mseIsRunning ? (
-              <span className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 text-purple-400 rounded-lg text-sm">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Sequential Enrichment Running
-              </span>
-            ) : mseProcessed > 0 ? (
-              <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
-                <CheckCircle className="w-4 h-4" />
-                {formatNumber(mseUpdated)} Records Enriched
-              </span>
-            ) : (
-              <span className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-zinc-400 rounded-lg text-sm">
-                <Pause className="w-4 h-4" />
-                Idle
-              </span>
-            )}
+          {/* Status Badge + Algorithm */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              {mseIsRunning ? (
+                <span className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 text-purple-400 rounded-lg text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Sequential Enrichment Running
+                </span>
+              ) : mseProcessed > 0 ? (
+                <span className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">
+                  <CheckCircle className="w-4 h-4" />
+                  {formatNumber(mseProcessed)} Processed
+                </span>
+              ) : (
+                <span className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-zinc-400 rounded-lg text-sm">
+                  <Pause className="w-4 h-4" />
+                  Idle
+                </span>
+              )}
 
-            {!mseIsRunning && (
-              <button
-                onClick={handleTriggerMSE}
-                disabled={actionLoading}
-                className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 text-purple-400 rounded-lg text-sm hover:bg-purple-500/30 transition-colors disabled:opacity-50"
-              >
-                {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                {mseProcessed > 0 ? 'Continue Enrichment' : 'Start Enrichment'}
-              </button>
-            )}
+              {!mseIsRunning && (
+                <button
+                  onClick={handleTriggerMSE}
+                  disabled={actionLoading}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 text-purple-400 rounded-lg text-sm hover:bg-purple-500/30 transition-colors disabled:opacity-50"
+                >
+                  {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  {mseProcessed > 0 ? 'Continue' : 'Start'}
+                </button>
+              )}
+            </div>
+            <span className="text-xs text-zinc-500 font-mono">{mseAlgorithm}</span>
           </div>
 
-          {/* Source Coverage Progress Bars */}
-          <div className="space-y-3">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm text-zinc-400">Metron ID Coverage</span>
-                <span className="text-sm font-medium text-blue-400">{formatPercent(mseMetronPct)}%</span>
+          {/* Identifier Coverage - UPC & ISBN (most important for matching) */}
+          <div className="bg-zinc-800/30 rounded-lg p-4">
+            <h4 className="text-sm font-medium text-zinc-300 mb-3">Identifier Coverage</h4>
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-zinc-400">UPC Barcodes</span>
+                  <span className="text-sm">
+                    <span className="font-medium text-orange-400">{formatNumber(mseWithUpc)}</span>
+                    <span className="text-zinc-500"> / {formatNumber(mseTotalComics)}</span>
+                    <span className="text-zinc-500 ml-2">({calcPct(mseWithUpc).toFixed(1)}%)</span>
+                  </span>
+                </div>
+                <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-orange-500" style={{ width: `${Math.min(calcPct(mseWithUpc), 100)}%` }} />
+                </div>
               </div>
-              <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full transition-all duration-500 bg-blue-500"
-                  style={{ width: `${Math.min(mseMetronPct, 100)}%` }}
-                />
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm text-zinc-400">ComicVine ID Coverage</span>
-                <span className="text-sm font-medium text-green-400">{formatPercent(mseComicvinePct)}%</span>
-              </div>
-              <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full transition-all duration-500 bg-green-500"
-                  style={{ width: `${Math.min(mseComicvinePct, 100)}%` }}
-                />
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm text-zinc-400">PriceCharting ID Coverage</span>
-                <span className="text-sm font-medium text-yellow-400">{formatPercent(msePricechartingPct)}%</span>
-              </div>
-              <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full transition-all duration-500 bg-yellow-500"
-                  style={{ width: `${Math.min(msePricechartingPct, 100)}%` }}
-                />
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm text-zinc-400">Description Coverage</span>
-                <span className="text-sm font-medium text-purple-400">{formatPercent(mseDescriptionPct)}%</span>
-              </div>
-              <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-500 ${mseIsRunning ? 'bg-purple-500' : 'bg-purple-600'}`}
-                  style={{ width: `${Math.min(mseDescriptionPct, 100)}%` }}
-                />
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-zinc-400">ISBN Codes</span>
+                  <span className="text-sm">
+                    <span className="font-medium text-cyan-400">{formatNumber(mseWithIsbn)}</span>
+                    <span className="text-zinc-500"> / {formatNumber(mseTotalComics)}</span>
+                    <span className="text-zinc-500 ml-2">({calcPct(mseWithIsbn).toFixed(1)}%)</span>
+                  </span>
+                </div>
+                <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-cyan-500" style={{ width: `${Math.min(calcPct(mseWithIsbn), 100)}%` }} />
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Stats Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-zinc-800/50 rounded-lg p-3">
-              <p className="text-xs text-zinc-500 mb-1">Total Comics</p>
-              <p className="text-lg font-bold text-white">{formatNumber(mseTotalComics)}</p>
-            </div>
-            <div className="bg-zinc-800/50 rounded-lg p-3">
-              <p className="text-xs text-zinc-500 mb-1">With Metron</p>
-              <p className="text-lg font-bold text-blue-400">{formatNumber(mseWithMetron)}</p>
-            </div>
-            <div className="bg-zinc-800/50 rounded-lg p-3">
-              <p className="text-xs text-zinc-500 mb-1">With ComicVine</p>
-              <p className="text-lg font-bold text-green-400">{formatNumber(mseWithComicvine)}</p>
-            </div>
-            <div className="bg-zinc-800/50 rounded-lg p-3">
-              <p className="text-xs text-zinc-500 mb-1">With PriceCharting</p>
-              <p className="text-lg font-bold text-yellow-400">{formatNumber(mseWithPricecharting)}</p>
+          {/* Source ID Coverage */}
+          <div className="bg-zinc-800/30 rounded-lg p-4">
+            <h4 className="text-sm font-medium text-zinc-300 mb-3">Source ID Coverage</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex items-center justify-between p-2 bg-zinc-800/50 rounded">
+                <span className="text-sm text-zinc-400">Metron</span>
+                <span className="text-sm font-medium text-blue-400">{formatNumber(mseWithMetron)}</span>
+              </div>
+              <div className="flex items-center justify-between p-2 bg-zinc-800/50 rounded">
+                <span className="text-sm text-zinc-400">ComicVine</span>
+                <span className="text-sm font-medium text-green-400">{formatNumber(mseWithComicvine)}</span>
+              </div>
+              <div className="flex items-center justify-between p-2 bg-zinc-800/50 rounded">
+                <span className="text-sm text-zinc-400">PriceCharting</span>
+                <span className="text-sm font-medium text-yellow-400">{formatNumber(mseWithPricecharting)}</span>
+              </div>
+              <div className="flex items-center justify-between p-2 bg-zinc-800/50 rounded">
+                <span className="text-sm text-zinc-400">Description</span>
+                <span className="text-sm font-medium text-purple-400">{formatNumber(mseWithDescription)}</span>
+              </div>
             </div>
           </div>
+
+          {/* Active Sources (dynamic from backend) */}
+          {mseSources.length > 0 && (
+            <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Layers className="w-4 h-4 text-purple-400" />
+                <h4 className="text-sm font-medium text-purple-400">Active Enrichment Sources</h4>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {mseSources.map(source => (
+                  <span
+                    key={source}
+                    className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs font-medium capitalize"
+                  >
+                    {source.replace('comicbookrealm', 'CBR').replace('comicvine', 'ComicVine').replace('pricecharting', 'PriceCharting')}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Enrichment Stats */}
-          <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Layers className="w-4 h-4 text-purple-400" />
-              <h4 className="text-sm font-medium text-purple-400">Enrichment Progress</h4>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-zinc-800/50 rounded-lg p-3 text-center">
+              <p className="text-2xl font-bold text-white">{formatNumber(mseProcessed)}</p>
+              <p className="text-xs text-zinc-500">Processed</p>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Total Processed:</span>
-                <span className="text-zinc-300">{formatNumber(mseProcessed)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Records Enriched:</span>
-                <span className="text-purple-400">{formatNumber(mseUpdated)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Errors:</span>
-                <span className={mseErrors > 0 ? 'text-red-400' : 'text-zinc-300'}>
-                  {formatNumber(mseErrors)}
-                </span>
-              </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3 text-center">
+              <p className="text-2xl font-bold text-purple-400">{formatNumber(mseUpdated || 0)}</p>
+              <p className="text-xs text-zinc-500">Enriched</p>
+            </div>
+            <div className="bg-zinc-800/50 rounded-lg p-3 text-center">
+              <p className={`text-2xl font-bold ${mseErrors > 0 ? 'text-red-400' : 'text-zinc-400'}`}>
+                {formatNumber(mseErrors)}
+              </p>
+              <p className="text-xs text-zinc-500">Errors</p>
             </div>
           </div>
 
@@ -973,10 +977,10 @@ export default function PipelineStatus({ compact = false }) {
             </div>
           )}
 
-          {/* Sources Info */}
+          {/* Footer */}
           <div className="pt-3 border-t border-zinc-800">
             <div className="flex items-center justify-between text-xs text-zinc-500">
-              <span>Sources: Metron, ComicVine, PriceCharting, CBR, Fandom, MyComicShop</span>
+              <span>Total Comics: {formatNumber(mseTotalComics)}</span>
               <span>Batch Size: 100</span>
             </div>
           </div>
