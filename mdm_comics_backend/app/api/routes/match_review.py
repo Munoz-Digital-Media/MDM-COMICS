@@ -431,3 +431,125 @@ async def _get_next_pending_match(db: AsyncSession, current_id: int) -> Optional
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+# =============================================================
+# Cover Upload CLI Support (v1.21.4)
+# =============================================================
+
+from pydantic import BaseModel
+from typing import Dict, Any
+
+
+class CoverQueueRequest(BaseModel):
+    """Request to queue a cover for review."""
+    source_type: str = "cover_upload"
+    source_id: str  # File hash
+    candidate_data: Dict[str, Any]
+    confidence_score: float = 5.0
+    disposition: str = "review"
+
+
+class CoverQueueResponse(BaseModel):
+    """Response from queueing a cover."""
+    success: bool
+    id: Optional[int] = None
+    message: Optional[str] = None
+
+
+class HashCheckResponse(BaseModel):
+    """Response from hash check."""
+    exists: bool
+    queue_id: Optional[int] = None
+
+
+@router.post("/queue-cover", response_model=CoverQueueResponse)
+async def queue_cover_for_review(
+    request: CoverQueueRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Queue a cover image for Match Review.
+
+    Called by the local upload_covers.py script after uploading to S3.
+    Creates a Match Review queue entry for human approval.
+    """
+    from sqlalchemy import select
+    from datetime import datetime, timezone, timedelta
+
+    # Check if already exists
+    existing = await db.execute(
+        select(MatchReviewQueue).where(
+            MatchReviewQueue.entity_type == request.source_type,
+            MatchReviewQueue.candidate_id == request.source_id
+        )
+    )
+    existing_item = existing.scalar_one_or_none()
+
+    if existing_item:
+        return CoverQueueResponse(
+            success=True,
+            id=existing_item.id,
+            message="Already in queue"
+        )
+
+    # Build product name from metadata
+    data = request.candidate_data
+    product_name = f"{data.get('series', 'Unknown')} v{data.get('volume', 1)} #{data.get('issue_number', '1')}"
+    if data.get('variant_code'):
+        product_name += f" ({data['variant_code']})"
+    if data.get('cgc_grade'):
+        product_name += f" CGC {data['cgc_grade']}"
+
+    # Create queue entry
+    queue_item = MatchReviewQueue(
+        entity_type=request.source_type,
+        entity_id=0,  # No entity yet - created on approval
+        candidate_source="local_upload",
+        candidate_id=request.source_id,
+        candidate_name=product_name,
+        candidate_data=request.candidate_data,
+        match_method="cover_upload",
+        match_score=int(request.confidence_score),
+        status="pending",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30)
+    )
+
+    db.add(queue_item)
+    await db.flush()
+
+    logger.info(f"Queued cover for review: {product_name} (#{queue_item.id})")
+
+    return CoverQueueResponse(
+        success=True,
+        id=queue_item.id,
+        message="Queued for review"
+    )
+
+
+@router.get("/check-hash/{file_hash}", response_model=HashCheckResponse)
+async def check_cover_hash(
+    file_hash: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Check if a cover with this file hash already exists in the queue.
+
+    Used by upload_covers.py to skip already-processed files.
+    """
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(MatchReviewQueue).where(
+            MatchReviewQueue.entity_type.in_(["cover_ingestion", "cover_upload"]),
+            MatchReviewQueue.candidate_id == file_hash
+        )
+    )
+    existing = result.scalar_one_or_none()
+
+    return HashCheckResponse(
+        exists=existing is not None,
+        queue_id=existing.id if existing else None
+    )

@@ -65,7 +65,7 @@ class MatchReviewQueue(Base):
     locker = relationship("User", foreign_keys=[locked_by])
 
     __table_args__ = (
-        CheckConstraint("entity_type IN ('comic', 'funko')", name='ck_entity_type'),
+        CheckConstraint("entity_type IN ('comic', 'funko', 'cover_ingestion', 'cover_upload')", name='ck_entity_type'),
         CheckConstraint("status IN ('pending', 'approved', 'rejected', 'skipped', 'expired')", name='ck_status'),
         UniqueConstraint('entity_type', 'entity_id', 'candidate_source', 'candidate_id', name='uq_match_candidate'),
     )
