@@ -2399,6 +2399,7 @@ async def get_cover_ingestion_stats(
     Shows queue status, processed items, and confidence breakdowns.
     """
     # Queue items for cover ingestion (all statuses)
+    # Include both entity_type='cover_ingestion' AND candidate_source='local_cover' (CLI uploads)
     queue_result = await db.execute(text("""
         SELECT
             COUNT(*) as total_queued,
@@ -2409,7 +2410,7 @@ async def get_cover_ingestion_stats(
             COUNT(CASE WHEN status = 'pending' AND match_score >= 5 AND match_score < 8 THEN 1 END) as pending_medium,
             COUNT(CASE WHEN status = 'pending' AND match_score < 5 THEN 1 END) as pending_low
         FROM match_review_queue
-        WHERE entity_type = 'cover_ingestion'
+        WHERE entity_type = 'cover_ingestion' OR candidate_source = 'local_cover'
     """))
     queue_row = queue_result.fetchone()
 
