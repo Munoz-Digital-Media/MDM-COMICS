@@ -4629,6 +4629,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("sequential_enrichment", run_sequential_exhaustive_enrichment_job, interval_minutes=30)),
             # v1.21.0: Inbound cover processor - watches Inbound folder, queues to Match Review
             asyncio.create_task(self._run_job_loop("inbound_processor", run_inbound_processor, interval_minutes=5)),
+            # v1.21.2: Image acquisition - download external cover URLs to S3
+            asyncio.create_task(self._run_job_loop("image_acquisition", run_image_acquisition_job, interval_minutes=30)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -4646,6 +4648,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - marvel_fandom: every 60 minutes (Story-level credits from Marvel Database)")
         print("[SCHEDULER]   - sequential_enrichment: every 30 minutes (ONE row, ALL sources exhausted)")
         print("[SCHEDULER]   - inbound_processor: every 5 minutes (watch Inbound folder, queue to Match Review)")
+        print("[SCHEDULER]   - image_acquisition: every 30 minutes (download external cover URLs to S3)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
