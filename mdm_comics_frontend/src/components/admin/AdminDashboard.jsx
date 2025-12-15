@@ -1,14 +1,19 @@
 /**
  * AdminDashboard - Overview with key metrics and quick actions
- * Phase 3: MDM Admin Console Inventory System v1.3.0
+ * Phase 3: MDM Admin Console Inventory System v1.4.0
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Package, DollarSign, AlertTriangle, QrCode,
-  ShoppingCart, TrendingUp, TrendingDown, RefreshCw, Loader2
+  ShoppingCart, TrendingUp, TrendingDown, RefreshCw, Loader2, Info
 } from 'lucide-react';
 import { adminAPI } from '../../services/adminApi';
 import PipelineStatus from './pipeline/PipelineStatus';
+
+// App Version - Update these when deploying new versions
+const APP_VERSION = 'v1.4.0';
+const BACKEND_VERSION = 'v1.18.0';
+const BUILD_DATE = '2025-12-14';
 
 function StatCard({ title, value, subtitle, icon: Icon, trend, trendUp, color = 'orange', onClick }) {
   const colors = {
@@ -127,9 +132,26 @@ export default function AdminDashboard({ onNavigate }) {
 
   return (
     <div className="space-y-6">
-      {/* Header with refresh */}
+      {/* Header with refresh and version */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-white">Overview</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-semibold text-white">Overview</h2>
+          <div className="flex items-center gap-2">
+            <span className="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded-full border border-orange-500/30">
+              {APP_VERSION}
+            </span>
+            <div className="group relative">
+              <Info className="w-3.5 h-3.5 text-zinc-500 cursor-help" />
+              <div className="absolute left-0 top-full mt-1 hidden group-hover:block z-50">
+                <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-2 shadow-lg whitespace-nowrap">
+                  <p className="text-xs text-zinc-400">Frontend: <span className="text-white">{APP_VERSION}</span></p>
+                  <p className="text-xs text-zinc-400">Backend: <span className="text-white">{BACKEND_VERSION}</span></p>
+                  <p className="text-xs text-zinc-400">Build: <span className="text-white">{BUILD_DATE}</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
