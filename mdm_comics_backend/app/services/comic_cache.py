@@ -125,15 +125,30 @@ class ComicCacheService:
         staleness_hours: int = CACHE_STALENESS_HOURS
     ) -> Optional[List[ComicIssue]]:
         """
-        Check local DB for matching issues that aren't stale.
-        Returns None if no fresh results found (triggers Metron fetch).
+        Check local DB for matching issues.
+
+        v2.0.0: Now searches ALL local comics (GCD + Metron) regardless of staleness.
+        GCD-sourced comics (2.5M+) don't have last_fetched set, so the staleness
+        filter was excluding them entirely.
+
+        Returns None if no local results found (triggers Metron fetch).
         """
+        from sqlalchemy import or_
+
+        # v2.0.0: Search ALL local comics - either:
+        # 1. Fresh Metron cache (last_fetched within threshold), OR
+        # 2. GCD-sourced data (gcd_id is not null)
         staleness_threshold = utcnow() - timedelta(hours=staleness_hours)
 
         query = (
             select(ComicIssue)
             .options(selectinload(ComicIssue.series).selectinload(ComicSeries.publisher))
-            .where(ComicIssue.last_fetched >= staleness_threshold)
+            .where(
+                or_(
+                    ComicIssue.last_fetched >= staleness_threshold,  # Fresh Metron cache
+                    ComicIssue.gcd_id.isnot(None)  # GCD data (always valid)
+                )
+            )
         )
 
         # UPC is exact match - most specific
