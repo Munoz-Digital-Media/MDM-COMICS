@@ -361,21 +361,27 @@ import './styles/animations.css';
                 </div>
               </div>
 
-              {/* Search Bar */}
+              {/* Search Bar - Opens Comic Database Search on Enter */}
               <div className="hidden md:flex flex-1 max-w-xl mx-8">
                 <div className="relative w-full">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
                   <input
                     type="text"
-                    placeholder="Search comics, Funko POPs, characters..."
+                    placeholder="Search 2.5M+ comics... (press Enter)"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && searchQuery.trim()) {
+                        setIsComicSearchOpen(true);
+                      }
+                    }}
+                    onClick={() => setIsComicSearchOpen(true)}
                     className="w-full pl-12 pr-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-orange-500
-  focus:ring-2 focus:ring-orange-500/20 transition-all"
+  focus:ring-2 focus:ring-orange-500/20 transition-all cursor-pointer"
                   />
                   {searchQuery && (
                     <button
-                      onClick={() => setSearchQuery("")}
+                      onClick={(e) => { e.stopPropagation(); setSearchQuery(""); }}
                       className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
                     >
                       <X className="w-4 h-4" />
@@ -453,17 +459,23 @@ import './styles/animations.css';
               </div>
             </div>
 
-            {/* Mobile Search */}
+            {/* Mobile Search - Opens Comic Database Search */}
             <div className="md:hidden mt-4">
               <div className="relative">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
                 <input
                   type="text"
-                  placeholder="Search..."
+                  placeholder="Search 2.5M+ comics..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && searchQuery.trim()) {
+                      setIsComicSearchOpen(true);
+                    }
+                  }}
+                  onClick={() => setIsComicSearchOpen(true)}
                   className="w-full pl-12 pr-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-orange-500
-  transition-all"
+  transition-all cursor-pointer"
                 />
               </div>
             </div>
