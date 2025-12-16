@@ -33,6 +33,9 @@ export const API_BASE = resolveApiBase();
 // CSRF token cookie name
 const CSRF_COOKIE_NAME = 'mdm_csrf_token';
 
+// Token storage key for cross-origin auth fallback
+const TOKEN_STORAGE_KEY = 'mdm_access_token';
+
 /**
  * Get CSRF token from cookie
  */
@@ -45,6 +48,39 @@ function getCsrfToken() {
     }
   }
   return null;
+}
+
+/**
+ * Token storage helpers for cross-origin deployments
+ * When frontend and backend are on different domains, cookies don't work.
+ * Fall back to localStorage + Authorization header.
+ */
+export function getStoredToken() {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredToken(token) {
+  try {
+    if (token) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    } else {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage unavailable (private browsing, etc.)
+  }
+}
+
+export function clearStoredToken() {
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // Ignore errors
+  }
 }
 
 /**
@@ -65,14 +101,23 @@ async function fetchAPI(endpoint, options = {}) {
     ...options.headers,
   };
 
+  // Cross-origin auth: Add Authorization header if token is stored and not already provided
+  // This enables auth when cookies can't be shared across domains
+  if (!headers.Authorization) {
+    const storedToken = getStoredToken();
+    if (storedToken) {
+      headers.Authorization = `Bearer ${storedToken}`;
+    }
+  }
+
   // P1-5: Add CSRF token for mutations (non-GET requests)
   // NASTY-006: Log warning if CSRF token is missing for mutations
   if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
     const csrfToken = getCsrfToken();
     if (csrfToken) {
       headers['X-CSRF-Token'] = csrfToken;
-    } else if (import.meta.env.PROD) {
-      // In production, missing CSRF token is a concern
+    } else if (import.meta.env.PROD && !headers.Authorization) {
+      // In production without Authorization header, missing CSRF token is a concern
       console.warn(
         '[API] CSRF token missing for mutation request to:', endpoint,
         '- Request may be rejected. Try refreshing the page.'
@@ -91,6 +136,8 @@ async function fetchAPI(endpoint, options = {}) {
     if (!response.ok) {
       // LOW-002: Handle 401 by dispatching auth expired event
       if (response.status === 401) {
+        // Clear stored token on auth failure to prevent stale token loops
+        clearStoredToken();
         window.dispatchEvent(new CustomEvent('auth:expired'));
       }
       const error = await response.json().catch(() => ({}));
@@ -234,7 +281,10 @@ export const authAPI = {
       body: JSON.stringify({ email, password }),
     });
     // P1-5: Server sets HttpOnly cookies automatically
-    // access_token is still returned for backwards compatibility
+    // Cross-origin fallback: Also store token in localStorage for header-based auth
+    if (result?.access_token) {
+      setStoredToken(result.access_token);
+    }
     return result;
   },
 
@@ -244,11 +294,17 @@ export const authAPI = {
       body: JSON.stringify({ name, email, password }),
     });
     // P1-5: Server sets HttpOnly cookies automatically
+    // Cross-origin fallback: Also store token in localStorage for header-based auth
+    if (result?.access_token) {
+      setStoredToken(result.access_token);
+    }
     return result;
   },
 
   logout: async () => {
     // P1-5: New endpoint that clears HttpOnly cookies
+    // Also clear stored token for cross-origin auth
+    clearStoredToken();
     return fetchAPI('/auth/logout', {
       method: 'POST',
     });
