@@ -336,11 +336,15 @@ class CoverParser:
 class DirectDBQueue:
     """Insert directly into the database (bypasses API, no token needed)."""
 
-    DATABASE_URL = "postgresql://postgres:figmwrDYQFzYjGYItivpQewcNKNfzXWv@gondola.proxy.rlwy.net:38453/railway"
-
     def __init__(self):
         from sqlalchemy import create_engine
-        self.engine = create_engine(self.DATABASE_URL)
+        database_url = os.getenv('DATABASE_URL')
+        if not database_url:
+            raise ValueError("DATABASE_URL environment variable is required for direct-db mode")
+        # Convert async URL to sync for psycopg2
+        if '+asyncpg' in database_url:
+            database_url = database_url.replace('postgresql+asyncpg://', 'postgresql://')
+        self.engine = create_engine(database_url)
 
     def queue_cover(self, metadata: CoverMetadata, s3_key: str, s3_url: str) -> tuple[bool, Optional[int], Optional[str]]:
         """Insert a cover into match_review_queue directly."""
