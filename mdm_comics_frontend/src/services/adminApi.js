@@ -623,6 +623,66 @@ export const adminAPI = {
   getCoverIngestionStats: async () => {
     return fetchAPI('/admin/cover-ingestion/stats');
   },
+
+  // Upload cover from browser (v1.22.0)
+  uploadCover: async (file, metadata = {}) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (metadata.publisher) formData.append('publisher', metadata.publisher);
+    if (metadata.series) formData.append('series', metadata.series);
+    if (metadata.volume) formData.append('volume', metadata.volume);
+    if (metadata.issue_number) formData.append('issue_number', metadata.issue_number);
+    if (metadata.variant_code) formData.append('variant_code', metadata.variant_code);
+    if (metadata.cgc_grade) formData.append('cgc_grade', metadata.cgc_grade);
+
+    const url = API_BASE + '/admin/cover-ingestion/upload';
+    const headers = {};
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (\!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Upload failed');
+    }
+
+    return response.json();
+  },
+
+  // Update cover for existing queue item (v1.22.0)
+  updateCover: async (queueId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = API_BASE + '/admin/cover-ingestion/update/' + queueId;
+    const headers = {};
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (\!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Update failed');
+    }
+
+    return response.json();
+  },
 };
 
 export default adminAPI;

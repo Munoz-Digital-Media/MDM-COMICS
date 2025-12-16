@@ -7,9 +7,10 @@ Per constitution_cyberSec.json Section 3:
 - Input validation
 """
 import logging
+import hashlib
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text, and_, or_
@@ -2446,4 +2447,312 @@ async def get_cover_ingestion_stats(
             "linked_to_pricecharting": products_row[2] if products_row else 0,
             "total_value": float(products_row[3]) if products_row else 0.0,
         }
+    }
+
+
+# ============================================================================
+# Browser Cover Upload (v1.22.0)
+# ============================================================================
+
+@router.post("/cover-ingestion/upload")
+async def upload_cover_from_browser(
+    file: UploadFile = File(...),
+    publisher: str = Form(default=""),
+    series: str = Form(default=""),
+    volume: Optional[int] = Form(default=None),
+    issue_number: str = Form(default=""),
+    variant_code: Optional[str] = Form(default=None),
+    cgc_grade: Optional[float] = Form(default=None),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload a cover image directly from the browser.
+
+    This endpoint:
+    1. Validates the uploaded image
+    2. Uploads to S3
+    3. Tries to match to comic_issues database
+    4. Queues to Match Review for human approval
+
+    Form fields are optional - if metadata not provided, user must fill in
+    Match Review screen.
+    """
+    from datetime import timedelta
+    from app.services.storage import StorageService
+    from app.models.match_review import MatchReviewQueue
+    from app.services.match_review_service import route_match
+
+    # Validate file type
+    ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type: {file.content_type}. Allowed: {list(ALLOWED_TYPES)}"
+        )
+
+    # Read file content
+    content = await file.read()
+
+    # Validate file size (max 10MB)
+    MAX_SIZE = 10 * 1024 * 1024
+    if len(content) > MAX_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Max size: {MAX_SIZE // (1024*1024)}MB"
+        )
+
+    # Generate file hash for deduplication
+    file_hash = hashlib.md5(content).hexdigest()
+
+    # Check if already in queue
+    existing = await db.execute(
+        select(MatchReviewQueue).where(
+            MatchReviewQueue.candidate_id == file_hash
+        )
+    )
+    existing_item = existing.scalar_one_or_none()
+    if existing_item:
+        return {
+            "success": True,
+            "message": "Image already in review queue",
+            "queue_id": existing_item.id,
+            "already_exists": True
+        }
+
+    # Upload to S3
+    storage = StorageService()
+    if not storage.is_configured():
+        raise HTTPException(
+            status_code=500,
+            detail="S3 storage not configured"
+        )
+
+    upload_result = await storage.upload_product_image(
+        content=content,
+        filename=file.filename or "cover.jpg",
+        content_type=file.content_type,
+        product_type="covers",
+    )
+
+    if not upload_result.success:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {upload_result.error}"
+        )
+
+    # Try to match to comic_issues if metadata provided
+    matched_issue_id = None
+    match_score = 0
+    match_method = "browser_upload"
+
+    if series and issue_number:
+        # Basic matching using series name and issue number
+        from app.models.comic_data import ComicIssue, ComicSeries
+
+        # Search for matching issues
+        series_pattern = f"%{series}%"
+        result = await db.execute(
+            select(ComicIssue)
+            .join(ComicSeries, ComicIssue.series_id == ComicSeries.id)
+            .where(
+                ComicSeries.name.ilike(series_pattern),
+                ComicIssue.number == issue_number
+            )
+            .limit(5)
+        )
+        issues = result.scalars().all()
+
+        if len(issues) == 1:
+            matched_issue_id = issues[0].id
+            match_score = 7
+            match_method = "series_issue_browser"
+        elif issues:
+            # Try to filter by publisher
+            for issue in issues:
+                if issue.publisher_name and publisher.lower() in issue.publisher_name.lower():
+                    matched_issue_id = issue.id
+                    match_score = 6
+                    match_method = "series_issue_publisher_browser"
+                    break
+            if not matched_issue_id:
+                matched_issue_id = issues[0].id
+                match_score = 5
+                match_method = "series_issue_ambiguous_browser"
+
+    # Build product name
+    product_name = series or "Unknown Comic"
+    if volume:
+        product_name += f" Vol. {volume}"
+    if issue_number:
+        product_name += f" #{issue_number}"
+    if variant_code:
+        product_name += f" ({variant_code} Variant)"
+    if cgc_grade:
+        product_name += f" CGC {cgc_grade}"
+
+    # Determine disposition
+    disposition = route_match(match_method, match_score, 1 if matched_issue_id else 0)
+
+    # Queue for Match Review
+    queue_item = MatchReviewQueue(
+        entity_type="cover_upload",
+        entity_id=0,  # No product yet - created on approval
+        candidate_source="browser_upload",
+        candidate_id=file_hash,
+        candidate_name=product_name,
+        candidate_data={
+            "s3_url": upload_result.url,
+            "s3_key": upload_result.key,
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "file_size": len(content),
+            "publisher": publisher,
+            "series": series,
+            "volume": volume,
+            "issue_number": issue_number,
+            "variant_code": variant_code,
+            "cgc_grade": cgc_grade,
+            "matched_issue_id": matched_issue_id,
+            "product_template": {
+                "name": product_name,
+                "category": "comics",
+                "subcategory": publisher or "Unknown",
+                "publisher": publisher,
+                "issue_number": issue_number,
+                "cgc_grade": cgc_grade,
+                "is_graded": cgc_grade is not None,
+                "stock": 1,
+            }
+        },
+        match_method=match_method,
+        match_score=match_score,
+        match_details={
+            "matched_issue_id": matched_issue_id,
+            "disposition": disposition.value,
+            "uploaded_by": current_user.id,
+        },
+        status="pending",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30)
+    )
+
+    db.add(queue_item)
+    await db.commit()
+    await db.refresh(queue_item)
+
+    logger.info(
+        f"Browser upload queued: {file.filename} -> Queue #{queue_item.id} "
+        f"(match_score={match_score}, s3_url={upload_result.url})"
+    )
+
+    return {
+        "success": True,
+        "message": "Cover uploaded and queued for review",
+        "queue_id": queue_item.id,
+        "s3_url": upload_result.url,
+        "match_score": match_score,
+        "match_method": match_method,
+        "matched_issue_id": matched_issue_id,
+        "disposition": disposition.value,
+        "already_exists": False
+    }
+
+
+@router.post("/cover-ingestion/update/{queue_id}")
+async def update_cover_for_queue_item(
+    queue_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Replace the cover image for an existing Match Review queue item.
+
+    Use this to fix incorrect images before approval.
+    """
+    from app.services.storage import StorageService
+    from app.models.match_review import MatchReviewQueue
+
+    # Get existing queue item
+    queue_item = await db.get(MatchReviewQueue, queue_id)
+    if not queue_item:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+
+    if queue_item.status != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot update cover for item with status: {queue_item.status}"
+        )
+
+    # Validate file type
+    ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type: {file.content_type}"
+        )
+
+    # Read and validate file
+    content = await file.read()
+    MAX_SIZE = 10 * 1024 * 1024
+    if len(content) > MAX_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Max size: {MAX_SIZE // (1024*1024)}MB"
+        )
+
+    # Upload new cover to S3
+    storage = StorageService()
+    if not storage.is_configured():
+        raise HTTPException(
+            status_code=500,
+            detail="S3 storage not configured"
+        )
+
+    upload_result = await storage.upload_product_image(
+        content=content,
+        filename=file.filename or "cover.jpg",
+        content_type=file.content_type,
+        product_type="covers",
+    )
+
+    if not upload_result.success:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {upload_result.error}"
+        )
+
+    # Delete old S3 file if exists
+    old_key = queue_item.candidate_data.get("s3_key") if queue_item.candidate_data else None
+    if old_key:
+        try:
+            await storage.delete_object(old_key)
+        except Exception as e:
+            logger.warning(f"Failed to delete old cover: {e}")
+
+    # Update queue item with new cover
+    new_hash = hashlib.md5(content).hexdigest()
+    candidate_data = queue_item.candidate_data or {}
+    candidate_data.update({
+        "s3_url": upload_result.url,
+        "s3_key": upload_result.key,
+        "filename": file.filename,
+        "content_type": file.content_type,
+        "file_size": len(content),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": current_user.id,
+    })
+
+    queue_item.candidate_data = candidate_data
+    queue_item.candidate_id = new_hash  # Update dedup hash
+
+    await db.commit()
+
+    logger.info(f"Cover updated for queue item #{queue_id}: {upload_result.url}")
+
+    return {
+        "success": True,
+        "message": "Cover image updated",
+        "queue_id": queue_id,
+        "s3_url": upload_result.url,
     }

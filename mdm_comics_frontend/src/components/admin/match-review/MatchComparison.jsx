@@ -10,6 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
+import { adminAPI } from '../../../services/adminApi';
 
 const MatchComparison = ({
   match,
@@ -150,6 +151,7 @@ const MatchComparison = ({
               <div className="bg-zinc-800 rounded-lg overflow-hidden flex-1 flex items-center justify-center min-h-[400px]">
                 {!coverError ? (
                   <img
+                    id="cover-image"
                     src={coverUrl}
                     alt={`Cover for ${entity.name}`}
                     className="max-w-full max-h-[500px] object-contain"
@@ -163,6 +165,40 @@ const MatchComparison = ({
                     <p>No cover image available</p>
                   </div>
                 )}
+              </div>
+
+              {/* Replace Cover Button */}
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  type="file"
+                  id="cover-replace"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const result = await adminAPI.updateCover(match.id, file);
+                      if (result.success) {
+                        setCoverError(false);
+                        // Force reload the image by adding cache buster
+                        const newUrl = result.s3_url + '?t=' + Date.now();
+                        document.querySelector('#cover-image')?.setAttribute('src', newUrl);
+                      }
+                    } catch (err) {
+                      console.error('Cover update failed:', err);
+                      alert('Failed to update cover: ' + err.message);
+                    }
+                    e.target.value = '';
+                  }}
+                />
+                <label
+                  htmlFor="cover-replace"
+                  className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-sm rounded-lg cursor-pointer transition-colors"
+                >
+                  Replace Cover
+                </label>
+                <span className="text-xs text-zinc-500">Upload new image</span>
               </div>
 
               {/* Metadata below image */}

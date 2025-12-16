@@ -15,7 +15,7 @@ import React, { useState, useCallback } from 'react';
 import {
   FolderOpen, Search, Upload, Loader2, CheckCircle, XCircle,
   AlertTriangle, Image, Package, RefreshCw, ChevronDown, ChevronRight,
-  Clock, CheckSquare, XSquare
+  Clock, CheckSquare, XSquare, FileUp
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 
@@ -113,6 +113,222 @@ function PreviewItem({ item, expanded, onToggle }) {
           <p className="mt-2 text-xs text-zinc-600 break-all">{item.file_path}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * BrowserUploadSection - Upload covers directly from browser
+ * v1.22.0: Added browser file upload
+ */
+function BrowserUploadSection({ onError, onSuccess }) {
+  const [selectedFile, setSelectedFile] = React.useState(null);
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadResult, setUploadResult] = React.useState(null);
+  const [metadata, setMetadata] = React.useState({
+    publisher: '',
+    series: '',
+    volume: '',
+    issue_number: '',
+    variant_code: '',
+    cgc_grade: '',
+  });
+  const fileInputRef = React.useRef(null);
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        onError('Please select an image file (JPEG, PNG, or WebP)');
+        return;
+      }
+      setSelectedFile(file);
+      setUploadResult(null);
+    }
+  };
+
+  const handleMetadataChange = (field, value) => {
+    setMetadata(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      onError('Please select a file first');
+      return;
+    }
+
+    setUploading(true);
+    setUploadResult(null);
+
+    try {
+      const result = await adminAPI.uploadCover(selectedFile, metadata);
+      setUploadResult(result);
+
+      if (result.success && !result.already_exists) {
+        // Reset form
+        setSelectedFile(null);
+        setMetadata({
+          publisher: '',
+          series: '',
+          volume: '',
+          issue_number: '',
+          variant_code: '',
+          cgc_grade: '',
+        });
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+        onSuccess?.();
+      }
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+      <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <FileUp className="w-5 h-5 text-orange-400" />
+        Browser Upload
+      </h3>
+
+      <div className="space-y-4">
+        {/* File Input */}
+        <div>
+          <label className="block text-sm text-zinc-400 mb-2">Select Cover Image</label>
+          <div className="flex gap-3">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleFileSelect}
+              className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-orange-500 file:text-white file:cursor-pointer hover:file:bg-orange-600"
+            />
+          </div>
+          {selectedFile && (
+            <p className="text-xs text-zinc-500 mt-1">
+              Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+            </p>
+          )}
+        </div>
+
+        {/* Optional Metadata Fields */}
+        <div className="bg-zinc-800/50 rounded-lg p-4 border border-zinc-700">
+          <p className="text-sm text-zinc-300 mb-3">
+            <strong>Optional Metadata</strong> - Fill in what you know to improve matching
+          </p>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Publisher</label>
+              <input
+                type="text"
+                value={metadata.publisher}
+                onChange={(e) => handleMetadataChange('publisher', e.target.value)}
+                placeholder="e.g. Marvel"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Series</label>
+              <input
+                type="text"
+                value={metadata.series}
+                onChange={(e) => handleMetadataChange('series', e.target.value)}
+                placeholder="e.g. Spider-Man"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Volume</label>
+              <input
+                type="number"
+                value={metadata.volume}
+                onChange={(e) => handleMetadataChange('volume', e.target.value)}
+                placeholder="e.g. 3"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Issue #</label>
+              <input
+                type="text"
+                value={metadata.issue_number}
+                onChange={(e) => handleMetadataChange('issue_number', e.target.value)}
+                placeholder="e.g. 300"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Variant</label>
+              <input
+                type="text"
+                value={metadata.variant_code}
+                onChange={(e) => handleMetadataChange('variant_code', e.target.value)}
+                placeholder="e.g. A"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">CGC Grade</label>
+              <input
+                type="number"
+                step="0.5"
+                min="0.5"
+                max="10"
+                value={metadata.cgc_grade}
+                onChange={(e) => handleMetadataChange('cgc_grade', e.target.value)}
+                placeholder="e.g. 9.8"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Upload Button */}
+        <button
+          onClick={handleUpload}
+          disabled={!selectedFile || uploading}
+          className="flex items-center gap-2 px-5 py-2.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 disabled:text-orange-200 rounded-lg text-white font-medium transition-colors"
+        >
+          {uploading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Upload className="w-4 h-4" />
+          )}
+          Upload and Queue for Review
+        </button>
+
+        {/* Upload Result */}
+        {uploadResult && (
+          <div className={uploadResult.already_exists
+            ? "bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4"
+            : "bg-green-500/10 border border-green-500/30 rounded-lg p-4"
+          }>
+            <div className="flex items-center gap-2 mb-2">
+              {uploadResult.already_exists ? (
+                <AlertTriangle className="w-5 h-5 text-yellow-400" />
+              ) : (
+                <CheckCircle className="w-5 h-5 text-green-400" />
+              )}
+              <span className={uploadResult.already_exists ? "text-yellow-400 font-medium" : "text-green-400 font-medium"}>
+                {uploadResult.message}
+              </span>
+            </div>
+            <div className="text-sm text-zinc-400 space-y-1">
+              <p>Queue ID: #{uploadResult.queue_id}</p>
+              {uploadResult.match_score > 0 && (
+                <p>Match Score: <span className={getScoreColor(uploadResult.match_score)}>{uploadResult.match_score}/10</span></p>
+              )}
+              {uploadResult.disposition && (
+                <p>Disposition: {uploadResult.disposition}</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -377,6 +593,9 @@ export default function CoverIngestion() {
           </div>
         </div>
       </div>
+
+      {/* Browser Upload Section */}
+      <BrowserUploadSection onError={setError} onSuccess={loadStats} />
 
       {/* Error Display */}
       {error && (
