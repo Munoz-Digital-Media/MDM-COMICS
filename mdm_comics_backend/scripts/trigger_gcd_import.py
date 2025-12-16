@@ -6,6 +6,15 @@ Authenticates and triggers the GCD import job on Railway.
 Usage:
     python scripts/trigger_gcd_import.py [--env development|production] [--status]
 """
+# DEPRECATED - See _deprecated.py for migration instructions
+from scripts._deprecated import deprecated_script
+deprecated_script(
+    script_name="trigger_gcd_import.py",
+    replacement="python scripts/mdm_admin.py gcd import",
+    reason="Use unified MDM Admin CLI"
+)
+
+
 import argparse
 import getpass
 import os

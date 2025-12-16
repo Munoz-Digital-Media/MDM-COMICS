@@ -7,6 +7,15 @@ Usage:
     $env:MDM_ADMIN_PASSWORD='password'; python scripts/trigger_mse.py --max-records 100
     python scripts/trigger_mse.py --status
 """
+# DEPRECATED - See _deprecated.py for migration instructions
+from scripts._deprecated import deprecated_script
+deprecated_script(
+    script_name="trigger_mse.py",
+    replacement="python scripts/mdm_admin.py mse run",
+    reason="Use unified MDM Admin CLI"
+)
+
+
 import argparse
 import getpass
 import os

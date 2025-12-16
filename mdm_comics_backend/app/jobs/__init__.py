@@ -1,6 +1,7 @@
 """
 Jobs Package
 
+v1.23.0: Data Ingestion Jobs - Unified bulk data import
 v1.6.0: Data Acquisition Pipeline - Automated enrichment jobs
 v1.5.0: Outreach System - Background job definitions for ARQ
 """
@@ -28,6 +29,12 @@ from app.jobs.pipeline_scheduler import (
     run_dlq_retry_job,
     run_daily_snapshot_job,  # v1.7.0
 )
+# Data Ingestion Jobs v1.23.0
+from app.jobs.data_ingestion import (
+    run_csv_ingestion_job,
+    run_json_ingestion_job,
+    run_cover_folder_ingestion_job,
+)
 
 __all__ = [
     "generate_weekly_newsletter",
@@ -45,4 +52,8 @@ __all__ = [
     "run_dlq_retry_job",
     # Price Snapshots for AI Intelligence v1.7.0
     "run_daily_snapshot_job",
+    # Data Ingestion Jobs v1.23.0
+    "run_csv_ingestion_job",
+    "run_json_ingestion_job",
+    "run_cover_folder_ingestion_job",
 ]

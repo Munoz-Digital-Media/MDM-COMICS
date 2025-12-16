@@ -20,6 +20,15 @@ Environment variables (or .env file):
     API_URL - Backend API URL (default: https://mdm-comics-backend-development.up.railway.app)
     API_TOKEN - JWT token for authentication
 """
+# DEPRECATED - See _deprecated.py for migration instructions
+from scripts._deprecated import deprecated_script
+deprecated_script(
+    script_name="upload_covers.py",
+    replacement="python scripts/mdm_admin.py covers ingest --folder /path",
+    reason="Use CoverIngestionService"
+)
+
+
 
 import argparse
 import hashlib

@@ -2756,3 +2756,183 @@ async def update_cover_for_queue_item(
         "queue_id": queue_id,
         "s3_url": upload_result.url,
     }
+
+
+# =============================================================================
+# DATA INGESTION API v1.23.0
+# =============================================================================
+
+
+class DataIngestionRequest(BaseModel):
+    """Request to trigger a data ingestion job."""
+    source: str = Field(..., description="Data source identifier (e.g., pricecharting, gcd)")
+    file_path: str = Field(..., description="Path to data file")
+    table_name: str = Field(..., description="Target database table")
+    format: str = Field(default="csv", pattern="^(csv|json)$", description="File format")
+    options: Optional[dict] = Field(default=None, description="Ingestion options")
+
+
+@router.post("/ingest-data")
+async def trigger_data_ingestion(
+    request: DataIngestionRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Trigger a data ingestion job.
+
+    This endpoint queues a background job to ingest data from the specified
+    file into the database using bulk operations.
+
+    The job runs asynchronously - check pipeline checkpoints for status.
+
+    Per constitution_db.json:
+    - Data ingestion via services, not standalone scripts
+    - No schema modifications (data only)
+    """
+    import asyncio
+    import os
+
+    # Validate file exists
+    if not os.path.exists(request.file_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File not found: {request.file_path}"
+        )
+
+    # Parse options
+    options = request.options or {}
+    batch_size = options.get("batch_size", 1000)
+    skip_existing = options.get("skip_existing", True)
+    update_existing = options.get("update_existing", False)
+    dry_run = options.get("dry_run", False)
+
+    logger.info(
+        f"Data ingestion triggered by admin {current_user.id}: "
+        f"source={request.source}, file={request.file_path}, table={request.table_name}"
+    )
+
+    if dry_run:
+        # For dry run, execute synchronously and return preview
+        from app.services.data_ingestion import DataIngestionService, IngestionOptions
+
+        service = DataIngestionService(db)
+        ing_options = IngestionOptions(
+            batch_size=batch_size,
+            skip_existing=skip_existing,
+            update_existing=update_existing,
+            dry_run=True,
+        )
+
+        if request.format == "csv":
+            stats = await service.ingest_csv(
+                source=request.source,
+                file_path=request.file_path,
+                table_name=request.table_name,
+                options=ing_options,
+            )
+        else:
+            stats = await service.ingest_json(
+                source=request.source,
+                file_path=request.file_path,
+                table_name=request.table_name,
+                options=ing_options,
+            )
+
+        return {
+            "status": "dry_run_complete",
+            "message": "Dry run completed - no data was inserted",
+            "stats": stats.to_dict(),
+        }
+
+    # For real ingestion, run in background
+    if request.format == "csv":
+        from app.jobs.data_ingestion import run_csv_ingestion_job
+
+        async def run_job():
+            try:
+                await run_csv_ingestion_job(
+                    ctx={},
+                    source=request.source,
+                    file_path=request.file_path,
+                    table_name=request.table_name,
+                    batch_size=batch_size,
+                    skip_existing=skip_existing,
+                    update_existing=update_existing,
+                )
+            except Exception as e:
+                logger.error(f"CSV ingestion job failed: {e}")
+    else:
+        from app.jobs.data_ingestion import run_json_ingestion_job
+
+        async def run_job():
+            try:
+                await run_json_ingestion_job(
+                    ctx={},
+                    source=request.source,
+                    file_path=request.file_path,
+                    table_name=request.table_name,
+                    batch_size=batch_size,
+                    skip_existing=skip_existing,
+                    update_existing=update_existing,
+                )
+            except Exception as e:
+                logger.error(f"JSON ingestion job failed: {e}")
+
+    # Track background tasks
+    if not hasattr(trigger_data_ingestion, '_tasks'):
+        trigger_data_ingestion._tasks = set()
+
+    # Clean up completed tasks
+    trigger_data_ingestion._tasks = {t for t in trigger_data_ingestion._tasks if not t.done()}
+
+    # Start background job
+    task = asyncio.create_task(run_job())
+    trigger_data_ingestion._tasks.add(task)
+
+    return {
+        "status": "started",
+        "message": f"Data ingestion job started for {request.source}",
+        "source": request.source,
+        "file": request.file_path,
+        "table": request.table_name,
+        "check_status": f"/api/admin/pipeline/checkpoints",
+    }
+
+
+@router.get("/ingest-data/status/{source}")
+async def get_ingestion_status(
+    source: str,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get status of a data ingestion job."""
+    job_name = f"csv_ingest_{source}"
+
+    result = await db.execute(text("""
+        SELECT
+            job_name, is_running, total_processed, total_updated, total_errors,
+            last_error, last_run_started, last_run_completed, updated_at
+        FROM pipeline_checkpoints
+        WHERE job_name = :job_name OR job_name = :json_job_name
+    """), {"job_name": job_name, "json_job_name": f"json_ingest_{source}"})
+
+    row = result.fetchone()
+
+    if not row:
+        return {
+            "status": "not_found",
+            "message": f"No ingestion job found for source: {source}",
+        }
+
+    return {
+        "job_name": row.job_name,
+        "is_running": row.is_running,
+        "total_processed": row.total_processed or 0,
+        "total_updated": row.total_updated or 0,
+        "total_errors": row.total_errors or 0,
+        "last_error": row.last_error,
+        "last_run_started": row.last_run_started.isoformat() if row.last_run_started else None,
+        "last_run_completed": row.last_run_completed.isoformat() if row.last_run_completed else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
