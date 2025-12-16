@@ -129,8 +129,7 @@ if __name__ == "__main__":
         stats = await release_expired_reservations()
         print(f"Cleanup complete: {stats}")
 
-        print("
-Current reservation stats:")
+        print("Current reservation stats:")
         reservation_stats = await get_reservation_stats()
         print(f"  Total: {reservation_stats['total_reservations']}")
         print(f"  Active: {reservation_stats['active_reservations']}")
