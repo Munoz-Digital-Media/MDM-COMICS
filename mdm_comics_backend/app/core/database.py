@@ -43,6 +43,9 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
 )
 
+# Alias for backward compatibility with services using alternate naming
+async_session_maker = AsyncSessionLocal
+
 Base = declarative_base()
 
 
