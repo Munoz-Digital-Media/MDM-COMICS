@@ -179,6 +179,16 @@ async def replay_preflight():
     )
 
 
+def _safe_int(value: Optional[str], default: int = 0) -> int:
+    """Safely parse integer from header value."""
+    if not value:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
 @router.post("/beacon/replay", status_code=status.HTTP_202_ACCEPTED)
 async def ingest_replay(
     request: Request,
@@ -192,12 +202,12 @@ async def ingest_replay(
     """
     service = get_analytics_ingest_service()
 
-    # Get metadata from headers
+    # Get metadata from headers - use safe parsing for integers
     session_id = request.headers.get("X-Session-ID")
-    chunk_index = int(request.headers.get("X-Chunk-Index", 0))
-    event_count = int(request.headers.get("X-Event-Count", 0))
-    start_ts = int(request.headers.get("X-Start-Timestamp", 0))
-    end_ts = int(request.headers.get("X-End-Timestamp", 0))
+    chunk_index = _safe_int(request.headers.get("X-Chunk-Index"), 0)
+    event_count = _safe_int(request.headers.get("X-Event-Count"), 0)
+    start_ts = _safe_int(request.headers.get("X-Start-Timestamp"), 0)
+    end_ts = _safe_int(request.headers.get("X-End-Timestamp"), 0)
     is_compressed = request.headers.get("Content-Encoding") == "gzip"
     has_errors = request.headers.get("X-Has-Errors", "false").lower() == "true"
 
