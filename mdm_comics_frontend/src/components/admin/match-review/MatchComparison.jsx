@@ -35,9 +35,8 @@ const MatchComparison = ({
 
   const { entity, candidate, match_method, match_score } = match;
 
-  // Construct cover URL using the backend cover endpoint
-  // This handles both S3 redirects and local file serving
-  const coverUrl = `/api/admin/match-queue/cover/${match.id}`;
+  // Use direct S3 URL from entity, with backend endpoint as fallback
+  const coverUrl = entity.cover_image_url || `/api/admin/match-queue/cover/${match.id}`;
 
   // Reset cover error state when match changes
   useEffect(() => {
