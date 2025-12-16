@@ -1,9 +1,9 @@
 /**
  * CoverIngestion - Admin UI for ingesting local cover images
- * v1.21.0: Cover Ingestion Pipeline
+ * v1.22.0: Added Browser Upload section for direct file uploads
  *
  * Workflow:
- * 1. Enter folder path
+ * 1. Enter folder path OR upload from browser
  * 2. Preview (shows what will be queued)
  * 3. Ingest (queues to Match Review for human approval)
  * 4. Review in Match Review screen
