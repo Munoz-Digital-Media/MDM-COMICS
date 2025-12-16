@@ -29,6 +29,7 @@ from app.schemas.match_review import (
     EntitySummary, CandidateSummary
 )
 from app.services.match_review_service import MatchReviewService
+from app.services.storage import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ async def get_cover_image(
 
     Handles both S3-hosted images and local files:
     - If s3_url exists: redirect to S3
+    - If s3_key exists: construct URL from key
     - If local file_path exists: serve file directly
     """
     match = await db.get(MatchReviewQueue, match_id)
@@ -133,7 +135,20 @@ async def get_cover_image(
     # Check for S3 URL first
     s3_url = candidate_data.get('s3_url')
     if s3_url:
+        logger.debug(f"Redirecting to s3_url for match {match_id}")
         return RedirectResponse(url=s3_url)
+
+    # Check for S3 key - construct URL if storage is configured
+    s3_key = candidate_data.get('s3_key')
+    if s3_key:
+        try:
+            storage = StorageService()
+            if storage.is_configured():
+                constructed_url = storage.get_public_url(s3_key)
+                logger.debug(f"Constructed S3 URL from key for match {match_id}: {constructed_url}")
+                return RedirectResponse(url=constructed_url)
+        except Exception as e:
+            logger.warning(f"Failed to construct S3 URL from key: {e}")
 
     # Check for local file path
     file_path = candidate_data.get('file_path')
@@ -154,6 +169,13 @@ async def get_cover_image(
             media_type=content_type,
             filename=Path(file_path).name
         )
+
+    # Log what we have for debugging
+    logger.warning(
+        f"Cover not found for match {match_id}: "
+        f"s3_url={s3_url is not None}, s3_key={s3_key is not None}, "
+        f"file_path={file_path}, file_exists={file_path and os.path.exists(file_path) if file_path else False}"
+    )
 
     raise HTTPException(status_code=404, detail="Cover image not found")
 

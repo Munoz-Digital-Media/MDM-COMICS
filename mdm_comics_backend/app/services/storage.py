@@ -93,6 +93,10 @@ class StorageService:
             # Standard AWS S3
             return f"https://{self._bucket}.s3.{self._region}.amazonaws.com/{key}"
 
+    def get_public_url(self, key: str) -> str:
+        """Get public URL for an S3 key (public wrapper for _get_public_url)."""
+        return self._get_public_url(key)
+
     def _generate_key(self, folder: str, filename: str, content: bytes) -> str:
         """Generate unique key for uploaded file."""
         # Hash content for uniqueness
