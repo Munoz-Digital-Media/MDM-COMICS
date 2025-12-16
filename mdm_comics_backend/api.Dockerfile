@@ -24,4 +24,4 @@ ENV PYTHONPATH=/app
 ENV PORT=8000
 EXPOSE 8000
 
-CMD ["python", "scripts/start_api.py"]
+CMD ["python", "scripts/startup.py"]

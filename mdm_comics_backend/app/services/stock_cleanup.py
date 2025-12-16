@@ -40,7 +40,7 @@ async def release_expired_reservations() -> dict:
     atomic_cleanup_sql = text("""
         WITH expired AS (
             SELECT id, product_id, quantity
-            FROM stock_reservation
+            FROM stock_reservations
             WHERE expires_at < NOW() AT TIME ZONE 'UTC'
             FOR UPDATE SKIP LOCKED
         ),
@@ -50,14 +50,14 @@ async def release_expired_reservations() -> dict:
             GROUP BY product_id
         ),
         updated_products AS (
-            UPDATE product
-            SET stock = product.stock + agg_expired.total_quantity
+            UPDATE products
+            SET stock = products.stock + agg_expired.total_quantity
             FROM agg_expired
-            WHERE product.id = agg_expired.product_id
-            RETURNING product.id
+            WHERE products.id = agg_expired.product_id
+            RETURNING products.id
         ),
         deleted_reservations AS (
-            DELETE FROM stock_reservation
+            DELETE FROM stock_reservations
             WHERE id IN (SELECT id FROM expired)
             RETURNING 1
         )
@@ -89,7 +89,6 @@ async def release_expired_reservations() -> dict:
         except Exception as e:
             logger.error(f"Error in atomic stock cleanup: {e}", exc_info=True)
             stats["errors"] += 1
-            # The transaction is automatically rolled back by the async with db.begin() context manager
 
     return stats
 
@@ -130,7 +129,8 @@ if __name__ == "__main__":
         stats = await release_expired_reservations()
         print(f"Cleanup complete: {stats}")
 
-        print("\nCurrent reservation stats:")
+        print("
+Current reservation stats:")
         reservation_stats = await get_reservation_stats()
         print(f"  Total: {reservation_stats['total_reservations']}")
         print(f"  Active: {reservation_stats['active_reservations']}")
