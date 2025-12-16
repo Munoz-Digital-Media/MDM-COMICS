@@ -2,7 +2,10 @@
  * Admin API - Product Management
  *
  * P1-5: Updated for cookie-based auth with CSRF protection
+ * Cross-origin: Uses stored token for Authorization header when cookies don't work
  */
+
+import { getStoredToken, clearStoredToken } from './api';
 
 // HIGH-004 FIX: Changed default port from 8080 to 8000 (backend runs on 8000)
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
@@ -29,6 +32,7 @@ function getCsrfToken() {
 
 /**
  * P1-5: Updated fetch wrapper with cookie auth and CSRF
+ * Cross-origin: Also uses stored token for Authorization header
  */
 async function fetchAPI(endpoint, options = {}) {
   const url = API_BASE + endpoint;
@@ -38,6 +42,14 @@ async function fetchAPI(endpoint, options = {}) {
     'Content-Type': 'application/json',
     ...options.headers,
   };
+
+  // Cross-origin auth: Add Authorization header if token is stored and not already provided
+  if (!headers.Authorization) {
+    const storedToken = getStoredToken();
+    if (storedToken) {
+      headers.Authorization = 'Bearer ' + storedToken;
+    }
+  }
 
   // P1-5: Add CSRF token for mutations
   if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
@@ -55,6 +67,10 @@ async function fetchAPI(endpoint, options = {}) {
   });
 
   if (!response.ok) {
+    // Clear stored token on auth failure
+    if (response.status === 401) {
+      clearStoredToken();
+    }
     const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || 'API Error: ' + response.status);
   }
@@ -117,9 +133,14 @@ export const adminAPI = {
     const url = API_BASE + '/comics/search-by-image';
 
     const headers = {};
-    // Legacy support
+    // Legacy support or use stored token
     if (token) {
       headers['Authorization'] = 'Bearer ' + token;
+    } else {
+      const storedToken = getStoredToken();
+      if (storedToken) {
+        headers['Authorization'] = 'Bearer ' + storedToken;
+      }
     }
 
     // P1-5: Add CSRF token for mutations
@@ -325,6 +346,13 @@ export const adminAPI = {
 
     const url = API_BASE + '/admin/assets/upload';
     const headers = {};
+
+    // Cross-origin auth
+    const storedToken = getStoredToken();
+    if (storedToken) {
+      headers['Authorization'] = 'Bearer ' + storedToken;
+    }
+
     const csrfToken = getCsrfToken();
     if (csrfToken) {
       headers['X-CSRF-Token'] = csrfToken;
@@ -637,6 +665,13 @@ export const adminAPI = {
 
     const url = API_BASE + '/admin/cover-ingestion/upload';
     const headers = {};
+
+    // Cross-origin auth
+    const storedToken = getStoredToken();
+    if (storedToken) {
+      headers['Authorization'] = 'Bearer ' + storedToken;
+    }
+
     const csrfToken = getCsrfToken();
     if (csrfToken) {
       headers['X-CSRF-Token'] = csrfToken;
@@ -664,6 +699,13 @@ export const adminAPI = {
 
     const url = API_BASE + '/admin/cover-ingestion/update/' + queueId;
     const headers = {};
+
+    // Cross-origin auth
+    const storedToken = getStoredToken();
+    if (storedToken) {
+      headers['Authorization'] = 'Bearer ' + storedToken;
+    }
+
     const csrfToken = getCsrfToken();
     if (csrfToken) {
       headers['X-CSRF-Token'] = csrfToken;
