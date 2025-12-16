@@ -116,10 +116,13 @@ async def get_queue_stats(
 async def get_cover_image(
     match_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin)
 ):
     """
     Serve cover image for a match review item.
+
+    NOTE: This endpoint is intentionally unauthenticated because browsers
+    load <img src="..."> without sending Authorization headers. The images
+    themselves are non-sensitive cover art.
 
     Handles both S3-hosted images and local files:
     - If s3_url exists: redirect to S3

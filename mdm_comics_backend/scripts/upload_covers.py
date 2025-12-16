@@ -262,27 +262,83 @@ class CoverParser:
             file_hash=file_hash
         )
 
+    def _normalize_filename(self, filename: str) -> str:
+        """
+        Normalize filename by converting dashes to spaces.
+
+        Examples:
+            Batman---LotDK-Jazz-v1-1-BACK.jpg -> Batman LotDK Jazz v1 1 BACK.jpg
+            Batman-TMNT-v1-1-FRONT.jpg -> Batman TMNT v1 1 FRONT.jpg
+        """
+        # Get name without extension
+        name, ext = os.path.splitext(filename)
+        # Replace multiple dashes with single space, then single dashes with space
+        normalized = re.sub(r'-+', ' ', name)
+        # Clean up multiple spaces
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        return normalized + ext
+
     def _parse_filename_only(self, file_path: str) -> Optional[CoverMetadata]:
         """Fallback: parse just the filename."""
-        filename = os.path.basename(file_path)
+        original_filename = os.path.basename(file_path)
 
-        # Try to extract basic info from filename
-        # Pattern: "publisher series v1 1a FRONT.jpg"
-        pattern = re.compile(
-            r'^(?P<prefix>.+?)\s+'
-            r'v(?P<vol>\d+)\s+'
-            r'(?P<issue>\d+(?:\.\d+)?)'
-            r'(?P<variant>[a-zA-Z]{1,3})?'
-            r'(?:\s+(?P<extra>.+?))?'
-            r'\.(?P<ext>jpe?g|png|webp)$',
-            re.IGNORECASE
-        )
+        # Normalize dashes to spaces for parsing
+        filename = self._normalize_filename(original_filename)
 
-        match = pattern.match(filename)
-        if not match:
+        # Try multiple patterns for different filename formats
+        patterns = [
+            # Pattern 1: "publisher series v1 1a FRONT.jpg" (standard)
+            re.compile(
+                r'^(?P<prefix>.+?)\s+'
+                r'v(?P<vol>\d+)\s+'
+                r'(?P<issue>\d+(?:\.\d+)?)'
+                r'(?P<variant>[a-zA-Z]{1,3})?'
+                r'(?:\s+(?P<extra>.+?))?'
+                r'\.(?P<ext>jpe?g|png|webp)$',
+                re.IGNORECASE
+            ),
+            # Pattern 2: "publisher series vol 1 1a FRONT.jpg" (full volume)
+            re.compile(
+                r'^(?P<prefix>.+?)\s+'
+                r'vol\s*(?P<vol>\d+)\s+'
+                r'(?P<issue>\d+(?:\.\d+)?)'
+                r'(?P<variant>[a-zA-Z]{1,3})?'
+                r'(?:\s+(?P<extra>.+?))?'
+                r'\.(?P<ext>jpe?g|png|webp)$',
+                re.IGNORECASE
+            ),
+            # Pattern 3: "publisher series 1a FRONT.jpg" (no volume, assume v1)
+            re.compile(
+                r'^(?P<prefix>.+?)\s+'
+                r'(?P<issue>\d+(?:\.\d+)?)'
+                r'(?P<variant>[a-zA-Z]{1,3})?'
+                r'(?:\s+(?P<extra>.+?))?'
+                r'\.(?P<ext>jpe?g|png|webp)$',
+                re.IGNORECASE
+            ),
+            # Pattern 4: "series #1 - extra.png" or "series #1 extra.png" (hash issue format)
+            re.compile(
+                r'^(?P<prefix>.+?)\s*'
+                r'#(?P<issue>\d+(?:\.\d+)?)'
+                r'(?:\s*[-\s]\s*(?P<extra>.+?))?'
+                r'\.(?P<ext>jpe?g|png|webp)$',
+                re.IGNORECASE
+            ),
+        ]
+
+        groups = None
+        for pattern in patterns:
+            match = pattern.match(filename)
+            if match:
+                groups = match.groupdict()
+                # Set default volume if not captured
+                if 'vol' not in groups or groups.get('vol') is None:
+                    groups['vol'] = '1'
+                break
+
+        if not groups:
             return None
 
-        groups = match.groupdict()
         prefix = groups['prefix']
 
         # Try to split prefix into publisher and series
@@ -314,7 +370,7 @@ class CoverParser:
             variant_code=variant.upper() if variant else None,
             cover_type=cover_type,
             cgc_grade=cgc_grade,
-            filename=filename,
+            filename=original_filename,  # Keep original filename for reference
             full_path=file_path,
             file_hash=self._calculate_hash(file_path)
         )
