@@ -649,7 +649,7 @@ export const adminAPI = {
       credentials: 'include',
     });
 
-    if (\!response.ok) {
+    if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.detail || 'Upload failed');
     }
@@ -676,7 +676,7 @@ export const adminAPI = {
       credentials: 'include',
     });
 
-    if (\!response.ok) {
+    if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.detail || 'Update failed');
     }
