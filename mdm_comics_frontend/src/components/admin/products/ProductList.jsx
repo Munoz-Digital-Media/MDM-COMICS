@@ -329,7 +329,7 @@ export default function ProductList() {
           onChange={(e) => { setCategory(e.target.value); setOffset(0); }}
           className="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-300 focus:outline-none focus:border-orange-500"
         >
-          <option value="">All Categories</option>
+          <option value="">Show All Products</option>
           <option value="comics">Comics</option>
           <option value="funko">Funko</option>
           <option value="supplies">Supplies</option>
