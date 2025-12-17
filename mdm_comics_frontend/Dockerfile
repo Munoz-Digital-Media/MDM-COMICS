@@ -6,17 +6,16 @@ WORKDIR /app
 # Vite env vars must be available at build time
 # Force HTTPS to prevent mixed content errors in production
 ARG VITE_API_URL
-RUN if [ -n "$VITE_API_URL" ]; then \
-      export VITE_API_URL=$(echo "$VITE_API_URL" | sed 's|^http://|https://|'); \
-    fi && echo "VITE_API_URL=$VITE_API_URL"
-ENV VITE_API_URL=$VITE_API_URL
+ARG VITE_MIDDLEWARE_URL
 
 COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-# Ensure HTTPS at build time
-RUN VITE_API_URL=$(echo "$VITE_API_URL" | sed 's|^http://|https://|') npm run build
+# Ensure HTTPS at build time for all service URLs
+RUN VITE_API_URL=$(echo "$VITE_API_URL" | sed 's|^http://|https://|') \
+    VITE_MIDDLEWARE_URL=$(echo "$VITE_MIDDLEWARE_URL" | sed 's|^http://|https://|') \
+    npm run build
 
 FROM node:20-alpine
 
