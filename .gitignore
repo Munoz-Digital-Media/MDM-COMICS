@@ -71,3 +71,4 @@ assets/
 
 # Claude Code (local settings, conversation history)
 .claude/
+nul
