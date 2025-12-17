@@ -1,3 +1,4 @@
+# MDM Comics API Server
 FROM python:3.12-slim
 
 WORKDIR /app
