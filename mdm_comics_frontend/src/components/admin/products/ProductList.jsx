@@ -332,6 +332,7 @@ export default function ProductList() {
           <option value="">All Categories</option>
           <option value="comics">Comics</option>
           <option value="funko">Funko</option>
+          <option value="supplies">Supplies</option>
         </select>
 
         <label className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg cursor-pointer">

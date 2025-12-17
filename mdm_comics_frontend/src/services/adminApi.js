@@ -8,7 +8,11 @@
 import { getStoredToken, clearStoredToken } from './api';
 
 // HIGH-004 FIX: Changed default port from 8080 to 8000 (backend runs on 8000)
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+// Ensure HTTPS in production to prevent mixed content errors
+let API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+if (typeof window !== 'undefined' && window.location.protocol === 'https:' && API_BASE.startsWith('http://')) {
+  API_BASE = API_BASE.replace('http://', 'https://');
+}
 const CSRF_COOKIE_NAME = 'mdm_csrf_token';
 
 /**

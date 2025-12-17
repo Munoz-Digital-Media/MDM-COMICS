@@ -10,22 +10,29 @@
 
 // Use production API in production, localhost for dev
 function resolveApiBase() {
+  let baseUrl;
+
   if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
-  }
-
-  if (typeof window === 'undefined') {
+    baseUrl = import.meta.env.VITE_API_URL;
+  } else if (typeof window === 'undefined') {
     return 'http://localhost:8000/api';
+  } else {
+    const hostname = window.location.hostname;
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+
+    if (!isLocalhost && import.meta.env.PROD) {
+      throw new Error('VITE_API_URL must be configured for production deployments');
+    }
+
+    baseUrl = isLocalhost ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api';
   }
 
-  const hostname = window.location.hostname;
-  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-
-  if (!isLocalhost && import.meta.env.PROD) {
-    throw new Error('VITE_API_URL must be configured for production deployments');
+  // Enforce HTTPS when page is served over HTTPS to prevent mixed content errors
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && baseUrl.startsWith('http://')) {
+    baseUrl = baseUrl.replace('http://', 'https://');
   }
 
-  return isLocalhost ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api';
+  return baseUrl;
 }
 
 export const API_BASE = resolveApiBase();

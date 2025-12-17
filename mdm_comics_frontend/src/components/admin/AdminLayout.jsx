@@ -1,11 +1,12 @@
 /**
  * AdminLayout - Full-page admin console layout with sidebar navigation
  * Phase 3: MDM Admin Console Inventory System v1.3.0
+ * BUNDLE-001: Added nested navigation with feature flag support
  */
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, ShoppingCart, BarChart3,
-  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image, Boxes
+  QrCode, X, Menu, ChevronLeft, ChevronDown, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image, Boxes
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
@@ -19,31 +20,64 @@ import BrandAssets from './branding/BrandAssets';
 import { MatchReviewQueue } from './match-review';
 import CoverIngestion from './inventory/CoverIngestion';
 import BundleList from './bundles/BundleList';
+import { FEATURES } from '../../features';
 
-const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'products', label: 'Products', icon: Package },
-  { id: 'bundles', label: 'Bundles', icon: Boxes },
-  { id: 'cover-ingestion', label: 'Cover Ingestion', icon: Image },
-  { id: 'scanner', label: 'Scanner', icon: Camera },
-  { id: 'queue', label: 'Scan Queue', icon: QrCode },
-  { id: 'match-review', label: 'Match Review', icon: GitCompare },
-  { id: 'orders', label: 'Orders', icon: ShoppingCart },
-  { id: 'shipping', label: 'Shipping', icon: Truck },
-  { id: 'users', label: 'Users', icon: Users },
-  { id: 'branding', label: 'Branding', icon: Palette },
-  { id: 'reports', label: 'Reports', icon: BarChart3 },
-];
+// Build navigation items with feature flag support
+const buildNavItems = () => {
+  const items = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    {
+      id: 'products',
+      label: 'Products',
+      icon: Package,
+      children: FEATURES.BUNDLES_ENABLED ? [
+        { id: 'bundles', label: 'Bundles', icon: Boxes },
+      ] : undefined,
+    },
+    { id: 'cover-ingestion', label: 'Cover Ingestion', icon: Image },
+    { id: 'scanner', label: 'Scanner', icon: Camera },
+    { id: 'queue', label: 'Scan Queue', icon: QrCode },
+    { id: 'match-review', label: 'Match Review', icon: GitCompare },
+    { id: 'orders', label: 'Orders', icon: ShoppingCart },
+    { id: 'shipping', label: 'Shipping', icon: Truck },
+    { id: 'users', label: 'Users', icon: Users },
+    { id: 'branding', label: 'Branding', icon: Palette },
+    { id: 'reports', label: 'Reports', icon: BarChart3 },
+  ];
+
+  return items;
+};
+
+const NAV_ITEMS = buildNavItems();
 
 export default function AdminLayout({ onClose }) {
   const [activeSection, setActiveSection] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [expandedItems, setExpandedItems] = useState(['products']); // Products expanded by default
 
   // Close mobile menu when section changes
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [activeSection]);
+
+  // Toggle expanded state for parent nav items
+  const toggleExpanded = (itemId) => {
+    setExpandedItems(prev =>
+      prev.includes(itemId)
+        ? prev.filter(id => id !== itemId)
+        : [...prev, itemId]
+    );
+  };
+
+  // Check if a section or any of its children is active
+  const isItemOrChildActive = (item) => {
+    if (activeSection === item.id) return true;
+    if (item.children) {
+      return item.children.some(child => activeSection === child.id);
+    }
+    return false;
+  };
 
   const renderContent = () => {
     switch (activeSection) {
@@ -116,22 +150,67 @@ export default function AdminLayout({ onClose }) {
           {NAV_ITEMS.map(item => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
+            const hasChildren = item.children && item.children.length > 0;
+            const isExpanded = expandedItems.includes(item.id);
+            const isParentActive = isItemOrChildActive(item);
+
             return (
-              <button
-                key={item.id}
-                onClick={() => setActiveSection(item.id)}
-                className={`
-                  w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all
-                  ${isActive
-                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                    : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
-                  }
-                `}
-                title={sidebarCollapsed ? item.label : undefined}
-              >
-                <Icon className="w-5 h-5 flex-shrink-0" />
-                {!sidebarCollapsed && <span className="text-sm font-medium">{item.label}</span>}
-              </button>
+              <div key={item.id}>
+                <button
+                  onClick={() => {
+                    if (hasChildren && !sidebarCollapsed) {
+                      toggleExpanded(item.id);
+                    }
+                    setActiveSection(item.id);
+                  }}
+                  className={`
+                    w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all
+                    ${isActive
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                      : isParentActive && !isActive
+                        ? 'bg-zinc-800/50 text-zinc-300'
+                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
+                    }
+                  `}
+                  title={sidebarCollapsed ? item.label : undefined}
+                >
+                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  {!sidebarCollapsed && (
+                    <>
+                      <span className="text-sm font-medium flex-1 text-left">{item.label}</span>
+                      {hasChildren && (
+                        <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      )}
+                    </>
+                  )}
+                </button>
+
+                {/* Nested children */}
+                {hasChildren && isExpanded && !sidebarCollapsed && (
+                  <div className="ml-4 mt-1 space-y-1 border-l border-zinc-800 pl-2">
+                    {item.children.map(child => {
+                      const ChildIcon = child.icon;
+                      const isChildActive = activeSection === child.id;
+                      return (
+                        <button
+                          key={child.id}
+                          onClick={() => setActiveSection(child.id)}
+                          className={`
+                            w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm
+                            ${isChildActive
+                              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                              : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
+                            }
+                          `}
+                        >
+                          <ChildIcon className="w-4 h-4 flex-shrink-0" />
+                          <span className="font-medium">{child.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </nav>
@@ -163,7 +242,19 @@ export default function AdminLayout({ onClose }) {
               <Menu className="w-5 h-5 text-zinc-400" />
             </button>
             <h1 className="text-lg font-semibold text-white">
-              {NAV_ITEMS.find(n => n.id === activeSection)?.label || 'Dashboard'}
+              {(() => {
+                // Check top-level items
+                const topItem = NAV_ITEMS.find(n => n.id === activeSection);
+                if (topItem) return topItem.label;
+                // Check nested items
+                for (const item of NAV_ITEMS) {
+                  if (item.children) {
+                    const child = item.children.find(c => c.id === activeSection);
+                    if (child) return child.label;
+                  }
+                }
+                return 'Dashboard';
+              })()}
             </h1>
           </div>
           <div className="flex items-center gap-2">
