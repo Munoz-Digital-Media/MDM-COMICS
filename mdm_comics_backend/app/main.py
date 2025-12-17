@@ -39,6 +39,8 @@ from app.api.routes import admin_users, admin_roles, admin_dsar
 from app.api.routes import admin_assets, admin_settings
 # Feature Flags v1.0.0 - Runtime carrier toggles
 from app.api.routes import admin_feature_flags
+# Bundle Builder Tool v1.0.0
+from app.api.routes import admin_bundles, bundles
 # Outreach System v1.5.0 - optional imports for graceful degradation
 try:
     from app.api.routes import newsletter, webhooks
@@ -481,6 +483,9 @@ app.include_router(admin_assets.router, prefix="/api", tags=["Admin - Assets"])
 app.include_router(admin_settings.router, prefix="/api", tags=["Admin - Settings"])
 # Feature Flags v1.0.0 - Runtime carrier toggles
 app.include_router(admin_feature_flags.router, prefix="/api", tags=["Admin - Feature Flags"])
+# Bundle Builder Tool v1.0.0
+app.include_router(admin_bundles.router, prefix="/api", tags=["Admin - Bundles"])
+app.include_router(bundles.router, prefix="/api", tags=["Bundles"])
 # Outreach System v1.5.0
 if OUTREACH_ROUTES_AVAILABLE:
     app.include_router(newsletter.router, prefix="/api", tags=["Newsletter"])

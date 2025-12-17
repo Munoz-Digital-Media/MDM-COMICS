@@ -95,6 +95,9 @@ class Product(Base):
     order_items = relationship("OrderItem", back_populates="product")
     stock_movements = relationship("StockMovement", back_populates="product")
     updater = relationship("User", foreign_keys=[updated_by])
+    # BCW Dropship Integration v1.0.0
+    bcw_inventory_snapshots = relationship("BCWInventorySnapshot", back_populates="product")
+    bcw_mapping = relationship("BCWProductMapping", back_populates="product", uselist=False)
 
     # Indexes and constraints (PERF-003, PERF-004, DB-006)
     __table_args__ = (

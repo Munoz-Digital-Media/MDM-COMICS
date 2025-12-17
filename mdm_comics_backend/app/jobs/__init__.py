@@ -35,6 +35,15 @@ from app.jobs.data_ingestion import (
     run_json_ingestion_job,
     run_cover_folder_ingestion_job,
 )
+# BCW Dropship Integration v1.22.0
+from app.jobs.bcw_sync import (
+    run_bcw_inventory_sync_job,
+    run_bcw_full_inventory_sync_job,
+    run_bcw_order_status_sync_job,
+    run_bcw_email_processing_job,
+    run_bcw_quote_cleanup_job,
+    run_bcw_selector_health_job,
+)
 
 __all__ = [
     "generate_weekly_newsletter",
@@ -56,4 +65,11 @@ __all__ = [
     "run_csv_ingestion_job",
     "run_json_ingestion_job",
     "run_cover_folder_ingestion_job",
+    # BCW Dropship Integration v1.22.0
+    "run_bcw_inventory_sync_job",
+    "run_bcw_full_inventory_sync_job",
+    "run_bcw_order_status_sync_job",
+    "run_bcw_email_processing_job",
+    "run_bcw_quote_cleanup_job",
+    "run_bcw_selector_health_job",
 ]

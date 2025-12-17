@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, ShoppingCart, BarChart3,
-  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image
+  QrCode, X, Menu, ChevronLeft, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image, Boxes
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
@@ -18,10 +18,12 @@ import UserList from './users/UserList';
 import BrandAssets from './branding/BrandAssets';
 import { MatchReviewQueue } from './match-review';
 import CoverIngestion from './inventory/CoverIngestion';
+import BundleList from './bundles/BundleList';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'products', label: 'Products', icon: Package },
+  { id: 'bundles', label: 'Bundles', icon: Boxes },
   { id: 'cover-ingestion', label: 'Cover Ingestion', icon: Image },
   { id: 'scanner', label: 'Scanner', icon: Camera },
   { id: 'queue', label: 'Scan Queue', icon: QrCode },
@@ -49,6 +51,8 @@ export default function AdminLayout({ onClose }) {
         return <AdminDashboard onNavigate={setActiveSection} />;
       case 'products':
         return <ProductList />;
+      case 'bundles':
+        return <BundleList />;
       case 'cover-ingestion':
         return <CoverIngestion />;
       case 'scanner':

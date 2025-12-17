@@ -133,6 +133,21 @@ except ImportError as e:
 # Feature Flags v1.0.0 - Runtime carrier toggles
 from app.models.feature_flag import FeatureFlag
 
+# BCW Dropship Integration v1.0.0
+from app.models.bcw import (
+    BCWConfig,
+    BCWInventorySnapshot,
+    BCWOrder,
+    BCWOrderState,
+    BCWOrderEvent,
+    BCWShippingQuote,
+    BCWAutomationError,
+    BCWProductMapping,
+)
+
+# Bundle Builder Tool v1.0.0
+from app.models.bundle import Bundle, BundleItem, BundleStatus
+
 __all__ = [
     "User",
     "Product",
@@ -227,4 +242,17 @@ __all__ = [
     "IsbnSource",
     # Feature Flags v1.0.0
     "FeatureFlag",
+    # BCW Dropship Integration v1.0.0
+    "BCWConfig",
+    "BCWInventorySnapshot",
+    "BCWOrder",
+    "BCWOrderState",
+    "BCWOrderEvent",
+    "BCWShippingQuote",
+    "BCWAutomationError",
+    "BCWProductMapping",
+    # Bundle Builder Tool v1.0.0
+    "Bundle",
+    "BundleItem",
+    "BundleStatus",
 ]

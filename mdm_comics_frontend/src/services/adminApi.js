@@ -612,6 +612,97 @@ export const adminAPI = {
     });
   },
 
+  // ==================== BUNDLE BUILDER v1.0.0 ====================
+
+  getBundles: async (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.search) params.set('search', options.search);
+    if (options.status) params.set('status', options.status);
+    if (options.category) params.set('category', options.category);
+    params.set('page', options.page || 1);
+    params.set('per_page', options.per_page || 25);
+
+    return fetchAPI('/admin/bundles?' + params.toString());
+  },
+
+  getBundle: async (bundleId) => {
+    return fetchAPI('/admin/bundles/' + bundleId);
+  },
+
+  createBundle: async (bundleData) => {
+    return fetchAPI('/admin/bundles', {
+      method: 'POST',
+      body: JSON.stringify(bundleData),
+    });
+  },
+
+  updateBundle: async (bundleId, updateData) => {
+    return fetchAPI('/admin/bundles/' + bundleId, {
+      method: 'PUT',
+      body: JSON.stringify(updateData),
+    });
+  },
+
+  deleteBundle: async (bundleId) => {
+    return fetchAPI('/admin/bundles/' + bundleId, {
+      method: 'DELETE',
+    });
+  },
+
+  // Bundle items
+  addBundleItem: async (bundleId, itemData) => {
+    return fetchAPI('/admin/bundles/' + bundleId + '/items', {
+      method: 'POST',
+      body: JSON.stringify(itemData),
+    });
+  },
+
+  updateBundleItem: async (bundleId, itemId, itemData) => {
+    return fetchAPI('/admin/bundles/' + bundleId + '/items/' + itemId, {
+      method: 'PUT',
+      body: JSON.stringify(itemData),
+    });
+  },
+
+  removeBundleItem: async (bundleId, itemId) => {
+    return fetchAPI('/admin/bundles/' + bundleId + '/items/' + itemId, {
+      method: 'DELETE',
+    });
+  },
+
+  // Bundle lifecycle
+  publishBundle: async (bundleId) => {
+    return fetchAPI('/admin/bundles/' + bundleId + '/publish', {
+      method: 'POST',
+    });
+  },
+
+  unpublishBundle: async (bundleId) => {
+    return fetchAPI('/admin/bundles/' + bundleId + '/unpublish', {
+      method: 'POST',
+    });
+  },
+
+  archiveBundle: async (bundleId) => {
+    return fetchAPI('/admin/bundles/' + bundleId + '/archive', {
+      method: 'POST',
+    });
+  },
+
+  duplicateBundle: async (bundleId) => {
+    return fetchAPI('/admin/bundles/' + bundleId + '/duplicate', {
+      method: 'POST',
+    });
+  },
+
+  // Pricing preview
+  calculateBundlePricing: async (items) => {
+    return fetchAPI('/admin/bundles/calculate-pricing', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+  },
+
   // ==================== COVER INGESTION ====================
 
   // Preview cover ingestion from a folder

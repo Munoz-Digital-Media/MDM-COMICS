@@ -62,6 +62,16 @@ from app.jobs.sequential_enrichment import run_sequential_exhaustive_enrichment_
 # v1.21.0: Inbound cover processor
 from app.services.inbound_processor import run_inbound_processor
 
+# v1.22.0: BCW Dropship Integration
+from app.jobs.bcw_sync import (
+    run_bcw_inventory_sync_job,
+    run_bcw_full_inventory_sync_job,
+    run_bcw_order_status_sync_job,
+    run_bcw_email_processing_job,
+    run_bcw_quote_cleanup_job,
+    run_bcw_selector_health_job,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -4631,6 +4641,13 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("inbound_processor", run_inbound_processor, interval_minutes=5)),
             # v1.21.2: Image acquisition - download external cover URLs to S3
             asyncio.create_task(self._run_job_loop("image_acquisition", run_image_acquisition_job, interval_minutes=30)),
+            # v1.22.0: BCW Dropship Integration - inventory and order sync
+            asyncio.create_task(self._run_job_loop("bcw_inventory_sync", run_bcw_inventory_sync_job, interval_minutes=60)),
+            asyncio.create_task(self._run_job_loop("bcw_full_inventory_sync", run_bcw_full_inventory_sync_job, interval_minutes=1440)),
+            asyncio.create_task(self._run_job_loop("bcw_order_status_sync", run_bcw_order_status_sync_job, interval_minutes=30)),
+            asyncio.create_task(self._run_job_loop("bcw_email_processing", run_bcw_email_processing_job, interval_minutes=15)),
+            asyncio.create_task(self._run_job_loop("bcw_quote_cleanup", run_bcw_quote_cleanup_job, interval_minutes=60)),
+            asyncio.create_task(self._run_job_loop("bcw_selector_health", run_bcw_selector_health_job, interval_minutes=1440)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -4649,6 +4666,12 @@ class PipelineScheduler:
         print("[SCHEDULER]   - sequential_enrichment: every 30 minutes (ONE row, ALL sources exhausted)")
         print("[SCHEDULER]   - inbound_processor: every 5 minutes (watch Inbound folder, queue to Match Review)")
         print("[SCHEDULER]   - image_acquisition: every 30 minutes (download external cover URLs to S3)")
+        print("[SCHEDULER]   - bcw_inventory_sync: every 60 minutes (hot items inventory sync)")
+        print("[SCHEDULER]   - bcw_full_inventory_sync: every 24 hours (full inventory sync)")
+        print("[SCHEDULER]   - bcw_order_status_sync: every 30 minutes (poll order status)")
+        print("[SCHEDULER]   - bcw_email_processing: every 15 minutes (parse BCW emails)")
+        print("[SCHEDULER]   - bcw_quote_cleanup: every 60 minutes (cleanup expired quotes)")
+        print("[SCHEDULER]   - bcw_selector_health: every 24 hours (validate DOM selectors)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):

@@ -66,6 +66,8 @@ class Order(Base):
     shipments = relationship("Shipment", back_populates="order")
     shipment_rates = relationship("ShipmentRate", back_populates="order")
     updater = relationship("User", foreign_keys=[updated_by])
+    # BCW Dropship Integration v1.0.0
+    bcw_order = relationship("BCWOrder", back_populates="order", uselist=False)
 
     # DB-004/MED-001: Additional indexes
     __table_args__ = (
