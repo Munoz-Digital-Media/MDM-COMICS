@@ -735,6 +735,81 @@ export const shippingAPI = {
   },
 };
 
+
+/**
+ * Customer Refunds API
+ * BCW Refund Request Module v1.0.0
+ */
+export const refundsAPI = {
+  /**
+   * Check if a product/order item is eligible for refund
+   */
+  checkEligibility: async (orderId, orderItemId) => {
+    return fetchAPI(`/refunds/eligibility/${orderId}/${orderItemId}`);
+  },
+
+  /**
+   * Submit a refund request
+   */
+  createRequest: async (orderId, orderItemId, reason, details = null) => {
+    return fetchAPI('/refunds', {
+      method: 'POST',
+      body: JSON.stringify({
+        order_id: orderId,
+        order_item_id: orderItemId,
+        reason,
+        details,
+      }),
+    });
+  },
+
+  /**
+   * Get customer's refund requests
+   */
+  getMyRequests: async () => {
+    return fetchAPI('/refunds');
+  },
+
+  /**
+   * Get a specific refund request
+   */
+  getRequest: async (requestId) => {
+    return fetchAPI(`/refunds/${requestId}`);
+  },
+
+  /**
+   * Cancel a pending refund request
+   */
+  cancelRequest: async (requestId) => {
+    return fetchAPI(`/refunds/${requestId}/cancel`, {
+      method: 'POST',
+    });
+  },
+};
+
+/**
+ * Customer Orders API
+ * BCW Refund Request Module v1.0.0
+ */
+export const ordersAPI = {
+  /**
+   * Get customer's orders
+   */
+  getMyOrders: async (page = 1, perPage = 20) => {
+    const params = new URLSearchParams();
+    params.append('page', page);
+    params.append('per_page', perPage);
+    return fetchAPI(`/orders?${params.toString()}`);
+  },
+
+  /**
+   * Get a specific order
+   */
+  getOrder: async (orderId) => {
+    return fetchAPI(`/orders/${orderId}`);
+  },
+};
+
 /**
  * Match Review Queue API (Admin)
  */
@@ -836,4 +911,6 @@ export default {
   contact: contactAPI,
   shipping: shippingAPI,
   matchReview: matchReviewAPI,
+  refunds: refundsAPI,
+  orders: ordersAPI,
 };

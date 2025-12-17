@@ -63,6 +63,9 @@ class User(Base):
     user_roles = relationship("UserRole", foreign_keys="UserRole.user_id", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
 
+    # BCW Refund Request Module v1.0.0
+    refund_requests = relationship("BCWRefundRequest", foreign_keys="BCWRefundRequest.user_id", back_populates="user")
+
     # Indexes for common queries
     __table_args__ = (
         Index('ix_users_active', 'id', postgresql_where=deleted_at.is_(None)),

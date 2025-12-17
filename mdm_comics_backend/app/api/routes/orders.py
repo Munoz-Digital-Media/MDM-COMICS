@@ -144,7 +144,10 @@ async def create_order(
             product_name=cart_item.product.name,
             product_sku=cart_item.product.sku,
             price=cart_item.product.price,
-            quantity=cart_item.quantity
+            quantity=cart_item.quantity,
+            # BCW Refund Request Module v1.0.0: Copy category/source for refund eligibility
+            category=cart_item.product.category,
+            source=getattr(cart_item.product, 'source', None),
         )
         db.add(order_item)
         

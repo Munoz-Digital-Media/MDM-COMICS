@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import {
   Elements,
@@ -6,12 +6,31 @@ import {
   useStripe,
   useElements,
 } from '@stripe/react-stripe-js';
-import { Loader2, CreditCard, Lock, CheckCircle, AlertCircle } from 'lucide-react';
+import { Loader2, CreditCard, Lock, CheckCircle, AlertCircle, AlertTriangle, Check } from 'lucide-react';
 import { checkoutAPI } from '../services/api';
+/**
+ * BCW Refund Request Module v1.0.0
+ * Check if a product is a collectible (non-refundable)
+ * BCW Supplies = Refundable, Collectibles = FINAL SALE
+ */
+function isCollectible(item) {
+  const category = (item.category || '').toLowerCase();
+  const source = (item.source || '').toLowerCase();
+
+  // BCW supplies are NOT collectibles (they're refundable)
+  if (source === 'bcw' || category === 'supplies' || category === 'bcw supplies' || category === 'bcw') {
+    return false;
+  }
+
+  // Everything else (comics, funkos, graded) is a collectible
+  return true;
+}
+
+
 
 // Payment form component (inside Elements provider)
 // P1-5: Removed token prop - auth handled via HttpOnly cookies
-function PaymentForm({ clientSecret, cartItems, total, onSuccess, onCancel }) {
+function PaymentForm({ clientSecret, cartItems, total, onSuccess, onCancel, hasCollectibles, acknowledged, setAcknowledged }) {
   const stripe = useStripe();
   const elements = useElements();
   const [processing, setProcessing] = useState(false);
@@ -86,6 +105,40 @@ function PaymentForm({ clientSecret, cartItems, total, onSuccess, onCancel }) {
         </div>
       </div>
 
+      
+      {/* Final Sale Acknowledgment - BCW Refund Module v1.0.0 */}
+      {hasCollectibles && (
+        <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-orange-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h4 className="font-semibold text-orange-400 mb-1">Final Sale Notice</h4>
+              <p className="text-sm text-zinc-400 mb-3">
+                Your cart contains collectible items (comics, Funko Pops, or graded items). 
+                Due to the condition-sensitive nature of collectibles, <strong className="text-orange-400">all sales are final</strong> and 
+                not eligible for returns or refunds.
+              </p>
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <div 
+                  className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                    acknowledged 
+                      ? 'bg-orange-500 border-orange-500' 
+                      : 'border-zinc-600 group-hover:border-orange-500'
+                  }`}
+                  onClick={() => setAcknowledged(!acknowledged)}
+                >
+                  {acknowledged && <Check className="w-3 h-3 text-white" />}
+                </div>
+                <span className="text-sm text-zinc-300 select-none" onClick={() => setAcknowledged(!acknowledged)}>
+                  I understand that collectible items are <strong>FINAL SALE</strong> and not eligible for returns or refunds. 
+                  I have reviewed the product descriptions and images before purchase.
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="flex items-center gap-2 p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400">
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
@@ -104,7 +157,7 @@ function PaymentForm({ clientSecret, cartItems, total, onSuccess, onCancel }) {
         </button>
         <button
           type="submit"
-          disabled={!stripe || processing}
+          disabled={!stripe || processing || (hasCollectibles && !acknowledged)}
           className="flex-1 py-3 bg-orange-500 text-white rounded-xl font-semibold hover:bg-orange-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {processing ? (
@@ -129,6 +182,10 @@ export default function CheckoutForm({ cartItems, total, onSuccess, onCancel }) 
   const [clientSecret, setClientSecret] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
+  // BCW Refund Module v1.0.0: Final sale acknowledgment for collectibles
+  const [acknowledged, setAcknowledged] = useState(false);
+  const hasCollectibles = useMemo(() => cartItems.some(isCollectible), [cartItems]);
 
   // OPT-005: Track payment intent ID and order completion for cleanup
   const paymentIntentIdRef = useRef(null);
@@ -245,6 +302,9 @@ export default function CheckoutForm({ cartItems, total, onSuccess, onCancel }) 
         total={total}
         onSuccess={handleSuccess}
         onCancel={onCancel}
+        hasCollectibles={hasCollectibles}
+        acknowledged={acknowledged}
+        setAcknowledged={setAcknowledged}
       />
     </Elements>
   );

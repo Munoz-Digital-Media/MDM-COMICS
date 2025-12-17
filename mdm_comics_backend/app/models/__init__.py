@@ -148,6 +148,17 @@ from app.models.bcw import (
 # Bundle Builder Tool v1.0.0
 from app.models.bundle import Bundle, BundleItem, BundleStatus
 
+# BCW Refund Request Module v1.0.0
+from app.models.refund import (
+    RefundEligibilityPolicy,
+    BCWRefundRequest,
+    BCWRefundEvent,
+    BCWRefundState,
+    RefundReasonCode,
+    VALID_REFUND_TRANSITIONS,
+    can_process_customer_refund,
+)
+
 __all__ = [
     "User",
     "Product",
@@ -255,4 +266,12 @@ __all__ = [
     "Bundle",
     "BundleItem",
     "BundleStatus",
+    # BCW Refund Request Module v1.0.0
+    "RefundEligibilityPolicy",
+    "BCWRefundRequest",
+    "BCWRefundEvent",
+    "BCWRefundState",
+    "RefundReasonCode",
+    "VALID_REFUND_TRANSITIONS",
+    "can_process_customer_refund",
 ]

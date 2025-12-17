@@ -234,6 +234,9 @@ class BCWOrder(Base):
     order = relationship("Order", back_populates="bcw_order")
     events = relationship("BCWOrderEvent", back_populates="bcw_order", order_by="BCWOrderEvent.created_at")
 
+    # BCW Refund Request Module v1.0.0
+    refund_requests = relationship("BCWRefundRequest", back_populates="bcw_order")
+
     # Indexes and constraints
     __table_args__ = (
         Index('ix_bcw_orders_state_created', 'state', 'created_at'),

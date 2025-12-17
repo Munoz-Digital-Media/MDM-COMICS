@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, ShoppingCart, BarChart3,
-  QrCode, X, Menu, ChevronLeft, ChevronDown, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image, Boxes
+  QrCode, X, Menu, ChevronLeft, ChevronDown, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image, Boxes, RefreshCw
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
@@ -20,6 +20,7 @@ import BrandAssets from './branding/BrandAssets';
 import { MatchReviewQueue } from './match-review';
 import CoverIngestion from './inventory/CoverIngestion';
 import BundleList from './bundles/BundleList';
+import RefundList from './refunds/RefundList';
 import { FEATURES } from '../../features';
 
 // Build navigation items with feature flag support
@@ -40,6 +41,7 @@ const buildNavItems = () => {
     { id: 'match-review', label: 'Match Review', icon: GitCompare },
     { id: 'orders', label: 'Orders', icon: ShoppingCart },
     { id: 'shipping', label: 'Shipping', icon: Truck },
+    { id: 'refunds', label: 'Refunds', icon: RefreshCw },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'branding', label: 'Branding', icon: Palette },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
@@ -99,6 +101,8 @@ export default function AdminLayout({ onClose }) {
         return <OrderList />;
       case 'shipping':
         return <ShipmentList />;
+      case 'refunds':
+        return <RefundList />;
       case 'users':
         return <UserList />;
       case 'branding':

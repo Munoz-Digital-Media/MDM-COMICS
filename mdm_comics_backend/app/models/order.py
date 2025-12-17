@@ -69,6 +69,9 @@ class Order(Base):
     # BCW Dropship Integration v1.0.0
     bcw_order = relationship("BCWOrder", back_populates="order", uselist=False)
 
+    # BCW Refund Request Module v1.0.0
+    refund_requests = relationship("BCWRefundRequest", back_populates="order")
+
     # DB-004/MED-001: Additional indexes
     __table_args__ = (
         Index('ix_orders_user_id', 'user_id'),
@@ -89,6 +92,10 @@ class OrderItem(Base):
     product_sku = Column(String(50))  # MED-002: bounded length
     price = Column(Numeric(12, 2), nullable=False)  # DB-001: Numeric for monetary
     quantity = Column(Integer, nullable=False)
+
+    # BCW Refund Request Module v1.0.0: Category/source for refund eligibility
+    category = Column(String(100), nullable=True)  # Product category at time of order
+    source = Column(String(50), nullable=True)  # Product source (bcw, inventory, etc.)
 
     # Relationships
     order = relationship("Order", back_populates="items")

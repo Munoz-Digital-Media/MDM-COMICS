@@ -16,6 +16,8 @@ const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
   import ComingSoon from "./components/ComingSoon";
   import AuthModal from "./components/AuthModal";
 import AboutContact from "./components/AboutContact";
+import MyOrders from "./components/MyOrders";
+import RefundPolicy from "./components/RefundPolicy";
 
 // FE-PERF-003: CSS animations moved to separate file for caching
 import './styles/animations.css';
@@ -72,6 +74,8 @@ import './styles/animations.css';
     const [isAdminOpen, setIsAdminOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [isAboutContactOpen, setIsAboutContactOpen] = useState(false);
+    const [isMyOrdersOpen, setIsMyOrdersOpen] = useState(false);
+    const [isRefundPolicyOpen, setIsRefundPolicyOpen] = useState(false);
     const [authMode, setAuthMode] = useState("login");
     const [authLoading, setAuthLoading] = useState(true);
 
@@ -430,6 +434,13 @@ import './styles/animations.css';
                         </p>
                         <p className="text-xs text-zinc-500">{user.email}</p>
                       </div>
+                      <button
+                        onClick={() => setIsMyOrdersOpen(true)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+                      >
+                        <Package className="w-4 h-4" />
+                        My Orders
+                      </button>
                       <button
                         onClick={handleLogout}
                         className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
@@ -1021,6 +1032,16 @@ import './styles/animations.css';
           <AboutContact onClose={() => setIsAboutContactOpen(false)} />
         )}
 
+        {/* My Orders Modal - BCW Refund Module v1.0.0 */}
+        {isMyOrdersOpen && (
+          <MyOrders onClose={() => setIsMyOrdersOpen(false)} />
+        )}
+
+        {/* Refund Policy Modal - BCW Refund Module v1.0.0 */}
+        {isRefundPolicyOpen && (
+          <RefundPolicy onClose={() => setIsRefundPolicyOpen(false)} />
+        )}
+
         {/* Footer */}
         <footer className="bg-zinc-900 border-t border-zinc-800">
           <div className="max-w-7xl mx-auto px-4 py-8">
@@ -1029,7 +1050,7 @@ import './styles/animations.css';
                 <button onClick={() => setIsAboutContactOpen(true)} className="hover:text-orange-500 transition-colors">About</button>
                 <button onClick={() => setIsAboutContactOpen(true)} className="hover:text-orange-500 transition-colors">Contact</button>
                 <a href="#" className="hover:text-orange-500 transition-colors">Shipping</a>
-                <a href="#" className="hover:text-orange-500 transition-colors">Returns</a>
+                <button onClick={() => setIsRefundPolicyOpen(true)} className="hover:text-orange-500 transition-colors">Returns</button>
                 <a href="#" className="hover:text-orange-500 transition-colors">FAQ</a>
               </div>
 

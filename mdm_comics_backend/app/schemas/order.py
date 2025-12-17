@@ -23,6 +23,9 @@ class OrderItemResponse(BaseModel):
     product_sku: Optional[str]
     price: float
     quantity: int
+    # BCW Refund Request Module v1.0.0
+    category: Optional[str] = None
+    source: Optional[str] = None
 
     class Config:
         from_attributes = True

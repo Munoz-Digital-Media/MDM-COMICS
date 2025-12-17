@@ -12,6 +12,7 @@ import {
   ArrowLeft, Star, Plus, Minus, ShoppingCart,
   Package, Truck, Shield, ZoomIn, X, AlertCircle
 } from 'lucide-react';
+import RefundPolicyBadge from './RefundPolicyBadge';
 
 // Image zoom modal component
 function ImageZoomModal({ src, alt, onClose }) {
@@ -325,6 +326,12 @@ export default function ProductDetailPage({
                 </div>
                 <span className="text-xs text-zinc-400">Buyer Protection</span>
               </div>
+            </div>
+
+            {/* Refund Policy */}
+            <div className="mt-6 pt-6 border-t border-zinc-800">
+              <h3 className="text-sm font-semibold text-zinc-300 mb-3">Return Policy</h3>
+              <RefundPolicyBadge product={product} showDetails />
             </div>
 
             {/* Product Details */}
