@@ -19,8 +19,8 @@ function resolveMiddlewareBase() {
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
 
   // In production, middleware should be configured via env var
+  // Silently disable if not configured - no console noise
   if (!isLocalhost && import.meta.env.PROD) {
-    console.warn('VITE_MIDDLEWARE_URL not configured, middleware features disabled');
     return null;
   }
 

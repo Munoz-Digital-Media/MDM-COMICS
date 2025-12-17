@@ -6,8 +6,8 @@
 
 import { record } from 'rrweb';
 import { analytics } from './analyticsCollector';
+import { API_BASE } from './api';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 const REPLAY_URL = `${API_BASE}/analytics/beacon/replay`;
 
 // Recording state
