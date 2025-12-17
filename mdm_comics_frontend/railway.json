@@ -6,7 +6,6 @@
     "watchPatterns": ["src/**", "package.json", "vite.config.js", "Dockerfile"]
   },
   "deploy": {
-    "startCommand": "serve -s ./dist -l tcp://0.0.0.0:$PORT",
     "healthcheckPath": "/",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
