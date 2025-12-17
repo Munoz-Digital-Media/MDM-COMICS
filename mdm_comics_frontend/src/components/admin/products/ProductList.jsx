@@ -6,9 +6,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Filter, Plus, Minus, Edit2, Trash2, RotateCcw,
   ChevronLeft, ChevronRight, Loader2, AlertTriangle, X,
-  Package, History
+  Package, History, Eye
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
+import ProductPreviewModal from './ProductPreviewModal';
 
 function StockAdjustmentModal({ product, onClose, onSave }) {
   const [quantity, setQuantity] = useState(0);
@@ -230,6 +231,7 @@ export default function ProductList() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [showStockModal, setShowStockModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
 
   const limit = 25;
 
@@ -297,6 +299,11 @@ export default function ProductList() {
   const handleStockHistory = (product) => {
     setSelectedProduct(product);
     setShowHistoryModal(true);
+  };
+
+  const handlePreview = (product) => {
+    setSelectedProduct(product);
+    setShowPreviewModal(true);
   };
 
   const totalPages = Math.ceil(total / limit);
@@ -435,6 +442,13 @@ export default function ProductList() {
                         ) : (
                           <>
                             <button
+                              onClick={() => handlePreview(product)}
+                              className="p-1.5 hover:bg-orange-500/20 rounded text-orange-400"
+                              title="Preview as Customer"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
                               onClick={() => handleStockAdjust(product)}
                               className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400"
                               title="Adjust Stock"
@@ -508,6 +522,13 @@ export default function ProductList() {
         <StockHistoryModal
           product={selectedProduct}
           onClose={() => { setShowHistoryModal(false); setSelectedProduct(null); }}
+        />
+      )}
+
+      {showPreviewModal && selectedProduct && (
+        <ProductPreviewModal
+          product={selectedProduct}
+          onClose={() => { setShowPreviewModal(false); setSelectedProduct(null); }}
         />
       )}
     </div>

@@ -6,6 +6,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef, lazy, Suspens
   import FunkoSearch from "./components/FunkoSearch";
   import ErrorBoundary from "./components/ErrorBoundary";
   import ProductCard from "./components/ProductCard";
+import ProductDetailPage from "./components/ProductDetailPage";
   // Phase 3: Use new full-page AdminLayout instead of modal-based AdminConsole
 // Phase 5: Lazy load admin to reduce initial bundle size
 const AdminLayout = lazy(() => import("./components/admin/AdminLayout"));
@@ -57,6 +58,7 @@ import './styles/animations.css';
     const [selectedCategory, setSelectedCategory] = useState("all");
     const [sortBy, setSortBy] = useState("featured");
     const [currentView, setCurrentView] = useState("shop");
+    const [selectedProduct, setSelectedProduct] = useState(null);
     const [itemsPerPage, setItemsPerPage] = useState(32);
     const [notification, setNotification] = useState(null);
     const [completedOrder, setCompletedOrder] = useState(null);
@@ -184,6 +186,20 @@ import './styles/animations.css';
       setCart(prevCart => prevCart.filter(item => item.id !== productId));
       showNotification("Item removed from cart");
     };
+
+    // Handle navigating to product detail page
+    const handleViewProduct = useCallback((product) => {
+      setSelectedProduct(product);
+      setCurrentView("product");
+      // Scroll to top when viewing a product
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, []);
+
+    // Handle going back from product detail
+    const handleBackFromProduct = useCallback(() => {
+      setSelectedProduct(null);
+      setCurrentView("shop");
+    }, []);
 
     const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -528,7 +544,7 @@ import './styles/animations.css';
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {getCategoryProducts("bagged-boarded", 5).map((product, index) => (
-                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
                     ))}
                   </div>
                 </section>
@@ -551,7 +567,7 @@ import './styles/animations.css';
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {getCategoryProducts("graded", 5).map((product, index) => (
-                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
                     ))}
                   </div>
                 </section>
@@ -574,7 +590,7 @@ import './styles/animations.css';
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {getCategoryProducts("funko", 5).map((product, index) => (
-                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
                     ))}
                   </div>
                 </section>
@@ -597,7 +613,7 @@ import './styles/animations.css';
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {getCategoryProducts("supplies", 5).map((product, index) => (
-                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
                     ))}
                   </div>
                 </section>
@@ -703,12 +719,21 @@ import './styles/animations.css';
                 {sortedCategoryProducts
                   .slice(0, itemsPerPage)
                   .map((product, index) => (
-                    <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} />
+                    <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
                   ))
                 }
               </div>
             </section>
           </main>
+        )}
+
+        {/* Product Detail View */}
+        {currentView === "product" && selectedProduct && (
+          <ProductDetailPage
+            product={selectedProduct}
+            onBack={handleBackFromProduct}
+            onAddToCart={addToCart}
+          />
         )}
 
         {/* Checkout View */}

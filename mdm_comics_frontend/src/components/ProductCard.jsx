@@ -3,15 +3,44 @@
  *
  * Displays a single product in the shop grid.
  * Extracted from App.jsx for better code organization.
+ *
+ * @param {Object} product - Product data
+ * @param {number} index - Index for animation delay
+ * @param {function} addToCart - Handler for adding to cart
+ * @param {function} onViewProduct - Optional handler for viewing product details
  */
-import React, { memo } from "react";
+import React, { memo, useCallback } from "react";
 import { Star, Plus } from "lucide-react";
 
-const ProductCard = memo(({ product, index, addToCart }) => (
-  <div
-    className="product-card bg-zinc-900 rounded-xl border border-zinc-800 fade-up"
-    style={{ animationDelay: `${0.05 * index}s` }}
-  >
+const ProductCard = memo(({ product, index, addToCart, onViewProduct }) => {
+  // Handle card click - navigate to product detail
+  const handleCardClick = useCallback((e) => {
+    // Don't navigate if clicking the add-to-cart button
+    if (e.target.closest('button')) return;
+    if (onViewProduct) {
+      onViewProduct(product);
+    }
+  }, [product, onViewProduct]);
+
+  // Handle keyboard navigation
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Enter' && onViewProduct) {
+      onViewProduct(product);
+    }
+  }, [product, onViewProduct]);
+
+  return (
+    <div
+      className={`product-card bg-zinc-900 rounded-xl border border-zinc-800 fade-up ${
+        onViewProduct ? 'cursor-pointer hover:border-orange-500/50 transition-colors' : ''
+      }`}
+      style={{ animationDelay: `${0.05 * index}s` }}
+      onClick={handleCardClick}
+      onKeyDown={handleKeyDown}
+      tabIndex={onViewProduct ? 0 : undefined}
+      role={onViewProduct ? "button" : undefined}
+      aria-label={onViewProduct ? `View ${product.name}` : undefined}
+    >
     {/* Product Image - responsive height */}
     <div className="relative h-32 sm:h-36 md:h-40 bg-zinc-800 rounded-t-xl overflow-hidden">
       <img
@@ -82,7 +111,8 @@ const ProductCard = memo(({ product, index, addToCart }) => (
       </div>
     </div>
   </div>
-));
+  );
+});
 
 ProductCard.displayName = 'ProductCard';
 
