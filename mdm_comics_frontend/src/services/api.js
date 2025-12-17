@@ -645,15 +645,35 @@ export const shippingAPI = {
     });
   },
 
+  // Carrier management
+  getEnabledCarriers: async () => {
+    return fetchAPI('/shipping/carriers');
+  },
+
   // Rate quoting
-  getRates: async (destinationAddressId, orderId = null, packages = null) => {
+  getRates: async (destinationAddressId, orderId = null, packages = null, carrierCode = null) => {
     const body = {
       destination_address_id: destinationAddressId,
     };
     if (orderId) body.order_id = orderId;
     if (packages) body.packages = packages;
+    if (carrierCode) body.carrier_code = carrierCode;
 
     return fetchAPI('/shipping/rates', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  getMultiCarrierRates: async (destinationAddressId, orderId = null, packages = null, carrierFilter = null) => {
+    const body = {
+      destination_address_id: destinationAddressId,
+    };
+    if (orderId) body.order_id = orderId;
+    if (packages) body.packages = packages;
+    if (carrierFilter) body.carrier_filter = carrierFilter;
+
+    return fetchAPI('/shipping/rates/multi', {
       method: 'POST',
       body: JSON.stringify(body),
     });

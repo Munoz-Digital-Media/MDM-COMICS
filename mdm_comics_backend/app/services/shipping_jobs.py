@@ -1,13 +1,14 @@
 """
-Background Jobs for UPS Shipping Integration v1.28.0
+Background Jobs for Multi-Carrier Shipping Integration v1.29.0
 
 Provides scheduled tasks for:
-- Tracking sync (update shipment status from UPS)
+- Tracking sync (update shipment status from all carriers)
 - Rate quote cleanup (expire old quotes)
 - Shipment reconciliation (match orders to shipments)
 - Address normalization (batch validate addresses)
 
 Per constitution_binder.json: Background jobs must be idempotent and have proper error handling.
+Per 20251216_shipping_compartmentalization_proposal: Multi-carrier support with feature flags.
 """
 import asyncio
 import logging
@@ -19,9 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
 from app.models.shipment import Shipment, ShipmentRate, ShipmentStatus, TrackingEvent
+from app.models.carrier import Carrier, CarrierCode
 from app.models.address import Address, AddressValidationStatus
 from app.models.order import Order
 from app.services.shipping_service import ShippingService, ShippingError
+from app.core.feature_flags import FeatureFlags
+from app.modules.shipping.carriers import get_carrier
 from app.services.alerting import (
     alert_tracking_sync_failure,
     alert_shipment_exception,
@@ -148,10 +152,13 @@ class ShippingJobRunner:
 
     async def _get_shipments_for_tracking(self, db: AsyncSession) -> List[Shipment]:
         """Get shipments that need tracking updates."""
+        from sqlalchemy.orm import selectinload
+
         stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_TRACKING_HOURS)
 
         result = await db.execute(
             select(Shipment)
+            .options(selectinload(Shipment.carrier))  # Eager load carrier for multi-carrier support
             .where(
                 and_(
                     Shipment.status.in_(ACTIVE_TRACKING_STATUSES),
@@ -175,10 +182,76 @@ class ShippingJobRunner:
         shipping_service: ShippingService,
         shipment: Shipment,
     ):
-        """Update tracking for a single shipment."""
+        """
+        Update tracking for a single shipment.
+
+        Uses carrier-specific tracking based on shipment's carrier.
+        Falls back to UPS ShippingService for backward compatibility.
+        """
         old_status = shipment.status
 
-        await shipping_service.update_tracking(shipment.id)
+        # Determine carrier from shipment or default to UPS
+        carrier_code = CarrierCode.UPS
+        if shipment.carrier and shipment.carrier.code:
+            carrier_code = shipment.carrier.code
+
+        # Check if carrier is enabled
+        if not await FeatureFlags.is_carrier_enabled(carrier_code, db):
+            logger.warning(f"Carrier {carrier_code.value} disabled, skipping tracking for shipment {shipment.id}")
+            return
+
+        # Try to use carrier-specific tracking
+        carrier_config = shipment.carrier
+        carrier = await get_carrier(carrier_code, carrier_config)
+
+        if carrier and carrier_code != CarrierCode.UPS:
+            # Use carrier abstraction for non-UPS carriers
+            try:
+                tracking_info = await carrier.get_tracking(shipment.tracking_number)
+
+                # Update shipment from tracking info
+                shipment.status = tracking_info.status
+                shipment.status_detail = tracking_info.carrier_status
+
+                if tracking_info.actual_delivery:
+                    shipment.actual_delivery_date = tracking_info.actual_delivery
+                if tracking_info.estimated_delivery:
+                    shipment.estimated_delivery_date = tracking_info.estimated_delivery
+
+                # Add tracking events
+                if tracking_info.events:
+                    for event in tracking_info.events:
+                        tracking_event = TrackingEvent(
+                            shipment_id=shipment.id,
+                            event_code=event.status,
+                            event_type=event.status,
+                            description=event.description,
+                            city=event.city,
+                            state_province=event.state,
+                            country_code=event.country,
+                            event_time=event.timestamp,
+                            carrier_data={},
+                        )
+                        db.add(tracking_event)
+
+                    shipment.tracking_events = [
+                        {
+                            "type": e.status,
+                            "description": e.description,
+                            "time": e.timestamp.isoformat() if e.timestamp else None,
+                            "location": f"{e.city}, {e.state}" if e.city else None,
+                        }
+                        for e in tracking_info.events
+                    ]
+
+                shipment.last_tracking_update = datetime.now(timezone.utc)
+
+            except Exception as e:
+                logger.error(f"Carrier tracking error for {carrier_code.value}: {e}")
+                raise ShippingError(message=str(e), code="TRACKING_ERROR")
+        else:
+            # Use legacy ShippingService for UPS (backward compatibility)
+            await shipping_service.update_tracking(shipment.id)
 
         # Check for exceptions
         if shipment.status == ShipmentStatus.EXCEPTION and old_status != ShipmentStatus.EXCEPTION:

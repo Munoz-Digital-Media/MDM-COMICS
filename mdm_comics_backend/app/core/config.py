@@ -333,6 +333,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"  # Ignore Railway's injected env vars like API_TOKEN
 
 
 # Try to load settings, provide helpful error on failure

@@ -1,13 +1,15 @@
 """
-Shipping API Routes for UPS Shipping Integration v1.28.0
+Shipping API Routes for Multi-Carrier Shipping Integration v1.29.0
 
 Provides endpoints for:
+- Carrier management (list enabled carriers)
 - Address management (create, validate, list)
-- Rate quoting (get shipping options)
+- Rate quoting (single carrier and multi-carrier)
 - Shipment creation (generate labels)
 - Tracking (get shipment status)
 
 Per constitution_binder.json: All PII must be encrypted at rest.
+Per 20251216_shipping_compartmentalization_proposal: Multi-carrier support with feature flags.
 """
 import logging
 from typing import List, Optional
@@ -17,13 +19,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.core.database import get_db
-from app.api.deps import get_current_user, get_current_admin
+from app.api.deps import get_current_user, get_current_admin, require_any_carrier
 from app.models.user import User
 from app.models.address import Address, AddressType
 from app.models.shipment import Shipment, ShipmentStatus
 from app.models.order import Order
+from app.models.carrier import CarrierCode
+from app.core.feature_flags import FeatureFlags
 from app.services.shipping_service import ShippingService, ShippingError, get_shipping_service
+from app.services.multi_carrier_service import MultiCarrierService
 from app.services.encryption import mask_address_line, decrypt_pii
+from app.modules.shipping.carriers.base import AddressInput, Package
 from app.schemas.shipping import (
     AddressCreate,
     AddressResponse,
@@ -31,6 +37,11 @@ from app.schemas.shipping import (
     RateRequest,
     RateResponse,
     RateListResponse,
+    MultiCarrierRateRequest,
+    MultiCarrierRateResponse,
+    MultiCarrierRateListResponse,
+    CarrierInfo,
+    EnabledCarriersResponse,
     SelectRateRequest,
     ShipmentCreate,
     ShipmentResponse,
@@ -78,6 +89,43 @@ def address_to_response(address: Address) -> AddressResponse:
         validated_at=address.validated_at,
         is_default=address.is_default,
         created_at=address.created_at,
+    )
+
+
+# ==================== Carrier Endpoints ====================
+
+
+@router.get("/carriers", response_model=EnabledCarriersResponse)
+async def get_enabled_carriers(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get list of enabled shipping carriers.
+
+    Returns all carriers that are currently enabled via feature flags.
+    No authentication required - public endpoint.
+    """
+    enabled_codes = await FeatureFlags.get_enabled_carriers(db)
+
+    # Map carrier codes to info
+    carrier_info_map = {
+        CarrierCode.UPS: ("UPS", 1800),  # 30 min TTL
+        CarrierCode.USPS: ("USPS", 86400),  # 24 hr TTL
+    }
+
+    carriers = []
+    for code in enabled_codes:
+        name, ttl = carrier_info_map.get(code, (code.value, 1800))
+        carriers.append(CarrierInfo(
+            code=code.value,
+            name=name,
+            is_enabled=True,
+            rate_ttl_seconds=ttl,
+        ))
+
+    return EnabledCarriersResponse(
+        carriers=carriers,
+        total=len(carriers),
     )
 
 
@@ -325,6 +373,133 @@ async def select_shipping_rate(
     except ShippingError as e:
         await shipping_service.close()
         raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.post("/rates/multi", response_model=MultiCarrierRateListResponse)
+async def get_multi_carrier_rates(
+    rate_request: MultiCarrierRateRequest,
+    current_user: User = Depends(get_current_user),
+    enabled_carriers: List[CarrierCode] = Depends(require_any_carrier),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get shipping rates from all enabled carriers.
+
+    Returns combined rate list sorted by price (lowest first).
+    Each rate includes carrier identification and per-carrier TTL.
+
+    This is the recommended endpoint for checkout - it presents
+    all options to customers across all enabled carriers.
+    """
+    # Get destination address
+    shipping_service = ShippingService(db)
+    address = await shipping_service.get_address(rate_request.destination_address_id, current_user.id)
+    if not address:
+        await shipping_service.close()
+        raise HTTPException(status_code=404, detail="Destination address not found")
+
+    # Convert packages
+    packages = []
+    if rate_request.packages:
+        for pkg in rate_request.packages:
+            packages.append(Package(
+                weight=pkg.weight,
+                length=pkg.length or 0.0,
+                width=pkg.width or 0.0,
+                height=pkg.height or 0.0,
+                package_type=pkg.package_type,
+                declared_value=pkg.declared_value or 0.0,
+            ))
+    else:
+        # Default package
+        packages.append(Package(weight=0.5))
+
+    # Build origin from carrier config
+    from app.models.carrier import Carrier
+    result = await db.execute(
+        select(Carrier).where(Carrier.code == CarrierCode.UPS, Carrier.is_active == True)
+    )
+    carrier = result.scalar_one_or_none()
+
+    if not carrier:
+        await shipping_service.close()
+        raise HTTPException(status_code=503, detail="No carrier configured")
+
+    origin = AddressInput(
+        address_line1=carrier.origin_address_line1 or "",
+        city=carrier.origin_city or "",
+        state_province=carrier.origin_state or "",
+        postal_code=carrier.origin_postal_code or "",
+        country_code=carrier.origin_country_code or "US",
+        recipient_name=carrier.origin_attention_name or "MDM Comics",
+        company_name=carrier.origin_company_name or "MDM Comics",
+        phone=carrier.origin_phone,
+        residential=False,
+    )
+
+    destination = AddressInput(
+        address_line1=decrypt_pii(address.address_line1_encrypted) if address.address_line1_encrypted else "",
+        address_line2=decrypt_pii(address.address_line2_encrypted) if address.address_line2_encrypted else None,
+        city=address.city,
+        state_province=address.state_province,
+        postal_code=address.postal_code,
+        country_code=address.country_code,
+        recipient_name=decrypt_pii(address.recipient_name_encrypted) if address.recipient_name_encrypted else None,
+        company_name=decrypt_pii(address.company_name_encrypted) if address.company_name_encrypted else None,
+        phone=decrypt_pii(address.phone_encrypted) if address.phone_encrypted else None,
+        email=decrypt_pii(address.email_encrypted) if address.email_encrypted else None,
+        residential=address.residential,
+    )
+
+    # Get carrier filter if specified
+    carrier_filter = None
+    if rate_request.carrier_filter:
+        try:
+            carrier_filter = CarrierCode(rate_request.carrier_filter)
+        except ValueError:
+            await shipping_service.close()
+            raise HTTPException(status_code=400, detail=f"Invalid carrier code: {rate_request.carrier_filter}")
+
+    # Get multi-carrier rates
+    multi_carrier_service = MultiCarrierService(db)
+    try:
+        rates = await multi_carrier_service.get_all_carrier_rates(
+            origin=origin,
+            destination=destination,
+            packages=packages,
+            carrier_filter=carrier_filter,
+        )
+    except Exception as e:
+        await shipping_service.close()
+        logger.error(f"Multi-carrier rate error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get shipping rates")
+
+    await shipping_service.close()
+
+    # Build response
+    rate_responses = [
+        MultiCarrierRateResponse(
+            carrier_code=r.carrier_code.value,
+            carrier_name=r.carrier_name,
+            service_code=r.service_code,
+            service_name=r.service_name,
+            rate=r.rate,
+            currency=r.currency,
+            delivery_date=r.delivery_date,
+            delivery_days=r.delivery_days,
+            guaranteed=r.guaranteed,
+            ttl_seconds=r.ttl_seconds,
+            expires_at=r.expires_at,
+        )
+        for r in rates
+    ]
+
+    return MultiCarrierRateListResponse(
+        rates=rate_responses,
+        carriers_queried=[c.value for c in enabled_carriers],
+        destination_postal_code=address.postal_code,
+        destination_country=address.country_code,
+    )
 
 
 # ==================== Shipment Endpoints ====================
@@ -665,6 +840,13 @@ async def public_tracking(
     if not shipment:
         raise HTTPException(status_code=404, detail="Tracking number not found")
 
+    # Get carrier name from relationship or default
+    carrier_code = "UPS"
+    carrier_name = "UPS"
+    if shipment.carrier:
+        carrier_code = shipment.carrier.code.value if shipment.carrier.code else "UPS"
+        carrier_name = shipment.carrier.name or carrier_code
+
     # Return limited public info
     events = []
     if shipment.tracking_events:
@@ -679,7 +861,8 @@ async def public_tracking(
     return {
         "tracking_number": shipment.tracking_number,
         "status": shipment.status.value if shipment.status else "unknown",
-        "carrier": "UPS",
+        "carrier": carrier_name,
+        "carrier_code": carrier_code,
         "delivered": shipment.status == ShipmentStatus.DELIVERED,
         "delivery_date": shipment.actual_delivery_date,
         "events": events,

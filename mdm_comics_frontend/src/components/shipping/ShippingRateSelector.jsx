@@ -1,6 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Truck, Clock, Shield, CheckCircle, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Truck, Clock, Shield, CheckCircle, Loader2, AlertCircle, RefreshCw, Package } from 'lucide-react';
 import { shippingAPI } from '../../services/api';
+
+// Carrier-specific colors and icons
+const CARRIER_STYLES = {
+  UPS: {
+    bg: 'bg-amber-900/30',
+    border: 'border-amber-700',
+    text: 'text-amber-400',
+    badge: 'bg-amber-500/20 text-amber-400',
+  },
+  USPS: {
+    bg: 'bg-blue-900/30',
+    border: 'border-blue-700',
+    text: 'text-blue-400',
+    badge: 'bg-blue-500/20 text-blue-400',
+  },
+  DEFAULT: {
+    bg: 'bg-zinc-800',
+    border: 'border-zinc-700',
+    text: 'text-zinc-400',
+    badge: 'bg-zinc-500/20 text-zinc-400',
+  },
+};
+
+const getCarrierStyle = (carrierCode) => {
+  return CARRIER_STYLES[carrierCode] || CARRIER_STYLES.DEFAULT;
+};
 
 const formatDate = (dateStr) => {
   if (!dateStr) return null;
@@ -23,8 +49,18 @@ const formatTimeRemaining = (expiresAt) => {
   return `${Math.floor(diffMins / 60)}h ${diffMins % 60}m remaining`;
 };
 
-function RateCard({ rate, selected, onSelect, disabled }) {
+function RateCard({ rate, selected, onSelect, disabled, showCarrier = true }) {
   const isExpired = new Date(rate.expires_at) < new Date();
+  const carrierCode = rate.carrier_code || rate.carrierCode || 'UPS';
+  const carrierName = rate.carrier_name || rate.carrierName || carrierCode;
+  const carrierStyle = getCarrierStyle(carrierCode);
+
+  // Support both multi-carrier and legacy rate formats
+  const totalRate = rate.total_rate ?? rate.rate ?? 0;
+  const serviceName = rate.service_name ?? rate.serviceName ?? 'Standard';
+  const deliveryDate = rate.estimated_delivery_date ?? rate.delivery_date;
+  const transitDays = rate.estimated_transit_days ?? rate.delivery_days;
+  const guaranteed = rate.guaranteed_delivery ?? rate.guaranteed ?? false;
 
   return (
     <button
@@ -36,15 +72,20 @@ function RateCard({ rate, selected, onSelect, disabled }) {
           ? 'border-orange-500 bg-orange-500/10'
           : isExpired
             ? 'border-zinc-700 bg-zinc-800/50 opacity-50 cursor-not-allowed'
-            : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'
+            : `${carrierStyle.border} ${carrierStyle.bg} hover:border-zinc-500`
       }`}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <Truck className={`w-5 h-5 ${selected ? 'text-orange-500' : 'text-zinc-400'}`} />
-            <span className="font-semibold text-white">{rate.service_name}</span>
-            {rate.guaranteed_delivery && (
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            {showCarrier && (
+              <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${carrierStyle.badge}`}>
+                {carrierName}
+              </span>
+            )}
+            <Truck className={`w-5 h-5 ${selected ? 'text-orange-500' : carrierStyle.text}`} />
+            <span className="font-semibold text-white">{serviceName}</span>
+            {guaranteed && (
               <span className="px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full">
                 Guaranteed
               </span>
@@ -52,16 +93,16 @@ function RateCard({ rate, selected, onSelect, disabled }) {
           </div>
 
           <div className="flex items-center gap-4 text-sm text-zinc-400">
-            {rate.estimated_delivery_date && (
+            {deliveryDate && (
               <span className="flex items-center gap-1">
                 <Clock className="w-4 h-4" />
-                Arrives {formatDate(rate.estimated_delivery_date)}
+                Arrives {formatDate(deliveryDate)}
               </span>
             )}
-            {rate.estimated_transit_days && !rate.estimated_delivery_date && (
+            {transitDays && !deliveryDate && (
               <span className="flex items-center gap-1">
                 <Clock className="w-4 h-4" />
-                {rate.estimated_transit_days} business day{rate.estimated_transit_days !== 1 ? 's' : ''}
+                {transitDays} business day{transitDays !== 1 ? 's' : ''}
               </span>
             )}
           </div>
@@ -69,7 +110,7 @@ function RateCard({ rate, selected, onSelect, disabled }) {
 
         <div className="text-right">
           <div className="text-xl font-bold text-white">
-            ${rate.total_rate.toFixed(2)}
+            ${totalRate.toFixed(2)}
           </div>
           {isExpired ? (
             <div className="text-xs text-red-400">Expired</div>
@@ -97,20 +138,34 @@ export default function ShippingRateSelector({
   packages = null,
   onRateSelected,
   selectedQuoteId = null,
+  useMultiCarrier = true, // Default to multi-carrier for best customer experience
+  carrierFilter = null, // Optional: filter to specific carrier
 }) {
   const [rates, setRates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedRate, setSelectedRate] = useState(null);
   const [confirming, setConfirming] = useState(false);
+  const [carriersQueried, setCarriersQueried] = useState([]);
 
   const loadRates = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await shippingAPI.getRates(destinationAddressId, orderId, packages);
-      setRates(response.rates || []);
+      let response;
+      if (useMultiCarrier) {
+        // Use multi-carrier endpoint to get rates from all enabled carriers
+        response = await shippingAPI.getMultiCarrierRates(destinationAddressId, orderId, packages, carrierFilter);
+        setCarriersQueried(response.carriers_queried || []);
+        // Multi-carrier rates are already sorted by price
+        setRates(response.rates || []);
+      } else {
+        // Legacy single-carrier (UPS) rates
+        response = await shippingAPI.getRates(destinationAddressId, orderId, packages);
+        setCarriersQueried(['UPS']);
+        setRates(response.rates || []);
+      }
 
       // Restore selection if quote_id provided
       if (selectedQuoteId) {
@@ -122,7 +177,7 @@ export default function ShippingRateSelector({
     } finally {
       setLoading(false);
     }
-  }, [destinationAddressId, orderId, packages, selectedQuoteId]);
+  }, [destinationAddressId, orderId, packages, selectedQuoteId, useMultiCarrier, carrierFilter]);
 
   useEffect(() => {
     if (destinationAddressId) {
@@ -197,13 +252,23 @@ export default function ShippingRateSelector({
     );
   }
 
+  // Determine if we're showing multiple carriers
+  const showCarrierBadges = carriersQueried.length > 1 || useMultiCarrier;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-          <Truck className="w-5 h-5 text-orange-500" />
-          Shipping Options
-        </h3>
+        <div>
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Truck className="w-5 h-5 text-orange-500" />
+            Shipping Options
+          </h3>
+          {carriersQueried.length > 0 && (
+            <p className="text-xs text-zinc-500 mt-1">
+              Comparing rates from {carriersQueried.join(', ')}
+            </p>
+          )}
+        </div>
         <button
           onClick={loadRates}
           disabled={loading}
@@ -215,13 +280,14 @@ export default function ShippingRateSelector({
       </div>
 
       <div className="space-y-3">
-        {rates.map((rate) => (
+        {rates.map((rate, index) => (
           <RateCard
-            key={rate.quote_id}
+            key={rate.quote_id || `rate-${index}`}
             rate={rate}
-            selected={selectedRate?.quote_id === rate.quote_id}
+            selected={selectedRate?.quote_id === rate.quote_id || selectedRate === rate}
             onSelect={handleSelectRate}
             disabled={confirming}
+            showCarrier={showCarrierBadges}
           />
         ))}
       </div>
@@ -241,7 +307,7 @@ export default function ShippingRateSelector({
             ) : (
               <>
                 <CheckCircle className="w-5 h-5" />
-                Continue with {selectedRate.service_name} - ${selectedRate.total_rate.toFixed(2)}
+                Continue with {selectedRate.carrier_name || selectedRate.carrierName || 'UPS'} {selectedRate.service_name || selectedRate.serviceName} - ${(selectedRate.total_rate ?? selectedRate.rate ?? 0).toFixed(2)}
               </>
             )}
           </button>

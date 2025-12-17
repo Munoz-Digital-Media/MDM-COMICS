@@ -1,12 +1,30 @@
 """
-Shipping Schemas for UPS Shipping Integration v1.28.0
+Shipping Schemas for Multi-Carrier Shipping Integration v1.29.0
 
 Pydantic models for shipping API requests and responses.
+Supports UPS, USPS, and future carriers.
 """
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 import re
+
+
+# ==================== Carrier Schemas ====================
+
+
+class CarrierInfo(BaseModel):
+    """Carrier information."""
+    code: str
+    name: str
+    is_enabled: bool
+    rate_ttl_seconds: int = 1800
+
+
+class EnabledCarriersResponse(BaseModel):
+    """List of enabled carriers."""
+    carriers: List[CarrierInfo]
+    total: int
 
 
 # ==================== Address Schemas ====================
@@ -98,7 +116,16 @@ class RateRequest(BaseModel):
     destination_address_id: int
     packages: Optional[List[PackageInfo]] = None
     order_id: Optional[int] = None
-    service_code: Optional[str] = Field(None, description="Specific UPS service code (optional)")
+    service_code: Optional[str] = Field(None, description="Specific service code (optional)")
+    carrier_code: Optional[str] = Field(None, description="Filter to specific carrier (UPS, USPS)")
+
+
+class MultiCarrierRateRequest(BaseModel):
+    """Request multi-carrier shipping rates."""
+    destination_address_id: int
+    packages: Optional[List[PackageInfo]] = None
+    order_id: Optional[int] = None
+    carrier_filter: Optional[str] = Field(None, description="Filter to specific carrier (UPS, USPS)")
 
 
 class RateResponse(BaseModel):
@@ -111,14 +138,39 @@ class RateResponse(BaseModel):
     estimated_transit_days: Optional[int] = None
     guaranteed_delivery: bool = False
     expires_at: datetime
+    carrier_code: Optional[str] = Field("UPS", description="Carrier code (UPS, USPS)")
+    carrier_name: Optional[str] = Field("UPS", description="Carrier display name")
 
     class Config:
         from_attributes = True
 
 
+class MultiCarrierRateResponse(BaseModel):
+    """A single rate from any carrier."""
+    carrier_code: str
+    carrier_name: str
+    service_code: str
+    service_name: str
+    rate: float
+    currency: str = "USD"
+    delivery_date: Optional[datetime] = None
+    delivery_days: Optional[int] = None
+    guaranteed: bool = False
+    ttl_seconds: int
+    expires_at: datetime
+
+
 class RateListResponse(BaseModel):
     """List of available shipping rates."""
     rates: List[RateResponse]
+    destination_postal_code: str
+    destination_country: str
+
+
+class MultiCarrierRateListResponse(BaseModel):
+    """List of rates from all enabled carriers."""
+    rates: List[MultiCarrierRateResponse]
+    carriers_queried: List[str]
     destination_postal_code: str
     destination_country: str
 
@@ -179,6 +231,8 @@ class ShipmentResponse(BaseModel):
     shipped_at: Optional[datetime] = None
     last_tracking_update: Optional[datetime] = None
     tracking_events: Optional[List[TrackingEventResponse]] = None
+    carrier_code: Optional[str] = Field("UPS", description="Carrier code")
+    carrier_name: Optional[str] = Field("UPS", description="Carrier name")
 
     class Config:
         from_attributes = True

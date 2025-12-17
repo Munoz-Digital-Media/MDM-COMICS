@@ -22,10 +22,25 @@ async def run_migrations():
     print("Running migrations...")
     try:
         await create_stock_reservations_table()
-        print("Migrations complete")
+        print("Stock reservations migration complete")
     except Exception as e:
-        print(f"Migration warning (non-fatal): {e}")
-        # Don't fail startup if migration fails - table might already exist
+        print(f"Stock reservations migration warning (non-fatal): {e}")
+
+    # Feature flags migration (shipping compartmentalization)
+    try:
+        from migrations.m_2025_12_16_feature_flags import main as feature_flags_main
+        await feature_flags_main()
+        print("Feature flags migration complete")
+    except Exception as e:
+        print(f"Feature flags migration warning (non-fatal): {e}")
+
+    # Carrier credentials_json migration
+    try:
+        from migrations.m_2025_12_16_carrier_credentials_json import run_migration as credentials_migration
+        await credentials_migration()
+        print("Carrier credentials migration complete")
+    except Exception as e:
+        print(f"Carrier credentials migration warning (non-fatal): {e}")
 
 
 def start_api():

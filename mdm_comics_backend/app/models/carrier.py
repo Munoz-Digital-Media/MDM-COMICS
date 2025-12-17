@@ -16,10 +16,16 @@ from app.core.database import Base
 
 
 class CarrierCode(str, enum.Enum):
-    """Supported shipping carriers"""
+    """
+    Supported shipping carriers.
+
+    Per 20251216_shipping_compartmentalization_proposal.json:
+    - Each carrier independently toggleable via feature_flags table
+    - Carrier availability controlled at runtime, not compile time
+    """
     UPS = "UPS"
+    USPS = "USPS"
     # Future carriers
-    # USPS = "USPS"
     # FEDEX = "FEDEX"
     # DHL = "DHL"
 
@@ -58,6 +64,10 @@ class Carrier(Base):
     client_secret_encrypted = Column(Text, nullable=True)
     oauth_token_encrypted = Column(Text, nullable=True)
     oauth_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Carrier-agnostic credentials storage (Fernet-encrypted JSON)
+    # Used for new carriers; existing carriers use dedicated columns above
+    credentials_json = Column(Text, nullable=True)
 
     # API endpoints
     api_base_url = Column(String(255), nullable=True)

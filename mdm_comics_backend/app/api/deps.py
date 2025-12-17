@@ -170,3 +170,91 @@ async def get_optional_user(
     user_id = payload.get("sub")
     result = await db.execute(select(User).where(User.id == int(user_id)))
     return result.scalar_one_or_none()
+
+
+# =============================================================================
+# Feature Flag Guards v1.0.0
+# Per 20251216_shipping_compartmentalization_proposal.json
+# =============================================================================
+
+from typing import List
+from app.core.feature_flags import FeatureFlags
+from app.models.carrier import CarrierCode
+
+
+async def require_carrier(
+    carrier_code: CarrierCode,
+    db: AsyncSession = Depends(get_db)
+) -> CarrierCode:
+    """
+    FastAPI dependency that requires a specific carrier to be enabled.
+
+    Usage:
+        @router.post("/shipping/rates")
+        async def get_rates(
+            carrier: CarrierCode = Depends(lambda: require_carrier(CarrierCode.UPS))
+        ):
+            ...
+
+    Raises:
+        HTTPException 503 if carrier is disabled
+    """
+    if not await FeatureFlags.is_carrier_enabled(carrier_code, db):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "carrier_disabled",
+                "message": f"{carrier_code.value} carrier is temporarily unavailable"
+            }
+        )
+    return carrier_code
+
+
+async def require_any_carrier(
+    db: AsyncSession = Depends(get_db)
+) -> List[CarrierCode]:
+    """
+    FastAPI dependency that requires at least one carrier to be enabled.
+
+    Returns list of enabled carriers.
+
+    Usage:
+        @router.get("/shipping/rates")
+        async def get_all_rates(
+            enabled_carriers: List[CarrierCode] = Depends(require_any_carrier)
+        ):
+            for carrier in enabled_carriers:
+                ...
+
+    Raises:
+        HTTPException 503 if no carriers are enabled
+    """
+    enabled = await FeatureFlags.get_enabled_carriers(db)
+
+    if not enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "no_carriers",
+                "message": "No shipping carriers are currently available"
+            }
+        )
+
+    return enabled
+
+
+def carrier_guard(carrier_code: CarrierCode):
+    """
+    Factory function for carrier-specific dependencies.
+
+    Usage:
+        @router.post("/shipping/ups/rates")
+        async def get_ups_rates(
+            _: CarrierCode = Depends(carrier_guard(CarrierCode.UPS))
+        ):
+            ...
+    """
+    async def _guard(db: AsyncSession = Depends(get_db)) -> CarrierCode:
+        return await require_carrier(carrier_code, db)
+
+    return _guard

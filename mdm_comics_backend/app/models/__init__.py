@@ -130,6 +130,9 @@ except ImportError as e:
     MatchAuditLog = None
     IsbnSource = None
 
+# Feature Flags v1.0.0 - Runtime carrier toggles
+from app.models.feature_flag import FeatureFlag
+
 __all__ = [
     "User",
     "Product",
@@ -222,4 +225,6 @@ __all__ = [
     "MatchReviewQueue",
     "MatchAuditLog",
     "IsbnSource",
+    # Feature Flags v1.0.0
+    "FeatureFlag",
 ]
