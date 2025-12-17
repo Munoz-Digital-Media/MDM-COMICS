@@ -1,3 +1,4 @@
+# Frontend build - serves static React app
 FROM node:20-alpine AS builder
 
 WORKDIR /app

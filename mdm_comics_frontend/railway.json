@@ -3,7 +3,7 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile",
-    "watchPatterns": ["src/**", "package.json", "vite.config.js", "Dockerfile"]
+    "watchPatterns": ["src/**", "package.json", "vite.config.js", "Dockerfile", "railway.json"]
   },
   "deploy": {
     "healthcheckPath": "/",
