@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.api.deps import get_current_admin_user
+from app.api.deps import get_current_admin
 from app.models import User, BCWRefundRequest, BCWRefundState, BCWRefundEvent
 from app.services.refund_service import (
     BCWRefundService,
@@ -191,7 +191,7 @@ async def list_refund_requests(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin_user)
+    admin: User = Depends(get_current_admin)
 ):
     """
     List all refund requests with optional state filter.
@@ -223,7 +223,7 @@ async def list_refund_requests(
 @router.get("/stats", response_model=RefundStatsResponse)
 async def get_refund_stats(
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin_user)
+    admin: User = Depends(get_current_admin)
 ):
     """
     Get refund statistics.
@@ -301,7 +301,7 @@ async def get_refund_stats(
 async def get_refund_request(
     refund_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin_user)
+    admin: User = Depends(get_current_admin)
 ):
     """
     Get detailed refund request with audit trail.
@@ -327,7 +327,7 @@ async def review_refund_request(
     refund_id: int,
     request: ReviewRefundRequest,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin_user)
+    admin: User = Depends(get_current_admin)
 ):
     """
     Approve or deny a refund request.
@@ -395,7 +395,7 @@ async def initiate_vendor_return(
     refund_id: int,
     request: InitiateVendorReturnRequest,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin_user)
+    admin: User = Depends(get_current_admin)
 ):
     """
     Initiate vendor return - record return shipping info.
@@ -447,7 +447,7 @@ async def record_vendor_credit(
     refund_id: int,
     request: RecordVendorCreditRequest,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin_user)
+    admin: User = Depends(get_current_admin)
 ):
     """
     Record vendor credit received from BCW.
@@ -514,7 +514,7 @@ async def record_vendor_credit(
 async def process_customer_refund(
     refund_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin_user)
+    admin: User = Depends(get_current_admin)
 ):
     """
     Process customer refund via Stripe.
