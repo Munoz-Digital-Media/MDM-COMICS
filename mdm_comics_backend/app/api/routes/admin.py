@@ -1920,9 +1920,7 @@ async def get_pricecharting_matching_status(
 # ----- Metron API Stats (v2.0.0 Mokkari Integration) -----
 
 @router.get("/metron-stats")
-async def get_metron_stats(
-    current_user: User = Depends(get_current_admin),
-):
+async def get_metron_stats():
     """
     Metron API request statistics for observability.
 
