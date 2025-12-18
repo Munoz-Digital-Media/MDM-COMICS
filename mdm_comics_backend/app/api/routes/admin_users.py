@@ -97,7 +97,7 @@ class UnlockRequest(BaseModel):
 # User CRUD Endpoints
 # ============================================================
 
-@router.get("", response_model=UserListResponse)
+@router.get("/", response_model=UserListResponse)
 async def list_users(
     request: Request,
     search: Optional[str] = Query(None, description="Search by email or name"),
@@ -177,7 +177,7 @@ async def get_user(
     )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_user(
     request: Request,
     data: UserCreateRequest,
