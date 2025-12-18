@@ -1,6 +1,7 @@
 /**
  * AdminDashboard - Overview with key metrics and quick actions
- * Phase 3: MDM Admin Console Inventory System v1.4.0
+ * Phase 3: MDM Admin Console Inventory System v1.5.0
+ * SYSTEM-001: Real system status from /data-health/overview (no more hardcoded lies)
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -70,17 +71,20 @@ export default function AdminDashboard({ onNavigate }) {
   const [error, setError] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [lowStock, setLowStock] = useState([]);
+  const [systemStatus, setSystemStatus] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchDashboard = useCallback(async () => {
     try {
       setError(null);
-      const [dashData, lowStockData] = await Promise.all([
+      const [dashData, lowStockData, statusData] = await Promise.all([
         adminAPI.getDashboard(),
         adminAPI.getLowStockItems(5),
+        adminAPI.getSystemStatus().catch(() => null), // Don't fail dashboard if status fails
       ]);
       setDashboard(dashData);
       setLowStock(lowStockData.items || []);
+      setSystemStatus(statusData);
     } catch (err) {
       console.error('Dashboard fetch error:', err);
       setError(err.message);
@@ -290,17 +294,57 @@ export default function AdminDashboard({ onNavigate }) {
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
           <h3 className="text-sm font-semibold text-zinc-400 mb-4">System Status</h3>
           <div className="space-y-3">
+            {/* Database status - if we got systemStatus, DB is connected */}
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">Database</span>
-              <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">Connected</span>
+              <span className={`text-xs px-2 py-1 rounded-full ${
+                systemStatus
+                  ? 'bg-green-500/20 text-green-400'
+                  : 'bg-yellow-500/20 text-yellow-400'
+              }`}>
+                {systemStatus ? 'Connected' : 'Checking...'}
+              </span>
             </div>
+            {/* Pipeline jobs status */}
             <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">Price Sync</span>
-              <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">Active</span>
+              <span className="text-sm text-zinc-400">Pipeline Jobs</span>
+              <span className={`text-xs px-2 py-1 rounded-full ${
+                systemStatus?.pipeline?.running_jobs > 0
+                  ? 'bg-blue-500/20 text-blue-400'
+                  : 'bg-zinc-700/50 text-zinc-400'
+              }`}>
+                {systemStatus?.pipeline?.running_jobs > 0
+                  ? `${systemStatus.pipeline.running_jobs} Running`
+                  : 'Idle'}
+              </span>
             </div>
+            {/* Dead Letter Queue */}
             <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">Stock Cleanup</span>
-              <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">Running</span>
+              <span className="text-sm text-zinc-400">Error Queue</span>
+              <span className={`text-xs px-2 py-1 rounded-full ${
+                (systemStatus?.dead_letter_queue?.pending_count || 0) > 10
+                  ? 'bg-red-500/20 text-red-400'
+                  : (systemStatus?.dead_letter_queue?.pending_count || 0) > 0
+                    ? 'bg-yellow-500/20 text-yellow-400'
+                    : 'bg-green-500/20 text-green-400'
+              }`}>
+                {systemStatus?.dead_letter_queue?.pending_count || 0} Pending
+              </span>
+            </div>
+            {/* Overall health */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400">Health</span>
+              <span className={`text-xs px-2 py-1 rounded-full ${
+                systemStatus?.status === 'healthy'
+                  ? 'bg-green-500/20 text-green-400'
+                  : systemStatus?.status === 'degraded'
+                    ? 'bg-yellow-500/20 text-yellow-400'
+                    : 'bg-zinc-700/50 text-zinc-400'
+              }`}>
+                {systemStatus?.status === 'healthy' ? 'Healthy'
+                  : systemStatus?.status === 'degraded' ? 'Degraded'
+                  : 'Unknown'}
+              </span>
             </div>
           </div>
         </div>

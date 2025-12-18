@@ -818,6 +818,22 @@ export const adminAPI = {
 
     return response.json();
   },
+
+  // ==================== SYSTEM STATUS ====================
+
+  /**
+   * Get real system health status (database, jobs, adapters)
+   */
+  getSystemStatus: async () => {
+    return fetchAPI('/admin/data-health/overview');
+  },
+
+  /**
+   * Get pipeline job statuses
+   */
+  getPipelineJobs: async () => {
+    return fetchAPI('/admin/data-health/pipeline/jobs');
+  },
 };
 
 export default adminAPI;
