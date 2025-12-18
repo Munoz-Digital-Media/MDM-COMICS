@@ -38,34 +38,39 @@ async def search_comics(
     All results are cached locally for future use.
     Supports UPC barcode search for exact match.
     """
+    import asyncio
+    import logging
+    logger = logging.getLogger(__name__)
+
     try:
         ip_address = request.client.host if request.client else None
 
-        results = await comic_cache.search_issues(
-            db=db,
-            series_name=series,
-            number=number,
-            publisher_name=publisher,
-            cover_year=year,
-            upc=upc,
-            page=page,
-            ip_address=ip_address
-        )
-        return results
-    except Exception as e:
-        # Fallback to direct Metron call if caching fails
-        try:
-            results = await metron_service.search_issues(
+        # Add timeout to prevent Railway 502
+        results = await asyncio.wait_for(
+            comic_cache.search_issues(
+                db=db,
                 series_name=series,
                 number=number,
                 publisher_name=publisher,
                 cover_year=year,
                 upc=upc,
-                page=page
-            )
-            return results
-        except Exception as e2:
-            raise HTTPException(status_code=500, detail=f"Error searching comics: {str(e2)}")
+                page=page,
+                ip_address=ip_address
+            ),
+            timeout=25.0  # Fail before Railway's 30s timeout
+        )
+        return results
+    except asyncio.TimeoutError:
+        logger.warning(f"[comics/search] Timeout searching for series={series}, number={number}")
+        # Return empty results instead of error - better UX
+        return {"results": [], "count": 0, "next": None, "previous": None, "message": "Search timed out. External API may be rate limited. Try again later."}
+    except Exception as e:
+        logger.error(f"[comics/search] Error: {e}")
+        # Check if it's a rate limit error
+        error_str = str(e).lower()
+        if "429" in error_str or "rate limit" in error_str:
+            return {"results": [], "count": 0, "next": None, "previous": None, "message": "External API rate limited. Please try again later."}
+        raise HTTPException(status_code=500, detail=f"Error searching comics: {str(e)}")
 
 
 @router.get("/issue/{issue_id}")
@@ -107,29 +112,35 @@ async def search_series(
     """
     Search for comic series. Results are cached locally.
     """
+    import asyncio
+    import logging
+    logger = logging.getLogger(__name__)
+
     try:
         ip_address = request.client.host if request.client else None
 
-        results = await comic_cache.search_series(
-            db=db,
-            name=name,
-            publisher_name=publisher,
-            year_began=year,
-            page=page,
-            ip_address=ip_address
-        )
-        return results
-    except Exception as e:
-        try:
-            results = await metron_service.search_series(
+        # Add timeout to prevent Railway 502
+        results = await asyncio.wait_for(
+            comic_cache.search_series(
+                db=db,
                 name=name,
                 publisher_name=publisher,
                 year_began=year,
-                page=page
-            )
-            return results
-        except Exception as e2:
-            raise HTTPException(status_code=500, detail=f"Error searching series: {str(e2)}")
+                page=page,
+                ip_address=ip_address
+            ),
+            timeout=25.0
+        )
+        return results
+    except asyncio.TimeoutError:
+        logger.warning(f"[comics/series] Timeout searching for name={name}")
+        return {"results": [], "count": 0, "next": None, "previous": None, "message": "Search timed out. External API may be rate limited. Try again later."}
+    except Exception as e:
+        logger.error(f"[comics/series] Error: {e}")
+        error_str = str(e).lower()
+        if "429" in error_str or "rate limit" in error_str:
+            return {"results": [], "count": 0, "next": None, "previous": None, "message": "External API rate limited. Please try again later."}
+        raise HTTPException(status_code=500, detail=f"Error searching series: {str(e)}")
 
 
 @router.get("/series/{series_id}")
