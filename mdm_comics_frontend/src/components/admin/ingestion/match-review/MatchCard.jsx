@@ -18,7 +18,9 @@ const MatchCard = forwardRef(({
   onManualSearch,
   onKeyDown,
   isProcessing,
-  tabIndex
+  tabIndex,
+  isSelected,
+  onToggleSelect
 }, ref) => {
   const { entity, candidate, match_method, match_score, is_escalated, can_bulk_approve } = match;
 
@@ -34,6 +36,14 @@ const MatchCard = forwardRef(({
   const formatPrice = (price) => {
     if (price == null) return '—';
     return `$${price.toFixed(2)}`;
+  };
+
+  // Handle checkbox click
+  const handleCheckboxClick = (e) => {
+    e.stopPropagation();
+    if (onToggleSelect) {
+      onToggleSelect();
+    }
   };
 
   // Handle approve click
@@ -62,7 +72,7 @@ const MatchCard = forwardRef(({
     <div
       ref={ref}
       role="listitem"
-      className={`match-card ${is_escalated ? 'escalated' : ''} ${isProcessing ? 'processing' : ''}`}
+      className={`match-card ${is_escalated ? 'escalated' : ''} ${isProcessing ? 'processing' : ''} ${isSelected ? 'selected' : ''}`}
       onClick={onSelect}
       onKeyDown={onKeyDown}
       tabIndex={tabIndex}
@@ -75,15 +85,28 @@ const MatchCard = forwardRef(({
         </div>
       )}
 
-      {/* Match score */}
-      <div className={`match-score ${getScoreClass(match_score)}`}>
-        <span className="score-value">{match_score ?? '?'}</span>
-        <span className="score-label">score</span>
-      </div>
+      {/* Checkbox for bulk selection */}
+      {onToggleSelect && (
+        <div className="card-checkbox-container">
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={handleCheckboxClick}
+            onClick={handleCheckboxClick}
+            aria-label={`Select match ${match.id}`}
+            className="card-checkbox"
+          />
+        </div>
+      )}
 
       {/* Entity info (left side) */}
       <div className="card-entity">
-        <div className="entity-type-badge">{entity.type}</div>
+        <div className="entity-badges">
+          <span className="entity-type-badge">{entity.type}</span>
+          <span className={`score-badge ${getScoreClass(match_score)}`}>
+            {match_score ?? '?'}
+          </span>
+        </div>
         {entity.cover_image_url && (
           <img
             src={entity.cover_image_url}
@@ -217,12 +240,16 @@ MatchCard.propTypes = {
   onManualSearch: PropTypes.func.isRequired,
   onKeyDown: PropTypes.func.isRequired,
   isProcessing: PropTypes.bool,
-  tabIndex: PropTypes.number
+  tabIndex: PropTypes.number,
+  isSelected: PropTypes.bool,
+  onToggleSelect: PropTypes.func
 };
 
 MatchCard.defaultProps = {
   isProcessing: false,
-  tabIndex: 0
+  tabIndex: 0,
+  isSelected: false,
+  onToggleSelect: null
 };
 
 export default MatchCard;

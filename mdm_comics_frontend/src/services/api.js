@@ -851,6 +851,16 @@ export const matchReviewAPI = {
   },
 
   /**
+   * Bulk reject matches with image cleanup
+   */
+  bulkReject: async (matchIds, reason, notes = null) => {
+    return fetchAPI('/admin/match-queue/bulk-reject', {
+      method: 'POST',
+      body: JSON.stringify({ match_ids: matchIds, reason, notes }),
+    });
+  },
+
+  /**
    * Manual link entity to PriceCharting
    */
   manualLink: async (entityType, entityId, pricechartingId, notes = null) => {

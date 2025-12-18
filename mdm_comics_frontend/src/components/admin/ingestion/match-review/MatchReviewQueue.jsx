@@ -37,6 +37,13 @@ const MatchReviewQueue = () => {
   const [total, setTotal] = useState(0);
   const [processing, setProcessing] = useState(new Set());
 
+  // Bulk selection state
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [showBulkRejectModal, setShowBulkRejectModal] = useState(false);
+  const [bulkRejectReason, setBulkRejectReason] = useState('wrong_match');
+  const [bulkRejectNotes, setBulkRejectNotes] = useState('');
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+
   // Refs for focus management
   const firstCardRef = useRef(null);
   const announcerRef = useRef(null);
@@ -54,6 +61,8 @@ const MatchReviewQueue = () => {
         pending_count: response.pending_count,
         escalated_count: response.escalated_count
       });
+      // Clear selection when filter changes
+      setSelectedIds(new Set());
     } catch (err) {
       setError(err.message || 'Failed to load queue');
       console.error('Queue fetch error:', err);
@@ -97,6 +106,29 @@ const MatchReviewQueue = () => {
     }
   }, []);
 
+  // Selection handlers
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(matches.map(m => m.id)));
+    announce(`Selected all ${matches.length} matches`);
+  }, [matches, announce]);
+
+  const deselectAll = useCallback(() => {
+    setSelectedIds(new Set());
+    announce('Selection cleared');
+  }, [announce]);
+
   // Actions
   const handleApprove = async (matchId) => {
     if (processing.has(matchId)) return;
@@ -107,6 +139,11 @@ const MatchReviewQueue = () => {
       announce('Match approved successfully');
       setMatches(prev => prev.filter(m => m.id !== matchId));
       setSelectedMatch(null);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(matchId);
+        return next;
+      });
       fetchStats();
     } catch (err) {
       announce('Failed to approve match');
@@ -129,6 +166,11 @@ const MatchReviewQueue = () => {
       announce('Match rejected');
       setMatches(prev => prev.filter(m => m.id !== matchId));
       setSelectedMatch(null);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(matchId);
+        return next;
+      });
       fetchStats();
     } catch (err) {
       announce('Failed to reject match');
@@ -169,6 +211,30 @@ const MatchReviewQueue = () => {
     } catch (err) {
       announce('Bulk approve failed');
       console.error('Bulk approve error:', err);
+    }
+  };
+
+  // Bulk reject selected matches
+  const handleBulkReject = async () => {
+    if (selectedIds.size === 0) return;
+
+    setBulkProcessing(true);
+    try {
+      const response = await matchReviewAPI.bulkReject(
+        Array.from(selectedIds),
+        bulkRejectReason,
+        bulkRejectNotes || null
+      );
+      announce(`Rejected ${response.rejected_count} matches`);
+      setShowBulkRejectModal(false);
+      setBulkRejectNotes('');
+      fetchQueue();
+      fetchStats();
+    } catch (err) {
+      announce('Bulk reject failed');
+      console.error('Bulk reject error:', err);
+    } finally {
+      setBulkProcessing(false);
     }
   };
 
@@ -291,6 +357,31 @@ const MatchReviewQueue = () => {
         </button>
       </div>
 
+      {/* Bulk Actions Bar */}
+      {selectedIds.size > 0 && (
+        <div className="bulk-actions-bar" role="toolbar" aria-label="Bulk actions">
+          <span className="selection-count">
+            {selectedIds.size} item{selectedIds.size !== 1 ? 's' : ''} selected
+          </span>
+          <div className="bulk-actions-buttons">
+            <button
+              onClick={() => setShowBulkRejectModal(true)}
+              className="btn-bulk-reject"
+              aria-label={`Reject ${selectedIds.size} selected matches`}
+            >
+              Reject Selected
+            </button>
+            <button
+              onClick={deselectAll}
+              className="btn-deselect"
+              aria-label="Clear selection"
+            >
+              Clear Selection
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Error state */}
       {error && (
         <div role="alert" className="queue-error">
@@ -316,6 +407,19 @@ const MatchReviewQueue = () => {
       {/* Match list */}
       {!loading && matches.length > 0 && (
         <>
+          {/* Select All header */}
+          <div className="match-list-header">
+            <label className="select-all-label">
+              <input
+                type="checkbox"
+                checked={selectedIds.size === matches.length && matches.length > 0}
+                onChange={(e) => e.target.checked ? selectAll() : deselectAll()}
+                aria-label="Select all matches"
+              />
+              Select All
+            </label>
+          </div>
+
           <div
             role="list"
             aria-label={`${matches.length} matches pending review`}
@@ -335,6 +439,8 @@ const MatchReviewQueue = () => {
                 }}
                 onKeyDown={(e) => handleKeyDown(e, match, index)}
                 isProcessing={processing.has(match.id)}
+                isSelected={selectedIds.has(match.id)}
+                onToggleSelect={() => toggleSelect(match.id)}
                 tabIndex={0}
               />
             ))}
@@ -386,6 +492,58 @@ const MatchReviewQueue = () => {
             setManualSearchEntity(null);
           }}
         />
+      )}
+
+      {/* Bulk Reject Modal */}
+      {showBulkRejectModal && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="bulk-reject-title">
+          <div className="modal-content bulk-reject-modal">
+            <h2 id="bulk-reject-title">Reject {selectedIds.size} Match{selectedIds.size !== 1 ? 'es' : ''}</h2>
+
+            <div className="form-group">
+              <label htmlFor="bulk-reject-reason">Rejection Reason</label>
+              <select
+                id="bulk-reject-reason"
+                value={bulkRejectReason}
+                onChange={(e) => setBulkRejectReason(e.target.value)}
+              >
+                <option value="wrong_match">Wrong Match</option>
+                <option value="poor_data">Poor Data Quality</option>
+                <option value="duplicate">Duplicate</option>
+                <option value="not_found">Not Found on PriceCharting</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="bulk-reject-notes">Notes (Optional)</label>
+              <textarea
+                id="bulk-reject-notes"
+                value={bulkRejectNotes}
+                onChange={(e) => setBulkRejectNotes(e.target.value)}
+                placeholder="Add any additional notes..."
+                rows={3}
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button
+                onClick={() => setShowBulkRejectModal(false)}
+                className="btn-cancel"
+                disabled={bulkProcessing}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkReject}
+                className="btn-reject"
+                disabled={bulkProcessing}
+              >
+                {bulkProcessing ? 'Rejecting...' : `Reject ${selectedIds.size} Match${selectedIds.size !== 1 ? 'es' : ''}`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Keyboard shortcuts help */}
