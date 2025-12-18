@@ -2,6 +2,7 @@
  * RefundsTab - Refunds workflow management
  */
 
+import { API_BASE } from '../../../../config/api.config.js';
 import React, { useState, useEffect, useCallback } from 'react';
 import { CheckCircle, X, Truck, DollarSign, Clock, Eye } from 'lucide-react';
 import StatusBadge from '../shared/StatusBadge';
@@ -36,7 +37,7 @@ export default function RefundsTab({ announce }) {
   });
   const [total, setTotal] = useState(0);
 
-  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+  
 
   const fetchRefunds = useCallback(async () => {
     setLoading(true);

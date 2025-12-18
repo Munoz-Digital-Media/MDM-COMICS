@@ -4,6 +4,7 @@
  *
  * Mobile-optimized barcode scanner with offline queue support.
  */
+import { API_BASE } from '../../../config/api.config.js';
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import {
   QrCode, Wifi, WifiOff, Upload, Check, X,
@@ -15,9 +16,6 @@ import scannerDB, { queueBarcode, getQueueStats, getAllBarcodes, syncQueue, dete
 // Lazy load the scanner to avoid bundle bloat
 const BarcodeScanner = lazy(() => import('./BarcodeScanner'));
 
-// API_BASE includes /api suffix - match pattern from api.js
-const API_BASE = import.meta.env.VITE_API_URL ||
-  (window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api');
 
 export default function ScannerApp({ onClose, embedded = false }) {
   const [cameraReady, setCameraReady] = useState(false);

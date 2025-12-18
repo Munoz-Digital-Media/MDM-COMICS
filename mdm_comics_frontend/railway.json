@@ -1,17 +1,16 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
-  "_deployTrigger": "2025-12-17T20:10:00Z",
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile",
     "watchPatterns": ["src/**", "package.json", "vite.config.js", "Dockerfile", "railway.json"],
     "buildArgs": {
-      "VITE_API_URL": "${{VITE_API_URL}}",
-      "VITE_MIDDLEWARE_URL": "${{VITE_MIDDLEWARE_URL}}"
+      "VITE_API_URL": "https://mdm-comics-backend-development.up.railway.app/api",
+      "VITE_MIDDLEWARE_URL": "https://mdm-comics-middleware-development.up.railway.app",
+      "CACHE_BUSTER": "v3-centralized-config-20241218"
     }
   },
   "deploy": {
-    "_deployTrigger": "2025-12-18T01:25:00Z",
     "healthcheckPath": "/",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",

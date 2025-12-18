@@ -8,6 +8,7 @@
  * - ARIA labels and live regions
  */
 
+import { API_BASE } from '../../../../config/api.config.js';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Truck, Mail, Printer, Package, MapPin, CreditCard, Clock, User, AlertCircle } from 'lucide-react';
 import StatusBadge from '../shared/StatusBadge';
@@ -20,7 +21,7 @@ export default function OrderDetailPanel({ orderId, onClose, onUpdate, announce 
   const panelRef = useRef(null);
   const closeButtonRef = useRef(null);
 
-  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+  
 
   const fetchOrder = useCallback(async () => {
     setLoading(true);

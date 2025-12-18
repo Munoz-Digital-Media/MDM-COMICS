@@ -2,6 +2,7 @@
  * FulfillmentStats - Dashboard header with key metrics
  */
 
+import { API_BASE } from '../../../config/api.config.js';
 import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Truck, RefreshCw, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 
@@ -18,7 +19,7 @@ export default function FulfillmentStats() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+        
 
         // Fetch order stats
         const ordersRes = await fetch(`${API_BASE}/admin/orders?status=paid&limit=1`, {

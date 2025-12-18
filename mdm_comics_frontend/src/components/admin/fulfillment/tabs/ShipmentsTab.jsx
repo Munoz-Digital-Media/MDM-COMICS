@@ -2,6 +2,7 @@
  * ShipmentsTab - Shipments list with tracking
  */
 
+import { API_BASE } from '../../../../config/api.config.js';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Printer, XCircle, ExternalLink, ChevronDown, ChevronRight, Truck } from 'lucide-react';
 import StatusBadge from '../shared/StatusBadge';
@@ -35,7 +36,7 @@ export default function ShipmentsTab({ announce }) {
   const [total, setTotal] = useState(0);
   const [actionLoading, setActionLoading] = useState(null);
 
-  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+  
 
   const fetchShipments = useCallback(async () => {
     setLoading(true);

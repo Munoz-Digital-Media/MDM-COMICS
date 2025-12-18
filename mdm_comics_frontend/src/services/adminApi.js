@@ -3,16 +3,14 @@
  *
  * P1-5: Updated for cookie-based auth with CSRF protection
  * Cross-origin: Uses stored token for Authorization header when cookies don't work
+ *
+ * GOVERNANCE: constitution_cyberSec.json Section 5 - Zero cleartext
+ * API_BASE imported from centralized config with HTTPS enforcement
  */
 
 import { getStoredToken, clearStoredToken } from './api';
+import { API_BASE } from '../config/api.config.js';
 
-// HIGH-004 FIX: Changed default port from 8080 to 8000 (backend runs on 8000)
-// Ensure HTTPS in production to prevent mixed content errors
-let API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
-if (typeof window !== 'undefined' && window.location.protocol === 'https:' && API_BASE.startsWith('http://')) {
-  API_BASE = API_BASE.replace('http://', 'https://');
-}
 const CSRF_COOKIE_NAME = 'mdm_csrf_token';
 
 /**
@@ -39,6 +37,7 @@ function getCsrfToken() {
  * Cross-origin: Also uses stored token for Authorization header
  */
 async function fetchAPI(endpoint, options = {}) {
+  const API_BASE = API_BASE;
   const url = API_BASE + endpoint;
   const method = options.method || 'GET';
 
@@ -134,6 +133,7 @@ export const adminAPI = {
   },
 
   searchByImage: async (token, formData) => {
+    const API_BASE = API_BASE;
     const url = API_BASE + '/comics/search-by-image';
 
     const headers = {};
@@ -348,6 +348,7 @@ export const adminAPI = {
     formData.append('asset_type', assetType);
     if (settingKey) formData.append('setting_key', settingKey);
 
+    const API_BASE = API_BASE;
     const url = API_BASE + '/admin/assets/upload';
     const headers = {};
 
@@ -758,6 +759,7 @@ export const adminAPI = {
     if (metadata.variant_code) formData.append('variant_code', metadata.variant_code);
     if (metadata.cgc_grade) formData.append('cgc_grade', metadata.cgc_grade);
 
+    const API_BASE = API_BASE;
     const url = API_BASE + '/admin/cover-ingestion/upload';
     const headers = {};
 
@@ -792,6 +794,7 @@ export const adminAPI = {
     const formData = new FormData();
     formData.append('file', file);
 
+    const API_BASE = API_BASE;
     const url = API_BASE + '/admin/cover-ingestion/update/' + queueId;
     const headers = {};
 

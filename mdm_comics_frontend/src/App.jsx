@@ -1,3 +1,4 @@
+import { API_BASE } from './config/api.config.js';
 import React, { useState, useMemo, useEffect, useCallback, useRef, lazy, Suspense } from "react";
   import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Package, CreditCard, Truck, User, LogOut, Database, Shield, Loader2, QrCode } from "lucide-react";
   import { authAPI } from "./services/api";
@@ -102,8 +103,7 @@ import './styles/animations.css';
     // P3-12: Fetch config from API on mount
     // Note: VITE_API_URL already includes /api suffix (e.g., https://api.mdmcomics.com/api)
     useEffect(() => {
-      const API_BASE = import.meta.env.VITE_API_URL ||
-        (window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : 'https://api.mdmcomics.com/api');
+      // API_BASE imported from config
       fetch(`${API_BASE}/config`)
         .then(res => res.json())
         .then(config => {

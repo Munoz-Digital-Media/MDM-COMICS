@@ -5,9 +5,10 @@
  * Updated for dark theme consistency.
  */
 
+import { API_BASE } from '../config/api.config.js';
 import { useState, useCallback } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+
 
 /**
  * Coupon input with validation and application

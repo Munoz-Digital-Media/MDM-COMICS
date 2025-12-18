@@ -7,6 +7,7 @@
  * - ARIA labels and live regions
  */
 
+import { API_BASE } from '../../../../config/api.config.js';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Truck, Printer, Mail, MoreHorizontal, ExternalLink } from 'lucide-react';
 import StatusBadge from '../shared/StatusBadge';
@@ -40,7 +41,7 @@ export default function OrdersTab({ announce }) {
   const listRef = useRef(null);
   const firstRowRef = useRef(null);
 
-  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+  
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);

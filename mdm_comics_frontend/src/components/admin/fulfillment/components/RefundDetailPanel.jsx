@@ -13,6 +13,7 @@
  * VENDOR_CREDIT_RECEIVED -> CUSTOMER_REFUND_PROCESSING -> COMPLETED
  */
 
+import { API_BASE } from '../../../../config/api.config.js';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
@@ -71,7 +72,7 @@ export default function RefundDetailPanel({ refund, onClose, onUpdate, announce 
   const panelRef = useRef(null);
   const closeButtonRef = useRef(null);
 
-  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+  
 
   useEffect(() => {
     closeButtonRef.current?.focus();
