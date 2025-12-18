@@ -14,14 +14,14 @@ from datetime import datetime
 from app.core.database import get_db
 from app.models.order import Order, OrderItem
 from app.models.user import User
-from app.api.deps import get_current_admin_user
+from app.api.deps import get_current_admin
 
 router = APIRouter(prefix="/admin/orders", tags=["admin-orders"])
 
 
 @router.get("/")
 async def list_all_orders(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
     status: Optional[str] = Query(None, description="Filter by status"),
     search: Optional[str] = Query(None, description="Search by order number or email"),
@@ -112,7 +112,7 @@ async def list_all_orders(
 @router.get("/{order_id}")
 async def get_order(
     order_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -164,7 +164,7 @@ async def get_order(
 async def update_order_status(
     order_id: int,
     status_update: dict,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """
