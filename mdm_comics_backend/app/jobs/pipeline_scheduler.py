@@ -72,6 +72,14 @@ from app.jobs.bcw_sync import (
     run_bcw_selector_health_job,
 )
 
+# v1.23.0: PriceCharting Independent Jobs (Autonomous Resilience System)
+from app.jobs.pricecharting_jobs import (
+    run_funko_pricecharting_match_job,
+    run_comic_pricecharting_match_job,
+    run_funko_price_sync_job,
+    run_comic_price_sync_job,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,6 +95,8 @@ STALE_CHECKPOINT_TIMEOUT_HOURS = 4
 SELF_HEAL_CHECK_INTERVAL_MINUTES = 10  # How often to check for stalled jobs
 SELF_HEAL_STALL_THRESHOLD_MINUTES = 15  # Job considered stalled if no progress for this long
 SELF_HEAL_MAX_AUTO_RESTARTS = 5  # Max auto-restarts before giving up (per 24h period)
+# v1.23.0: Auto-unpause threshold (Autonomous Resilience System)
+SELF_HEAL_STALE_PAUSE_THRESHOLD_MINUTES = 30  # Auto-unpause jobs paused longer than this
 
 
 async def clear_stale_checkpoints(db: AsyncSession) -> int:
@@ -3122,16 +3132,20 @@ async def run_self_healing_job():
     """
     Self-healing job that detects and restarts stalled pipeline jobs.
 
+    v1.23.0: Enhanced with Autonomous Resilience System features:
+    - Auto-unpause jobs paused > 30 minutes
+    - Decay error counts on recovery
+    - Audit logging
+
     This job runs periodically (every 10 minutes by default) and:
     1. Checks for jobs marked as running but not making progress
     2. Clears stale checkpoints and restarts stuck jobs
-    3. Tracks restart counts to avoid infinite restart loops
-    4. Logs all healing actions for debugging
+    3. Auto-unpauses jobs paused too long (v1.23.0)
+    4. Tracks restart counts to avoid infinite restart loops
+    5. Logs all healing actions for debugging and audit
 
-    Specifically monitors:
-    - gcd_import: Large import job prone to timeout issues
-    - comic_enrichment: Metadata enrichment job
-    - funko_price_check: Price sync job
+    Per constitution_defect_resolution.json:
+    > "self_correct": "Automation reopens incidents lacking closure"
     """
     from app.core.config import settings
     from datetime import timezone
@@ -3258,6 +3272,101 @@ async def run_self_healing_job():
         except Exception as e:
             logger.error(f"[{job_name}] Self-healing job failed: {e}")
             traceback.print_exc()
+
+        # v1.23.0: Check for jobs that have been paused too long
+        logger.info(f"[{job_name}] Checking for stale paused jobs...")
+        try:
+            paused_result = await db.execute(text("""
+                SELECT job_name, control_signal, paused_at, total_errors, updated_at
+                FROM pipeline_checkpoints
+                WHERE control_signal = 'pause'
+                  AND paused_at IS NOT NULL
+            """))
+            paused_jobs = paused_result.fetchall()
+
+            for pj in paused_jobs:
+                if pj.paused_at:
+                    paused_at = pj.paused_at
+                    if paused_at.tzinfo is None:
+                        from datetime import timezone as tz
+                        paused_at = paused_at.replace(tzinfo=tz.utc)
+
+                    pause_minutes = (now - paused_at).total_seconds() / 60
+
+                    if pause_minutes > SELF_HEAL_STALE_PAUSE_THRESHOLD_MINUTES:
+                        logger.warning(
+                            f"[{job_name}] AUTO-RESUMING {pj.job_name} - "
+                            f"paused for {pause_minutes:.1f} minutes (threshold: {SELF_HEAL_STALE_PAUSE_THRESHOLD_MINUTES})"
+                        )
+
+                        await db.execute(text("""
+                            UPDATE pipeline_checkpoints
+                            SET control_signal = 'run',
+                                paused_at = NULL,
+                                last_error = 'AUTO-RESUMED: Cleared stale pause at ' || NOW()::text ||
+                                    ' (was paused for ' || :minutes || ' minutes)',
+                                updated_at = NOW()
+                            WHERE job_name = :name
+                        """), {"name": pj.job_name, "minutes": str(int(pause_minutes))})
+                        await db.commit()
+                        healed_count += 1
+
+                        # Log to audit table
+                        try:
+                            await db.execute(text("""
+                                INSERT INTO self_healing_audit (action, job_name, details)
+                                VALUES ('JOB_AUTO_RESUMED', :job_name, :details::jsonb)
+                            """), {
+                                "job_name": pj.job_name,
+                                "details": json.dumps({
+                                    "pause_duration_minutes": int(pause_minutes),
+                                    "previous_error_count": pj.total_errors or 0
+                                })
+                            })
+                            await db.commit()
+                        except Exception as audit_err:
+                            logger.warning(f"[{job_name}] Failed to log audit: {audit_err}")
+
+        except Exception as pause_err:
+            logger.error(f"[{job_name}] Error checking paused jobs: {pause_err}")
+
+        # v1.23.0: Decay error counts for jobs that have been stable
+        try:
+            decay_result = await db.execute(text("""
+                SELECT job_name, total_errors, updated_at
+                FROM pipeline_checkpoints
+                WHERE total_errors > 0
+                  AND is_running = FALSE
+                  AND (control_signal IS NULL OR control_signal = 'run')
+            """))
+            decay_jobs = decay_result.fetchall()
+
+            for dj in decay_jobs:
+                if dj.updated_at:
+                    updated_at = dj.updated_at
+                    if updated_at.tzinfo is None:
+                        from datetime import timezone as tz
+                        updated_at = updated_at.replace(tzinfo=tz.utc)
+
+                    hours_stable = (now - updated_at).total_seconds() / 3600
+
+                    # Decay errors by 100 for every hour of stability
+                    if hours_stable >= 1.0 and dj.total_errors > 0:
+                        new_errors = max(0, dj.total_errors - 100)
+                        await db.execute(text("""
+                            UPDATE pipeline_checkpoints
+                            SET total_errors = :errors,
+                                updated_at = NOW()
+                            WHERE job_name = :name
+                        """), {"name": dj.job_name, "errors": new_errors})
+                        await db.commit()
+                        logger.info(
+                            f"[{job_name}] Decayed errors for {dj.job_name}: "
+                            f"{dj.total_errors} -> {new_errors}"
+                        )
+
+        except Exception as decay_err:
+            logger.error(f"[{job_name}] Error decaying errors: {decay_err}")
 
         logger.info(f"[{job_name}] Complete: healed {healed_count} stalled jobs")
         return {"healed": healed_count, "checked": len(running_jobs) if 'running_jobs' in dir() else 0}
@@ -4648,6 +4757,11 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("bcw_email_processing", run_bcw_email_processing_job, interval_minutes=15)),
             asyncio.create_task(self._run_job_loop("bcw_quote_cleanup", run_bcw_quote_cleanup_job, interval_minutes=60)),
             asyncio.create_task(self._run_job_loop("bcw_selector_health", run_bcw_selector_health_job, interval_minutes=1440)),
+            # v1.23.0: PriceCharting Independent Jobs (Autonomous Resilience System)
+            asyncio.create_task(self._run_job_loop("funko_pricecharting_match", run_funko_pricecharting_match_job, interval_minutes=60)),
+            asyncio.create_task(self._run_job_loop("comic_pricecharting_match", run_comic_pricecharting_match_job, interval_minutes=60)),
+            asyncio.create_task(self._run_job_loop("funko_price_sync", run_funko_price_sync_job, interval_minutes=60)),
+            asyncio.create_task(self._run_job_loop("comic_price_sync", run_comic_price_sync_job, interval_minutes=1440)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -4672,6 +4786,10 @@ class PipelineScheduler:
         print("[SCHEDULER]   - bcw_email_processing: every 15 minutes (parse BCW emails)")
         print("[SCHEDULER]   - bcw_quote_cleanup: every 60 minutes (cleanup expired quotes)")
         print("[SCHEDULER]   - bcw_selector_health: every 24 hours (validate DOM selectors)")
+        print("[SCHEDULER]   - funko_pricecharting_match: every 60 minutes (match Funkos to PC IDs)")
+        print("[SCHEDULER]   - comic_pricecharting_match: every 60 minutes (match Comics to PC IDs)")
+        print("[SCHEDULER]   - funko_price_sync: every 60 minutes (sync Funko prices from PC)")
+        print("[SCHEDULER]   - comic_price_sync: every 24 hours (sync Comic prices from PC)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -4730,6 +4848,11 @@ class PipelineScheduler:
             "marvel_fandom": run_marvel_fandom_job,  # v1.10.8 - Story-level credits from Marvel Database
             "upc_backfill": run_upc_backfill_job,  # v1.12.0 - Multi-source UPC recovery from Metron/CBR
             "sequential_enrichment": run_sequential_exhaustive_enrichment_job,  # v1.13.0 - Sequential exhaustive enrichment
+            # v1.23.0: PriceCharting Independent Jobs (Autonomous Resilience System)
+            "funko_pricecharting_match": run_funko_pricecharting_match_job,
+            "comic_pricecharting_match": run_comic_pricecharting_match_job,
+            "funko_price_sync": run_funko_price_sync_job,
+            "comic_price_sync": run_comic_price_sync_job,
         }
 
         if job_name not in jobs:
