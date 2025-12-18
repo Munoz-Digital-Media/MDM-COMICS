@@ -52,7 +52,7 @@ export default function RefundsTab({ announce }) {
       });
 
       const [refundsRes, statsRes] = await Promise.all([
-        fetch(`${API_BASE}/admin/refunds?${params}`, { credentials: 'include' }),
+        fetch(`${API_BASE}/admin/refunds/?${params}`, { credentials: 'include' }),
         fetch(`${API_BASE}/admin/refunds/stats`, { credentials: 'include' }),
       ]);
 

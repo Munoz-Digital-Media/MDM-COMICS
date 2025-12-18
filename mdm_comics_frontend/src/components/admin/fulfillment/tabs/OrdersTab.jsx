@@ -56,7 +56,7 @@ export default function OrdersTab({ announce }) {
         ...(filter.search && { search: filter.search }),
       });
 
-      const response = await fetch(`${API_BASE}/admin/orders?${params}`, {
+      const response = await fetch(`${API_BASE}/admin/orders/?${params}`, {
         credentials: 'include',
       });
 

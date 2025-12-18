@@ -22,7 +22,7 @@ export default function FulfillmentStats() {
         
 
         // Fetch order stats
-        const ordersRes = await fetch(`${API_BASE}/admin/orders?status=paid&limit=1`, {
+        const ordersRes = await fetch(`${API_BASE}/admin/orders/?status=paid&limit=1`, {
           credentials: 'include',
         });
         const ordersData = await ordersRes.json();
