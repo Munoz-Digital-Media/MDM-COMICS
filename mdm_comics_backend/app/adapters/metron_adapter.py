@@ -17,6 +17,7 @@ Per pipeline spec:
 import asyncio
 import os
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.core.adapter_registry import (
@@ -39,6 +40,62 @@ class RateLimitError(Exception):
         self.retry_after = retry_after
 
 
+class MetronRequestLogger:
+    """Track Metron API request metrics for observability."""
+
+    def __init__(self):
+        self.requests_total = 0
+        self.requests_success = 0
+        self.requests_rate_limited = 0
+        self.requests_failed = 0
+        self.last_request_at = None
+        self.last_success_at = None
+        self.last_rate_limit_at = None
+        self.current_retry_after = 0
+
+    def log_request(self):
+        self.requests_total += 1
+        self.last_request_at = datetime.now().isoformat()
+        logger.info(f"[Metron] REQUEST #{self.requests_total} at {self.last_request_at}")
+
+    def log_success(self, endpoint: str, result_count: int = 0):
+        self.requests_success += 1
+        self.last_success_at = datetime.now().isoformat()
+        logger.info(f"[Metron] SUCCESS #{self.requests_success}/{self.requests_total} - {endpoint} returned {result_count} results")
+
+    def log_rate_limit(self, retry_after: float):
+        self.requests_rate_limited += 1
+        self.last_rate_limit_at = datetime.now().isoformat()
+        self.current_retry_after = retry_after
+        logger.warning(f"[Metron] RATE_LIMITED #{self.requests_rate_limited} - retry_after={retry_after}s ({retry_after/60:.1f}min)")
+
+    def log_error(self, error: str):
+        self.requests_failed += 1
+        logger.error(f"[Metron] ERROR #{self.requests_failed}/{self.requests_total} - {error}")
+
+    def get_stats(self) -> dict:
+        return {
+            "requests_total": self.requests_total,
+            "requests_success": self.requests_success,
+            "requests_rate_limited": self.requests_rate_limited,
+            "requests_failed": self.requests_failed,
+            "success_rate": f"{(self.requests_success/self.requests_total*100):.1f}%" if self.requests_total > 0 else "N/A",
+            "last_request_at": self.last_request_at,
+            "last_success_at": self.last_success_at,
+            "last_rate_limit_at": self.last_rate_limit_at,
+            "current_retry_after_seconds": self.current_retry_after,
+        }
+
+
+# Global request logger
+_request_logger = MetronRequestLogger()
+
+
+def get_metron_stats() -> dict:
+    """Get Metron API request statistics."""
+    return _request_logger.get_stats()
+
+
 def _get_mokkari_client():
     """Get or create the Mokkari client singleton."""
     global _mokkari_client
@@ -49,7 +106,7 @@ def _get_mokkari_client():
             password = os.getenv("METRON_PASSWORD", "")
             if username and password:
                 _mokkari_client = mokkari.api(username, password)
-                logger.info("[Metron] Mokkari client initialized with built-in rate limiting")
+                logger.info("[Metron] Mokkari client initialized - rate limits: 30/min, 10000/day (SQLite persisted)")
             else:
                 logger.warning("[Metron] Credentials not configured")
         except ImportError:
@@ -153,6 +210,9 @@ class MetronAdapter(DataSourceAdapter):
                     errors=[{"error": f"Unknown endpoint: {endpoint}"}]
                 )
 
+            # Log the request
+            _request_logger.log_request()
+
             # Run sync mokkari in thread pool
             results = await asyncio.to_thread(method, params)
 
@@ -163,6 +223,9 @@ class MetronAdapter(DataSourceAdapter):
                     records.append(self._mokkari_obj_to_dict(item))
                 else:
                     records.append(item)
+
+            # Log success
+            _request_logger.log_success(endpoint, len(records))
 
             return FetchResult(
                 success=True,
@@ -176,13 +239,13 @@ class MetronAdapter(DataSourceAdapter):
             error_str = str(e).lower()
             if "rate" in error_str or "429" in error_str:
                 retry_after = getattr(e, 'retry_after', 60.0)
-                logger.warning(f"[{self.name}] Rate limited, retry after {retry_after}s")
+                _request_logger.log_rate_limit(retry_after)
                 return FetchResult(
                     success=False,
                     errors=[{"error": "rate_limited", "retry_after": retry_after}]
                 )
 
-            logger.error(f"[{self.name}] Fetch failed: {e}")
+            _request_logger.log_error(str(e))
             return FetchResult(
                 success=False,
                 errors=[{"error": str(e)}]
@@ -211,10 +274,14 @@ class MetronAdapter(DataSourceAdapter):
                 logger.error(f"[{self.name}] Unknown endpoint: {endpoint}")
                 return None
 
+            # Log the request
+            _request_logger.log_request()
+
             # Run sync mokkari in thread pool
             result = await asyncio.to_thread(method, int(external_id))
 
             if result:
+                _request_logger.log_success(f"{endpoint}/{external_id}", 1)
                 return self._mokkari_obj_to_dict(result)
             return None
 
@@ -222,10 +289,10 @@ class MetronAdapter(DataSourceAdapter):
             error_str = str(e).lower()
             if "rate" in error_str or "429" in error_str:
                 retry_after = getattr(e, 'retry_after', 60.0)
-                logger.warning(f"[{self.name}] Rate limited on fetch_by_id, retry after {retry_after}s")
+                _request_logger.log_rate_limit(retry_after)
                 raise RateLimitError(f"Rate limited: {e}", retry_after)
 
-            logger.error(f"[{self.name}] Fetch by ID {external_id} failed: {e}")
+            _request_logger.log_error(f"fetch_by_id({external_id}): {e}")
             return None
 
     def _mokkari_obj_to_dict(self, obj) -> Dict[str, Any]:

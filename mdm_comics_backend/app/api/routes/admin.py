@@ -1917,6 +1917,35 @@ async def get_pricecharting_matching_status(
     }
 
 
+# ----- Metron API Stats (v2.0.0 Mokkari Integration) -----
+
+@router.get("/metron-stats")
+async def get_metron_stats(
+    current_user: User = Depends(get_current_admin),
+):
+    """
+    Metron API request statistics for observability.
+
+    Shows request counts, success rates, and rate limit status
+    to verify Mokkari integration is working correctly.
+    """
+    from app.adapters.metron_adapter import get_metron_stats
+
+    stats = get_metron_stats()
+
+    return {
+        "source": "metron",
+        "library": "mokkari",
+        "rate_limits": {
+            "per_minute": 30,
+            "per_day": 10000,
+            "enforcement": "SQLite persisted (survives restarts)"
+        },
+        "request_stats": stats,
+        "status": "rate_limited" if stats["current_retry_after_seconds"] > 0 else "operational"
+    }
+
+
 # ----- PriceCharting Health Dashboard (v1.24.0 PC-OPT-2024-001 Phase 4) -----
 
 @router.get("/pricecharting-health")
