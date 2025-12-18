@@ -624,7 +624,7 @@ export const adminAPI = {
     params.set('page', options.page || 1);
     params.set('per_page', options.per_page || 25);
 
-    return fetchAPI('/admin/bundles?' + params.toString());
+    return fetchAPI('/admin/bundles/?' + params.toString());
   },
 
   getBundle: async (bundleId) => {
@@ -632,7 +632,7 @@ export const adminAPI = {
   },
 
   createBundle: async (bundleData) => {
-    return fetchAPI('/admin/bundles', {
+    return fetchAPI('/admin/bundles/', {
       method: 'POST',
       body: JSON.stringify(bundleData),
     });
