@@ -22,8 +22,8 @@ const NAV_ITEMS = [
   { id: 'catalog', label: 'Catalog', icon: Package },
   { id: 'ingestion', label: 'Ingestion', icon: Search },
   { id: 'fulfillment', label: 'Fulfillment', icon: ClipboardList },
-  { id: 'branding', label: 'Branding', icon: Palette },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'branding', label: 'Branding', icon: Palette },
 ];
 
 export default function AdminLayout({ onClose }) {
