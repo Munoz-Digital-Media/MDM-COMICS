@@ -1,5 +1,15 @@
 """
-Sequential Exhaustive Enrichment Job v2.1.0
+Sequential Exhaustive Enrichment Job v2.1.1
+
+v2.1.1 Changes (SEJ-SOURCE-PRIORITY):
+- REORDER: Source priority updated per business requirements:
+  1. ComicVine (FIRST - most authoritative for core metadata)
+  2. ComicBookRealm (SECOND - strong secondary source)
+  3. Fandom wikis (3rd+ - publisher-specific supplemental)
+  4. MyComicShop (bibliographic data)
+  5. Metron (LAST - rate-limit sensitive, supplemental only)
+- Metron moved to LAST position to reduce rate limit pressure
+- ComicVine and ComicBookRealm prioritized as primary data sources
 
 v2.1.0 Changes (P0 CRITICAL - RATE LIMITER FIX):
 - FIX: Race condition causing 4+ requests per second to Metron after 429
@@ -1947,11 +1957,17 @@ async def run_sequential_exhaustive_enrichment_job(
 
     logger.info(f"[{job_name}] Starting Parallel Optimized Enrichment v2.0.0 (batch: {batch_id})")
 
-    # Source query functions in preferred order
+    # Source query functions in PRIORITY ORDER (most preferred first)
+    # v2.1.1: Reordered per SEJ-SOURCE-PRIORITY directive:
+    #   1. ComicVine (most authoritative for core metadata)
+    #   2. ComicBookRealm (strong secondary source)
+    #   3. Fandom wikis (publisher-specific supplemental data)
+    #   4. MyComicShop (bibliographic data)
+    #   5. Metron (LAST - rate-limit sensitive, supplemental only)
     # Phase 1 sources: Can run in parallel (don't depend on each other's results)
     PHASE1_SOURCES = [
-        ("metron", query_metron),
-        ("comicvine", query_comicvine),
+        ("comicvine", query_comicvine),       # 1st - Primary authoritative source
+        ("comicbookrealm", query_comicbookrealm),  # 2nd - Strong secondary source
         # Fandom wikis - publisher pre-filtered by get_relevant_sources_for_comic()
         ("marvel_fandom", query_marvel_fandom),
         ("dc_fandom", query_dc_fandom),
@@ -1960,7 +1976,7 @@ async def run_sequential_exhaustive_enrichment_job(
         ("darkhorse_fandom", query_darkhorse_fandom),
         ("dynamite_fandom", query_dynamite_fandom),
         ("mycomicshop", query_mycomicshop),
-        ("comicbookrealm", query_comicbookrealm),
+        ("metron", query_metron),             # LAST - Rate-limit sensitive, supplemental
     ]
 
     # Phase 2 sources: Run after Phase 1 (benefit from UPC found in Phase 1)

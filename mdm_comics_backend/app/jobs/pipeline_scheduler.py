@@ -4757,10 +4757,12 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("bcw_quote_cleanup", run_bcw_quote_cleanup_job, interval_minutes=60)),
             asyncio.create_task(self._run_job_loop("bcw_selector_health", run_bcw_selector_health_job, interval_minutes=1440)),
             # v1.23.0: PriceCharting Independent Jobs (Autonomous Resilience System)
-            asyncio.create_task(self._run_job_loop("funko_pricecharting_match", run_funko_pricecharting_match_job, interval_minutes=60)),
-            asyncio.create_task(self._run_job_loop("comic_pricecharting_match", run_comic_pricecharting_match_job, interval_minutes=60)),
-            asyncio.create_task(self._run_job_loop("funko_price_sync", run_funko_price_sync_job, interval_minutes=60)),
-            asyncio.create_task(self._run_job_loop("comic_price_sync", run_comic_price_sync_job, interval_minutes=1440)),
+            # v1.24.0: Staggered starts (15-min offsets) to prevent combined rate limit pressure
+            # Pattern: funko_match(0) -> comic_match(15) -> funko_sync(30) -> comic_sync(45)
+            asyncio.create_task(self._run_job_loop("funko_pricecharting_match", run_funko_pricecharting_match_job, interval_minutes=60, initial_delay_minutes=0)),
+            asyncio.create_task(self._run_job_loop("comic_pricecharting_match", run_comic_pricecharting_match_job, interval_minutes=60, initial_delay_minutes=15)),
+            asyncio.create_task(self._run_job_loop("funko_price_sync", run_funko_price_sync_job, interval_minutes=60, initial_delay_minutes=30)),
+            asyncio.create_task(self._run_job_loop("comic_price_sync", run_comic_price_sync_job, interval_minutes=1440, initial_delay_minutes=45)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -4785,10 +4787,10 @@ class PipelineScheduler:
         print("[SCHEDULER]   - bcw_email_processing: every 15 minutes (parse BCW emails)")
         print("[SCHEDULER]   - bcw_quote_cleanup: every 60 minutes (cleanup expired quotes)")
         print("[SCHEDULER]   - bcw_selector_health: every 24 hours (validate DOM selectors)")
-        print("[SCHEDULER]   - funko_pricecharting_match: every 60 minutes (match Funkos to PC IDs)")
-        print("[SCHEDULER]   - comic_pricecharting_match: every 60 minutes (match Comics to PC IDs)")
-        print("[SCHEDULER]   - funko_price_sync: every 60 minutes (sync Funko prices from PC)")
-        print("[SCHEDULER]   - comic_price_sync: every 24 hours (sync Comic prices from PC)")
+        print("[SCHEDULER]   - funko_pricecharting_match: every 60 minutes, delay=0min (match Funkos to PC IDs)")
+        print("[SCHEDULER]   - comic_pricecharting_match: every 60 minutes, delay=15min (match Comics to PC IDs)")
+        print("[SCHEDULER]   - funko_price_sync: every 60 minutes, delay=30min (sync Funko prices from PC)")
+        print("[SCHEDULER]   - comic_price_sync: every 24 hours, delay=45min (sync Comic prices from PC)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -4803,12 +4805,26 @@ class PipelineScheduler:
         self._tasks = []
         logger.info("Pipeline scheduler stopped")
 
-    async def _run_job_loop(self, name: str, job_func, interval_minutes: int):
-        """Run a job on a schedule."""
+    async def _run_job_loop(self, name: str, job_func, interval_minutes: int, initial_delay_minutes: int = 0):
+        """
+        Run a job on a schedule.
+
+        v1.24.0: Added initial_delay_minutes for job staggering to prevent
+        simultaneous API calls from multiple jobs hitting the same rate limiter.
+
+        Args:
+            name: Job name for logging
+            job_func: Async function to call
+            interval_minutes: Time between runs
+            initial_delay_minutes: Initial delay before first run (for staggering)
+        """
         interval_seconds = interval_minutes * 60
 
-        # Initial delay to stagger job starts
-        await asyncio.sleep(5)
+        # Initial delay to stagger job starts (v1.24.0: configurable per-job)
+        initial_delay_seconds = 5 + (initial_delay_minutes * 60)
+        if initial_delay_minutes > 0:
+            logger.info(f"[SCHEDULER] {name} will start after {initial_delay_minutes}min delay")
+        await asyncio.sleep(initial_delay_seconds)
 
         while self._running:
             try:

@@ -1,5 +1,5 @@
 """
-PriceCharting Independent Jobs v1.0.0
+PriceCharting Independent Jobs v1.3.0
 
 Document ID: IMPL-PC-2025-12-17
 Status: APPROVED
@@ -15,9 +15,25 @@ Jobs:
 
 Architecture:
 - Each job runs independently (no phase blocking)
-- Circuit breaker protects against API failures
+- Per-job circuit breaker provides isolation (v1.3.0)
 - Checkpoints are persisted per job
 - Self-healer can auto-resume paused jobs
+
+v1.3.0 Changes (PC-OPT-2024-001 Phase 5):
+- Per-job circuit breaker isolation - one job failing won't affect others
+- Job-specific circuit breaker configuration (match vs sync)
+- Automatic DB state persistence for circuit breaker
+
+v1.2.0 Changes (PC-OPT-2024-001 Phase 3):
+- Added multi-factor match scoring to reduce false positives
+- Title, year, publisher, issue number all contribute to match score
+- Configurable threshold (default: 0.6) with confidence levels
+
+v1.1.0 Changes (PC-OPT-2024-001 Phase 1-2):
+- Added SearchCache integration to reduce duplicate API calls
+- Title searches now cached with 1-hour TTL
+- Added incremental sync (only sync stale records >24h)
+- Expected 80%+ reduction in PriceCharting API calls
 
 Per constitution_cyberSec.json Section 5:
 > "All partner API clients implement retries with bounded budgets and circuit breakers"
@@ -41,8 +57,86 @@ from app.core.circuit_breaker import (
     get_circuit_breaker,
     log_circuit_event_to_audit,
 )
+from app.core.job_circuit_breaker import (
+    JobCircuitBreaker,
+    get_job_circuit_from_db,
+)
+from app.core.search_cache import pricecharting_search_cache
+from app.services.match_scoring import find_best_match, MATCH_THRESHOLD
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# CACHED SEARCH HELPER (v1.1.0 - PC-OPT-2024-001 Phase 1)
+# =============================================================================
+
+async def cached_pricecharting_search(
+    client,
+    pc_token: str,
+    query: str,
+    circuit_breaker: CircuitBreaker,
+    console_name: str = None,
+    use_upc: bool = False,
+) -> list:
+    """
+    Perform a cached PriceCharting API search.
+
+    Uses the global pricecharting_search_cache to avoid duplicate API calls
+    for the same search query within the TTL window.
+
+    Args:
+        client: HTTP client for API calls
+        pc_token: PriceCharting API token
+        query: Search query or UPC/ISBN
+        circuit_breaker: Circuit breaker for API protection
+        console_name: Filter by console/category (e.g., "Comics")
+        use_upc: If True, search by UPC instead of query string
+
+    Returns:
+        List of product results from PriceCharting API
+    """
+    # Build cache key filters
+    filters = {}
+    if console_name:
+        filters["console_name"] = console_name
+    if use_upc:
+        filters["search_type"] = "upc"
+
+    async def do_search(q: str, **kwargs) -> list:
+        """Execute the actual API search."""
+        params = {"t": pc_token}
+
+        if kwargs.get("search_type") == "upc":
+            params["upc"] = q
+        else:
+            params["q"] = q
+            if kwargs.get("console_name"):
+                params["console-name"] = kwargs["console_name"]
+
+        response = await circuit_breaker.execute(
+            lambda: client.get(
+                "https://www.pricecharting.com/api/products",
+                params=params
+            )
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("products", [])
+        elif response.status_code >= 500:
+            circuit_breaker._on_failure(
+                Exception(f"API returned {response.status_code}")
+            )
+            return []
+        else:
+            return []
+
+    return await pricecharting_search_cache.get_or_fetch(
+        query,
+        do_search,
+        **filters
+    )
 
 
 # =============================================================================
@@ -197,7 +291,8 @@ async def run_funko_pricecharting_match_job(
             return {"status": "skipped", "message": "Job already running or paused"}
 
         # Restore circuit breaker from checkpoint
-        circuit_breaker = CircuitBreaker.from_db_state(job_name, checkpoint)
+        # v1.3.0: Use job-specific circuit breaker for isolation
+        circuit_breaker = await get_job_circuit_from_db(db, job_name)
 
         stats = {
             "processed": 0,
@@ -222,7 +317,7 @@ async def run_funko_pricecharting_match_job(
 
             async with get_pricecharting_client() as client:
                 while True:
-                    # Check circuit breaker before batch
+                    # Check circuit breaker before batch (v1.3.0: job-isolated)
                     if not circuit_breaker.is_call_permitted():
                         retry_after = circuit_breaker.get_retry_after_seconds()
                         logger.warning(
@@ -267,32 +362,37 @@ async def run_funko_pricecharting_match_job(
                         try:
                             pc_id = None
 
-                            # Search by title
+                            # Search by title (v1.1.0: cached search, v1.2.0: multi-factor scoring)
                             if funko.title:
                                 search_query = f"Funko Pop {funko.title}"[:100]
 
-                                async def do_search():
-                                    return await client.get(
-                                        "https://www.pricecharting.com/api/products",
-                                        params={"t": pc_token, "q": search_query}
+                                try:
+                                    # Use cached search to reduce API calls
+                                    products = await cached_pricecharting_search(
+                                        client=client,
+                                        pc_token=pc_token,
+                                        query=search_query,
+                                        circuit_breaker=circuit_breaker,
                                     )
 
-                                try:
-                                    response = await circuit_breaker.execute(do_search)
+                                    # v1.2.0: Use multi-factor match scoring
+                                    funko_dict = {
+                                        "title": funko.title,
+                                        "box_number": funko.box_number,
+                                    }
+                                    match_result = find_best_match(
+                                        item=funko_dict,
+                                        products=products,
+                                        item_type="funko",
+                                    )
 
-                                    if response.status_code == 200:
-                                        data = response.json()
-                                        products = data.get("products", [])
-
-                                        for prod in products[:5]:
-                                            prod_name = prod.get("product-name", "").lower()
-                                            if funko.title and funko.title.lower() in prod_name:
-                                                if "funko" in prod_name or "pop" in prod_name:
-                                                    pc_id = int(prod.get("id"))
-                                                    break
-                                    elif response.status_code >= 500:
-                                        circuit_breaker._on_failure(
-                                            Exception(f"API returned {response.status_code}")
+                                    if match_result and match_result.matched:
+                                        pc_id = match_result.pricecharting_id
+                                        logger.info(
+                                            f"[{job_name}] Matched Funko {funko_id}: "
+                                            f"'{funko.title}' -> PC:{pc_id} "
+                                            f"(score={match_result.score}, "
+                                            f"confidence={match_result.confidence})"
                                         )
 
                                 except CircuitOpenError:
@@ -386,7 +486,8 @@ async def run_comic_pricecharting_match_job(
             logger.warning(f"[{job_name}] Job already running or paused, skipping")
             return {"status": "skipped", "message": "Job already running or paused"}
 
-        circuit_breaker = CircuitBreaker.from_db_state(job_name, checkpoint)
+        # v1.3.0: Use job-specific circuit breaker for isolation
+        circuit_breaker = await get_job_circuit_from_db(db, job_name)
 
         stats = {
             "processed": 0,
@@ -411,6 +512,7 @@ async def run_comic_pricecharting_match_job(
 
             async with get_pricecharting_client() as client:
                 while True:
+                    # v1.3.0: Job-isolated circuit breaker check
                     if not circuit_breaker.is_call_permitted():
                         retry_after = circuit_breaker.get_retry_after_seconds()
                         logger.warning(
@@ -460,89 +562,80 @@ async def run_comic_pricecharting_match_job(
                         try:
                             pc_id = None
 
-                            # Method 1: ISBN lookup
+                            # Method 1: ISBN lookup (v1.1.0: cached)
                             isbn_to_search = comic.isbn_normalized or comic.isbn
                             if not pc_id and isbn_to_search and len(isbn_to_search) >= 10:
                                 clean_isbn = ''.join(filter(str.isdigit, isbn_to_search))
                                 if len(clean_isbn) >= 10:
-                                    async def do_isbn_search():
-                                        return await client.get(
-                                            "https://www.pricecharting.com/api/products",
-                                            params={"t": pc_token, "upc": clean_isbn}
-                                        )
-
                                     try:
-                                        response = await circuit_breaker.execute(do_isbn_search)
-                                        if response.status_code == 200:
-                                            data = response.json()
-                                            products = data.get("products", [])
-                                            if products:
-                                                pc_id = int(products[0].get("id"))
-                                        elif response.status_code >= 500:
-                                            circuit_breaker._on_failure(
-                                                Exception(f"API returned {response.status_code}")
-                                            )
+                                        products = await cached_pricecharting_search(
+                                            client=client,
+                                            pc_token=pc_token,
+                                            query=clean_isbn,
+                                            circuit_breaker=circuit_breaker,
+                                            use_upc=True,
+                                        )
+                                        if products:
+                                            pc_id = int(products[0].get("id"))
                                     except CircuitOpenError:
                                         stats["circuit_opens"] += 1
                                         break
 
-                            # Method 2: UPC lookup
+                            # Method 2: UPC lookup (v1.1.0: cached)
                             if not pc_id and comic.upc and len(comic.upc) >= 10:
                                 clean_upc = ''.join(filter(str.isdigit, comic.upc))
                                 if len(clean_upc) >= 12:
-                                    async def do_upc_search():
-                                        return await client.get(
-                                            "https://www.pricecharting.com/api/products",
-                                            params={"t": pc_token, "upc": clean_upc}
-                                        )
-
                                     try:
-                                        response = await circuit_breaker.execute(do_upc_search)
-                                        if response.status_code == 200:
-                                            data = response.json()
-                                            products = data.get("products", [])
-                                            if products:
-                                                pc_id = int(products[0].get("id"))
-                                        elif response.status_code >= 500:
-                                            circuit_breaker._on_failure(
-                                                Exception(f"API returned {response.status_code}")
-                                            )
+                                        products = await cached_pricecharting_search(
+                                            client=client,
+                                            pc_token=pc_token,
+                                            query=clean_upc,
+                                            circuit_breaker=circuit_breaker,
+                                            use_upc=True,
+                                        )
+                                        if products:
+                                            pc_id = int(products[0].get("id"))
                                     except CircuitOpenError:
                                         stats["circuit_opens"] += 1
                                         break
 
-                            # Method 3: Title search
+                            # Method 3: Title search (v1.1.0: cached, v1.2.0: multi-factor scoring)
                             if not pc_id and comic.series_name:
                                 search_parts = [comic.series_name]
                                 if comic.number:
                                     search_parts.append(f"#{comic.number}")
                                 search_query = " ".join(search_parts)[:100]
 
-                                async def do_title_search():
-                                    return await client.get(
-                                        "https://www.pricecharting.com/api/products",
-                                        params={
-                                            "t": pc_token,
-                                            "q": search_query,
-                                            "console-name": "Comics"
-                                        }
+                                try:
+                                    products = await cached_pricecharting_search(
+                                        client=client,
+                                        pc_token=pc_token,
+                                        query=search_query,
+                                        circuit_breaker=circuit_breaker,
+                                        console_name="Comics",
                                     )
 
-                                try:
-                                    response = await circuit_breaker.execute(do_title_search)
-                                    if response.status_code == 200:
-                                        data = response.json()
-                                        products = data.get("products", [])
+                                    # v1.2.0: Use multi-factor match scoring
+                                    comic_dict = {
+                                        "series_name": comic.series_name,
+                                        "number": comic.number,
+                                        # Include additional fields if available
+                                    }
+                                    match_result = find_best_match(
+                                        item=comic_dict,
+                                        products=products,
+                                        item_type="comic",
+                                    )
 
-                                        for prod in products[:5]:
-                                            prod_name = prod.get("product-name", "").lower()
-                                            if comic.series_name.lower() in prod_name:
-                                                pc_id = int(prod.get("id"))
-                                                break
-                                    elif response.status_code >= 500:
-                                        circuit_breaker._on_failure(
-                                            Exception(f"API returned {response.status_code}")
+                                    if match_result and match_result.matched:
+                                        pc_id = match_result.pricecharting_id
+                                        logger.info(
+                                            f"[{job_name}] Matched Comic {comic_id}: "
+                                            f"'{comic.series_name} #{comic.number}' -> PC:{pc_id} "
+                                            f"(score={match_result.score}, "
+                                            f"confidence={match_result.confidence})"
                                         )
+
                                 except CircuitOpenError:
                                     stats["circuit_opens"] += 1
                                     break
@@ -631,7 +724,8 @@ async def run_funko_price_sync_job(
             logger.warning(f"[{job_name}] Job already running or paused, skipping")
             return {"status": "skipped", "message": "Job already running or paused"}
 
-        circuit_breaker = CircuitBreaker.from_db_state(job_name, checkpoint)
+        # v1.3.0: Use job-specific circuit breaker for isolation
+        circuit_breaker = await get_job_circuit_from_db(db, job_name)
 
         stats = {
             "processed": 0,
@@ -656,6 +750,7 @@ async def run_funko_price_sync_job(
 
             async with get_pricecharting_client() as client:
                 while True:
+                    # v1.3.0: Job-isolated circuit breaker check
                     if not circuit_breaker.is_call_permitted():
                         retry_after = circuit_breaker.get_retry_after_seconds()
                         logger.warning(
@@ -673,11 +768,14 @@ async def run_funko_price_sync_job(
                         break
 
                     # Fetch Funkos with pricecharting_id that need price update
+                    # v1.1.0: Incremental sync - only fetch stale records (>24h since last sync)
                     result = await db.execute(text("""
                         SELECT id, pricecharting_id, price_loose, price_cib, price_new
                         FROM funkos
                         WHERE pricecharting_id IS NOT NULL
                           AND id > :last_id
+                          AND (pricecharting_synced_at IS NULL
+                               OR pricecharting_synced_at < NOW() - INTERVAL '24 hours')
                         ORDER BY id
                         LIMIT :limit
                     """), {"last_id": last_id, "limit": batch_size})
@@ -685,7 +783,7 @@ async def run_funko_price_sync_job(
                     funkos = result.fetchall()
 
                     if not funkos:
-                        logger.info(f"[{job_name}] No more Funkos to process, resetting to start")
+                        logger.info(f"[{job_name}] No stale Funkos to sync, cycle complete")
                         last_id = 0  # Reset for next run
                         break
 
@@ -731,6 +829,8 @@ async def run_funko_price_sync_job(
                                         params["new"] = float(new_price) / 100
 
                                     if updates:
+                                        # v1.1.0: Track sync timestamp for incremental sync
+                                        updates.append("pricecharting_synced_at = NOW()")
                                         updates.append("updated_at = NOW()")
                                         await db.execute(
                                             text(f"UPDATE funkos SET {', '.join(updates)} WHERE id = :id"),
@@ -740,6 +840,13 @@ async def run_funko_price_sync_job(
                                         logger.debug(
                                             f"[{job_name}] Updated Funko {funko_id} prices"
                                         )
+                                    else:
+                                        # No price changes but mark as synced
+                                        await db.execute(text("""
+                                            UPDATE funkos
+                                            SET pricecharting_synced_at = NOW()
+                                            WHERE id = :id
+                                        """), {"id": funko_id})
 
                                 elif response.status_code >= 500:
                                     circuit_breaker._on_failure(
@@ -825,7 +932,8 @@ async def run_comic_price_sync_job(
             logger.warning(f"[{job_name}] Job already running or paused, skipping")
             return {"status": "skipped", "message": "Job already running or paused"}
 
-        circuit_breaker = CircuitBreaker.from_db_state(job_name, checkpoint)
+        # v1.3.0: Use job-specific circuit breaker for isolation
+        circuit_breaker = await get_job_circuit_from_db(db, job_name)
 
         stats = {
             "processed": 0,
@@ -850,6 +958,7 @@ async def run_comic_price_sync_job(
 
             async with get_pricecharting_client() as client:
                 while True:
+                    # v1.3.0: Job-isolated circuit breaker check
                     if not circuit_breaker.is_call_permitted():
                         retry_after = circuit_breaker.get_retry_after_seconds()
                         logger.warning(
@@ -866,11 +975,14 @@ async def run_comic_price_sync_job(
                         stats["circuit_opens"] += 1
                         break
 
+                    # v1.1.0: Incremental sync - only fetch stale records (>24h since last sync)
                     result = await db.execute(text("""
                         SELECT id, pricecharting_id, price_guide_value
                         FROM comic_issues
                         WHERE pricecharting_id IS NOT NULL
                           AND id > :last_id
+                          AND (pricecharting_synced_at IS NULL
+                               OR pricecharting_synced_at < NOW() - INTERVAL '24 hours')
                         ORDER BY id
                         LIMIT :limit
                     """), {"last_id": last_id, "limit": batch_size})
@@ -878,7 +990,7 @@ async def run_comic_price_sync_job(
                     comics = result.fetchall()
 
                     if not comics:
-                        logger.info(f"[{job_name}] No more Comics to process, resetting to start")
+                        logger.info(f"[{job_name}] No stale Comics to sync, cycle complete")
                         last_id = 0
                         break
 
@@ -907,9 +1019,11 @@ async def run_comic_price_sync_job(
 
                                     if cib_price:
                                         price_dollars = float(cib_price) / 100
+                                        # v1.1.0: Track sync timestamp for incremental sync
                                         await db.execute(text("""
                                             UPDATE comic_issues
                                             SET price_guide_value = :price,
+                                                pricecharting_synced_at = NOW(),
                                                 updated_at = NOW()
                                             WHERE id = :id
                                         """), {"id": comic_id, "price": price_dollars})
@@ -917,6 +1031,13 @@ async def run_comic_price_sync_job(
                                         logger.debug(
                                             f"[{job_name}] Updated Comic {comic_id} price: ${price_dollars:.2f}"
                                         )
+                                    else:
+                                        # No price but mark as synced
+                                        await db.execute(text("""
+                                            UPDATE comic_issues
+                                            SET pricecharting_synced_at = NOW()
+                                            WHERE id = :id
+                                        """), {"id": comic_id})
 
                                 elif response.status_code >= 500:
                                     circuit_breaker._on_failure(

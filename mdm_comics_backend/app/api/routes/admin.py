@@ -1917,6 +1917,204 @@ async def get_pricecharting_matching_status(
     }
 
 
+# ----- PriceCharting Health Dashboard (v1.24.0 PC-OPT-2024-001 Phase 4) -----
+
+@router.get("/pricecharting-health")
+async def get_pricecharting_health(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Comprehensive PriceCharting integration health dashboard.
+
+    Returns unified view of all 4 independent PriceCharting jobs:
+    - funko_pricecharting_match
+    - comic_pricecharting_match
+    - funko_price_sync
+    - comic_price_sync
+
+    Includes:
+    - Job status and circuit breaker state for each job
+    - Search cache statistics
+    - Match/sync progress metrics
+    - Stale record counts (needing sync)
+    - Recent errors
+    - Health recommendations
+    """
+    from app.core.search_cache import pricecharting_search_cache
+
+    # Get all 4 job checkpoints
+    jobs_result = await db.execute(text("""
+        SELECT job_name, is_running, total_processed, total_updated, total_errors,
+               last_run_started, last_run_completed, last_error, state_data,
+               control_signal, paused_at,
+               circuit_state, circuit_failure_count, circuit_last_failure, circuit_backoff_multiplier
+        FROM pipeline_checkpoints
+        WHERE job_name IN (
+            'funko_pricecharting_match',
+            'comic_pricecharting_match',
+            'funko_price_sync',
+            'comic_price_sync'
+        )
+    """))
+
+    jobs = {}
+    for row in jobs_result.fetchall():
+        job_name = row[0]
+        jobs[job_name] = {
+            "is_running": row[1],
+            "total_processed": row[2],
+            "total_updated": row[3],
+            "total_errors": row[4],
+            "last_run_started": row[5].isoformat() if row[5] else None,
+            "last_run_completed": row[6].isoformat() if row[6] else None,
+            "last_error": row[7],
+            "state_data": row[8],
+            "control_signal": row[9],
+            "paused_at": row[10].isoformat() if row[10] else None,
+            "circuit": {
+                "state": row[11] or "CLOSED",
+                "failure_count": row[12] or 0,
+                "last_failure": row[13].isoformat() if row[13] else None,
+                "backoff_multiplier": row[14] or 1,
+            },
+        }
+
+    # Match progress
+    comics_matched = await db.execute(text(
+        "SELECT COUNT(*) FROM comic_issues WHERE pricecharting_id IS NOT NULL"
+    ))
+    comics_unmatched = await db.execute(text(
+        "SELECT COUNT(*) FROM comic_issues WHERE pricecharting_id IS NULL"
+    ))
+    funkos_matched = await db.execute(text(
+        "SELECT COUNT(*) FROM funkos WHERE pricecharting_id IS NOT NULL"
+    ))
+    funkos_unmatched = await db.execute(text(
+        "SELECT COUNT(*) FROM funkos WHERE pricecharting_id IS NULL"
+    ))
+
+    # Stale records (needing sync - incremental sync feature)
+    comics_stale = await db.execute(text("""
+        SELECT COUNT(*) FROM comic_issues
+        WHERE pricecharting_id IS NOT NULL
+          AND (pricecharting_synced_at IS NULL
+               OR pricecharting_synced_at < NOW() - INTERVAL '24 hours')
+    """))
+    funkos_stale = await db.execute(text("""
+        SELECT COUNT(*) FROM funkos
+        WHERE pricecharting_id IS NOT NULL
+          AND (pricecharting_synced_at IS NULL
+               OR pricecharting_synced_at < NOW() - INTERVAL '24 hours')
+    """))
+
+    # Recent self-healing audit entries for PriceCharting jobs
+    audit_result = await db.execute(text("""
+        SELECT job_name, action, details, created_at
+        FROM self_healing_audit
+        WHERE job_name IN (
+            'funko_pricecharting_match',
+            'comic_pricecharting_match',
+            'funko_price_sync',
+            'comic_price_sync'
+        )
+        ORDER BY created_at DESC
+        LIMIT 10
+    """))
+    recent_events = [
+        {
+            "job": row[0],
+            "action": row[1],
+            "details": row[2],
+            "timestamp": row[3].isoformat() if row[3] else None,
+        }
+        for row in audit_result.fetchall()
+    ]
+
+    # Search cache stats
+    cache_stats = pricecharting_search_cache.get_stats()
+
+    # Generate recommendations
+    recommendations = []
+
+    # Check for open circuits
+    for job_name, job_data in jobs.items():
+        if job_data.get("circuit", {}).get("state") == "OPEN":
+            recommendations.append({
+                "severity": "high",
+                "message": f"{job_name} circuit breaker is OPEN - API calls blocked",
+                "action": "Check PriceCharting API status, review error logs",
+            })
+        if job_data.get("control_signal") == "pause":
+            recommendations.append({
+                "severity": "medium",
+                "message": f"{job_name} is paused",
+                "action": "Resume via /api/admin/pipeline/job/{job_name}/control",
+            })
+        if job_data.get("total_errors", 0) > 100:
+            recommendations.append({
+                "severity": "medium",
+                "message": f"{job_name} has {job_data['total_errors']} cumulative errors",
+                "action": "Review error patterns in logs",
+            })
+
+    # Check cache efficiency
+    if cache_stats.get("hit_rate", 0) < 0.3 and cache_stats.get("hits", 0) + cache_stats.get("misses", 0) > 100:
+        recommendations.append({
+            "severity": "low",
+            "message": f"Search cache hit rate is low ({cache_stats['hit_rate']*100:.1f}%)",
+            "action": "Review search patterns, consider TTL adjustment",
+        })
+
+    # Stale record warnings
+    stale_comics = comics_stale.scalar() or 0
+    stale_funkos = funkos_stale.scalar() or 0
+    if stale_comics > 10000:
+        recommendations.append({
+            "severity": "low",
+            "message": f"{stale_comics:,} comics need price sync",
+            "action": "Let comic_price_sync job complete its cycle",
+        })
+    if stale_funkos > 1000:
+        recommendations.append({
+            "severity": "low",
+            "message": f"{stale_funkos:,} funkos need price sync",
+            "action": "Let funko_price_sync job complete its cycle",
+        })
+
+    # Overall health score
+    health_score = 100
+    for rec in recommendations:
+        if rec["severity"] == "high":
+            health_score -= 30
+        elif rec["severity"] == "medium":
+            health_score -= 15
+        elif rec["severity"] == "low":
+            health_score -= 5
+    health_score = max(0, health_score)
+
+    return {
+        "health_score": health_score,
+        "health_status": "healthy" if health_score >= 80 else "degraded" if health_score >= 50 else "critical",
+        "jobs": jobs,
+        "match_progress": {
+            "comics": {
+                "matched": comics_matched.scalar() or 0,
+                "unmatched": comics_unmatched.scalar() or 0,
+                "stale": stale_comics,
+            },
+            "funkos": {
+                "matched": funkos_matched.scalar() or 0,
+                "unmatched": funkos_unmatched.scalar() or 0,
+                "stale": stale_funkos,
+            },
+        },
+        "search_cache": cache_stats,
+        "recent_events": recent_events,
+        "recommendations": recommendations,
+    }
+
+
 # ----- UPC Backfill Job (v1.12.0) -----
 
 class UPCBackfillRequest(BaseModel):
