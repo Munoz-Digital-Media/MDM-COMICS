@@ -126,17 +126,15 @@ class StorageService:
 
     def _validate_configuration(self):
         """
-        Validate S3 storage configuration.
+        Validate S3 storage configuration and verify bucket access.
 
-        Note: We don't call head_bucket because it requires s3:ListBucket permission
-        which many IAM policies don't grant (only object-level put/get).
-        Actual S3 operations will fail with clear errors if misconfigured.
+        Requires s3:ListBucket permission on the bucket.
         """
         if not self.is_configured():
             if settings.ENVIRONMENT.lower() == "development":
                 logger.warning("S3 storage not configured; skipping in development")
                 return
-            raise RuntimeError("S3 storage not configured. Set S3_BUCKET/S3_BUCKET_NAME and S3 credentials.")
+            raise RuntimeError("S3 storage not configured. Set S3_BUCKET/S3_BUCKET_NAME and credentials.")
 
         if settings.ENVIRONMENT.lower() == "production":
             using_default_bucket = (
@@ -149,12 +147,20 @@ class StorageService:
                     "Set S3_BUCKET or S3_BUCKET_NAME to the correct bucket."
                 )
 
-        logger.info(
-            "S3 storage configured: bucket=%s region=%s endpoint=%s",
-            self._bucket,
-            self._region,
-            settings.S3_ENDPOINT or "aws",
-        )
+        try:
+            self.client.head_bucket(Bucket=self._bucket)
+            logger.info(
+                "S3 bucket validated: bucket=%s region=%s endpoint=%s",
+                self._bucket,
+                self._region,
+                settings.S3_ENDPOINT or "aws",
+            )
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_msg = e.response.get('Error', {}).get('Message', str(e))
+            raise RuntimeError(
+                f"S3 bucket validation failed for \'{self._bucket}\': {error_code} - {error_msg}"
+            ) from e
 
     def _validate_image(
         self,
