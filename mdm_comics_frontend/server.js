@@ -19,16 +19,25 @@ const PORT = process.env.PORT || 3000;
 // Backend URL - always HTTPS
 const BACKEND_URL = process.env.BACKEND_URL || 'https://mdm-comics-backend-development.up.railway.app';
 
+// Log all requests for debugging
+app.use((req, res, next) => {
+  console.log(`[Request] ${req.method} ${req.url}`);
+  next();
+});
+
 // Proxy /api/* to backend
 app.use('/api', createProxyMiddleware({
   target: BACKEND_URL,
   changeOrigin: true,
   secure: true,
-  logLevel: 'warn',
+  logLevel: 'debug',
   onProxyReq: (proxyReq, req, res) => {
-    // Forward original host for CORS
+    console.log(`[Proxy] Forwarding ${req.method} ${req.originalUrl} -> ${BACKEND_URL}${req.url}`);
     proxyReq.setHeader('X-Forwarded-Host', req.headers.host);
     proxyReq.setHeader('X-Forwarded-Proto', 'https');
+  },
+  onProxyRes: (proxyRes, req, res) => {
+    console.log(`[Proxy] Response ${proxyRes.statusCode} for ${req.originalUrl}`);
   },
   onError: (err, req, res) => {
     console.error('[Proxy Error]', err.message);
