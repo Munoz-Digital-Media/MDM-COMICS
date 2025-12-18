@@ -343,13 +343,13 @@ class StorageService:
             return None
 
         try:
+            # Note: No ACL - bucket policy handles public access
             self.client.put_object(
                 Bucket=self._bucket,
                 Key=key,
                 Body=content,
                 ContentType=content_type,
                 CacheControl=cache_control,
-                ACL='public-read',
             )
 
             url = self._get_public_url(key)
