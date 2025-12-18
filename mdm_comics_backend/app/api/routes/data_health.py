@@ -47,54 +47,74 @@ async def get_data_health_overview(
     Get overall data health metrics.
 
     Returns counts, statuses, and recent activity.
+    Gracefully handles missing tables (returns 0 counts).
     """
     now = utcnow()
     last_24h = now - timedelta(hours=24)
-    last_7d = now - timedelta(days=7)
 
     # Get adapter statuses
     adapter_stats = adapter_registry.get_stats()
 
-    # Dead Letter Queue stats
-    dlq_pending = await db.execute(
-        text("SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'pending'")
-    )
-    dlq_pending_count = dlq_pending.scalar() or 0
+    # Dead Letter Queue stats (graceful if table missing)
+    dlq_pending_count = 0
+    try:
+        dlq_pending = await db.execute(
+            text("SELECT COUNT(*) FROM dead_letter_queue WHERE status = 'pending'")
+        )
+        dlq_pending_count = dlq_pending.scalar() or 0
+    except Exception as e:
+        logger.warning(f"[data_health] dead_letter_queue query failed: {e}")
 
-    # Quarantine stats
-    quarantine_pending = await db.execute(
-        text("SELECT COUNT(*) FROM data_quarantine WHERE is_resolved = false")
-    )
-    quarantine_pending_count = quarantine_pending.scalar() or 0
+    # Quarantine stats (graceful if table missing)
+    quarantine_pending_count = 0
+    try:
+        quarantine_pending = await db.execute(
+            text("SELECT COUNT(*) FROM data_quarantine WHERE is_resolved = false")
+        )
+        quarantine_pending_count = quarantine_pending.scalar() or 0
+    except Exception as e:
+        logger.warning(f"[data_health] data_quarantine query failed: {e}")
 
-    # Recent changes (last 24h)
-    changes_24h = await db.execute(
-        text("""
-            SELECT COUNT(*) FROM price_changelog
-            WHERE changed_at >= :since
-        """),
-        {"since": last_24h}
-    )
-    changes_24h_count = changes_24h.scalar() or 0
+    # Recent changes (last 24h) - graceful if table missing
+    changes_24h_count = 0
+    try:
+        changes_24h = await db.execute(
+            text("""
+                SELECT COUNT(*) FROM price_changelog
+                WHERE changed_at >= :since
+            """),
+            {"since": last_24h}
+        )
+        changes_24h_count = changes_24h.scalar() or 0
+    except Exception as e:
+        logger.warning(f"[data_health] price_changelog query failed: {e}")
 
-    # Pipeline job status
-    running_jobs = await db.execute(
-        text("SELECT COUNT(*) FROM pipeline_checkpoints WHERE is_running = true")
-    )
-    running_jobs_count = running_jobs.scalar() or 0
+    # Pipeline job status (graceful if table missing)
+    running_jobs_count = 0
+    try:
+        running_jobs = await db.execute(
+            text("SELECT COUNT(*) FROM pipeline_checkpoints WHERE is_running = true")
+        )
+        running_jobs_count = running_jobs.scalar() or 0
+    except Exception as e:
+        logger.warning(f"[data_health] pipeline_checkpoints query failed: {e}")
 
-    # Get last sync times for each entity type
-    last_syncs = await db.execute(
-        text("""
-            SELECT entity_type, MAX(changed_at) as last_sync
-            FROM price_changelog
-            GROUP BY entity_type
-        """)
-    )
-    last_sync_by_type = {
-        row[0]: row[1].isoformat() if row[1] else None
-        for row in last_syncs.fetchall()
-    }
+    # Get last sync times for each entity type (graceful if table missing)
+    last_sync_by_type = {}
+    try:
+        last_syncs = await db.execute(
+            text("""
+                SELECT entity_type, MAX(changed_at) as last_sync
+                FROM price_changelog
+                GROUP BY entity_type
+            """)
+        )
+        last_sync_by_type = {
+            row[0]: row[1].isoformat() if row[1] else None
+            for row in last_syncs.fetchall()
+        }
+    except Exception as e:
+        logger.warning(f"[data_health] price_changelog sync times query failed: {e}")
 
     return {
         "status": "healthy" if dlq_pending_count < 100 else "degraded",
