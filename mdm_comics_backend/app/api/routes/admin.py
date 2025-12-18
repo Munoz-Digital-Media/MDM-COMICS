@@ -1944,6 +1944,49 @@ async def get_metron_stats():
     }
 
 
+@router.get("/metron-test")
+async def test_metron_request():
+    """
+    Test endpoint - makes a single Metron API request to verify logging.
+
+    Fetches Amazing Spider-Man #1 (metron_id=31660) as a test.
+    """
+    from app.adapters.metron_adapter import MetronAdapter, get_metron_stats
+
+    adapter = MetronAdapter()
+
+    # Get stats before
+    stats_before = get_metron_stats()
+
+    # Make a test request - fetch a known issue
+    try:
+        result = await adapter.fetch_by_id("31660", endpoint="issue")
+        success = result is not None
+        error = None
+    except Exception as e:
+        success = False
+        error = str(e)
+        result = None
+
+    # Get stats after
+    stats_after = get_metron_stats()
+
+    return {
+        "test": "metron_fetch_by_id",
+        "issue_id": 31660,
+        "success": success,
+        "error": error,
+        "result_preview": {
+            "id": result.get("id") if result else None,
+            "issue_name": result.get("issue_name") if result else None,
+            "series": result.get("series", {}).get("name") if result and result.get("series") else None,
+        } if result else None,
+        "stats_before": stats_before,
+        "stats_after": stats_after,
+        "requests_made": stats_after["requests_total"] - stats_before["requests_total"]
+    }
+
+
 # ----- PriceCharting Health Dashboard (v1.24.0 PC-OPT-2024-001 Phase 4) -----
 
 @router.get("/pricecharting-health")
