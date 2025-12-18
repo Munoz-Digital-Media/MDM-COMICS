@@ -33,7 +33,7 @@ async def list_orders(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Items per page"),
+    per_page: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, alias="per_page", description="Items per page"),
 ):
     """
     Get current user's orders with pagination.
@@ -47,14 +47,14 @@ async def list_orders(
     total = count_result.scalar() or 0
 
     # Get paginated orders
-    offset = (page - 1) * page_size
+    offset = (page - 1) * per_page
     result = await db.execute(
         select(Order)
         .where(Order.user_id == user.id)
         .options(selectinload(Order.items))
         .order_by(Order.created_at.desc())
         .offset(offset)
-        .limit(page_size)
+        .limit(per_page)
     )
     orders = result.scalars().all()
 
