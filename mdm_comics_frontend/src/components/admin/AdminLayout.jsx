@@ -2,22 +2,21 @@
  * AdminLayout - Full-page admin console layout with sidebar navigation
  * Phase 3: MDM Admin Console Inventory System v1.3.0
  * BUNDLE-001: Added nested navigation with feature flag support
+ * FULFILLMENT-001: Consolidated Orders/Shipping/Refunds into Fulfillment module
  */
 import React, { useState, useEffect } from 'react';
 import {
-  LayoutDashboard, Package, ShoppingCart, BarChart3, Search,
-  X, Menu, ChevronLeft, ChevronDown, Truck, Users, Palette, Boxes, RefreshCw
+  LayoutDashboard, Package, BarChart3, Search,
+  X, Menu, ChevronLeft, ChevronDown, Users, Palette, Boxes, ClipboardList
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
-import OrderList from './orders/OrderList';
 import InventorySummary from './reports/InventorySummary';
-import ShipmentList from './shipping/ShipmentList';
 import UserList from './users/UserList';
 import BrandAssets from './branding/BrandAssets';
 import IngestionManager from './ingestion/IngestionManager';
 import BundleList from './bundles/BundleList';
-import RefundList from './refunds/RefundList';
+import FulfillmentManager from './fulfillment/FulfillmentManager';
 import { FEATURES } from '../../features';
 
 // Build navigation items with feature flag support
@@ -33,9 +32,7 @@ const buildNavItems = () => {
       ] : undefined,
     },
     { id: 'ingestion', label: 'Ingestion', icon: Search },
-    { id: 'orders', label: 'Orders', icon: ShoppingCart },
-    { id: 'shipping', label: 'Shipping', icon: Truck },
-    { id: 'refunds', label: 'Refunds', icon: RefreshCw },
+    { id: 'fulfillment', label: 'Fulfillment', icon: ClipboardList },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'branding', label: 'Branding', icon: Palette },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
@@ -85,12 +82,8 @@ export default function AdminLayout({ onClose }) {
         return <BundleList />;
       case 'ingestion':
         return <IngestionManager />;
-      case 'orders':
-        return <OrderList />;
-      case 'shipping':
-        return <ShipmentList />;
-      case 'refunds':
-        return <RefundList />;
+      case 'fulfillment':
+        return <FulfillmentManager />;
       case 'users':
         return <UserList />;
       case 'branding':
