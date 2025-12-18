@@ -3,7 +3,7 @@
  */
 
 import { API_BASE } from '../../../config/api.config.js';
-import { authFetch } from '../utils/authFetch';
+import { authFetch } from './utils/authFetch';
 import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Truck, RefreshCw, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 
