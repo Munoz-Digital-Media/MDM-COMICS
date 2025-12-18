@@ -675,3 +675,93 @@ async def check_cover_hash(
         exists=existing is not None,
         queue_id=existing.id if existing else None
     )
+
+
+# =============================================================
+# Cleanup Rejected Matches
+# =============================================================
+
+@router.post("/cleanup-rejected")
+async def cleanup_rejected_matches(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Clean up S3 objects and local files from all rejected matches.
+    Database records are preserved for ML training.
+    
+    One-time admin operation.
+    """
+    from sqlalchemy import text
+    
+    storage = StorageService()
+    s3_configured = storage.is_configured()
+    
+    stats = {
+        "total_rejected": 0,
+        "s3_deleted": 0,
+        "s3_failed": 0,
+        "local_deleted": 0,
+        "local_failed": 0,
+        "no_images": 0,
+    }
+    
+    # Get all rejected matches with candidate_data
+    result = await db.execute(
+        text("""
+            SELECT id, candidate_data
+            FROM match_review_queue
+            WHERE status = 'rejected'
+            AND candidate_data IS NOT NULL
+        """)
+    )
+    rejected = result.fetchall()
+    stats["total_rejected"] = len(rejected)
+    
+    logger.info(f"Cleaning up {len(rejected)} rejected matches")
+    
+    for row in rejected:
+        match_id = row[0]
+        candidate_data = row[1] or {}
+        
+        has_image = False
+        
+        # Delete S3 object
+        s3_key = candidate_data.get('s3_key')
+        if s3_key:
+            has_image = True
+            if s3_configured:
+                try:
+                    deleted = await storage.delete_object(s3_key)
+                    if deleted:
+                        stats["s3_deleted"] += 1
+                        logger.info(f"Deleted S3 for match {match_id}: {s3_key}")
+                    else:
+                        stats["s3_failed"] += 1
+                except Exception as e:
+                    stats["s3_failed"] += 1
+                    logger.warning(f"Failed S3 delete for match {match_id}: {e}")
+            else:
+                stats["s3_failed"] += 1
+        
+        # Delete local file
+        file_path = candidate_data.get('file_path')
+        if file_path and os.path.exists(file_path):
+            has_image = True
+            try:
+                os.remove(file_path)
+                stats["local_deleted"] += 1
+                logger.info(f"Deleted local for match {match_id}: {file_path}")
+            except Exception as e:
+                stats["local_failed"] += 1
+                logger.warning(f"Failed local delete for match {match_id}: {e}")
+        
+        if not has_image:
+            stats["no_images"] += 1
+    
+    logger.info(f"Cleanup complete: {stats}")
+    
+    return {
+        "message": "Cleanup complete",
+        "stats": stats
+    }
