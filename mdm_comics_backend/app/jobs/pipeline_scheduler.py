@@ -2168,10 +2168,10 @@ async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
                             current_story = None
 
                             for elem in soup.find_all(["h2", "h3"]):
-                                text = elem.get_text(strip=True)
+                                elem_text = elem.get_text(strip=True)
 
                                 # Story header: '1. "Title"'
-                                match = re.match(r'^(\d+)\.\s*"?(.+?)"?\s*$', text)
+                                match = re.match(r'^(\d+)\.\s*"?(.+?)"?\s*$', elem_text)
                                 if match and elem.name == "h2":
                                     if current_story:
                                         stories.append(current_story)
@@ -2186,7 +2186,7 @@ async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
                                 # Credit roles
                                 if current_story and elem.name == "h3":
                                     for role in ["Writer", "Penciler", "Inker", "Colorist", "Letterer", "Editor"]:
-                                        if role in text:
+                                        if role in elem_text:
                                             next_elem = elem.find_next_sibling()
                                             if next_elem:
                                                 links = next_elem.find_all("a") if hasattr(next_elem, "find_all") else []
