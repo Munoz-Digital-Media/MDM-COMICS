@@ -7,7 +7,7 @@ Requires admin authentication.
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, text
 from sqlalchemy.orm import selectinload
 from datetime import datetime
 
@@ -23,90 +23,99 @@ router = APIRouter(prefix="/admin/orders", tags=["admin-orders"])
 async def list_all_orders(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    search: Optional[str] = Query(None, description="Search by order number or email"),
-    date_from: Optional[str] = Query(None, description="Filter from date (ISO format)"),
-    date_to: Optional[str] = Query(None, description="Filter to date (ISO format)"),
-    limit: int = Query(25, ge=1, le=100, description="Items per page"),
-    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status"),
+    search: Optional[str] = Query(None, description="Search by order number"),
+    date_from: Optional[str] = Query(None, description="Filter from date"),
+    date_to: Optional[str] = Query(None, description="Filter to date"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
+    """Get all orders with filters (admin only)."""
+    # Use raw SQL to avoid ORM mapping issues with missing columns
+    base_sql = """
+        SELECT o.id, o.user_id, o.order_number, o.status,
+               o.subtotal, o.shipping_cost, o.tax, o.total,
+               o.shipping_address, o.shipping_method, o.tracking_number,
+               o.created_at, o.updated_at, o.notes
+        FROM orders o
+        WHERE 1=1
     """
-    Get all orders with filters (admin only).
-    """
-    query = select(Order).options(selectinload(Order.items))
-    count_query = select(func.count(Order.id))
+    count_sql = "SELECT COUNT(*) FROM orders o WHERE 1=1"
+    params = {}
 
-    # Apply filters
-    if status:
-        query = query.where(Order.status == status)
-        count_query = count_query.where(Order.status == status)
+    if status_filter:
+        base_sql += " AND o.status = :status"
+        count_sql += " AND o.status = :status"
+        params["status"] = status_filter
 
     if search:
-        search_filter = or_(
-            Order.order_number.ilike(f"%{search}%"),
-        )
-        query = query.where(search_filter)
-        count_query = count_query.where(search_filter)
+        base_sql += " AND o.order_number ILIKE :search"
+        count_sql += " AND o.order_number ILIKE :search"
+        params["search"] = f"%{search}%"
 
     if date_from:
-        try:
-            from_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-            query = query.where(Order.created_at >= from_date)
-            count_query = count_query.where(Order.created_at >= from_date)
-        except ValueError:
-            pass
+        base_sql += " AND o.created_at >= :date_from"
+        count_sql += " AND o.created_at >= :date_from"
+        params["date_from"] = date_from
 
     if date_to:
-        try:
-            to_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-            query = query.where(Order.created_at <= to_date)
-            count_query = count_query.where(Order.created_at <= to_date)
-        except ValueError:
-            pass
+        base_sql += " AND o.created_at <= :date_to"
+        count_sql += " AND o.created_at <= :date_to"
+        params["date_to"] = date_to
 
-    # Get total count
-    count_result = await db.execute(count_query)
+    # Get count
+    count_result = await db.execute(text(count_sql), params)
     total = count_result.scalar() or 0
 
-    # Get paginated orders
-    query = query.order_by(Order.created_at.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
-    orders = result.scalars().all()
+    # Get orders
+    base_sql += " ORDER BY o.created_at DESC LIMIT :limit OFFSET :offset"
+    params["limit"] = limit
+    params["offset"] = offset
 
-    return {
-        "orders": [
+    result = await db.execute(text(base_sql), params)
+    rows = result.fetchall()
+
+    # Get order items for each order
+    orders = []
+    for row in rows:
+        order_id = row[0]
+        items_result = await db.execute(
+            text("""
+                SELECT id, product_id, product_name, product_sku, price, quantity
+                FROM order_items WHERE order_id = :order_id
+            """),
+            {"order_id": order_id}
+        )
+        items = [
             {
-                "id": o.id,
-                "order_number": o.order_number,
-                "user_id": o.user_id,
-                "status": o.status,
-                "subtotal": float(o.subtotal) if o.subtotal else 0,
-                "shipping_cost": float(o.shipping_cost) if o.shipping_cost else 0,
-                "tax": float(o.tax) if o.tax else 0,
-                "total": float(o.total) if o.total else 0,
-                "shipping_address": o.shipping_address,
-                "shipping_method": o.shipping_method,
-                "tracking_number": o.tracking_number,
-                "created_at": o.created_at.isoformat() if o.created_at else None,
-                "updated_at": o.updated_at.isoformat() if o.updated_at else None,
-                "items": [
-                    {
-                        "id": item.id,
-                        "product_id": item.product_id,
-                        "product_name": item.product_name,
-                        "product_sku": item.product_sku,
-                        "price": float(item.price) if item.price else 0,
-                        "quantity": item.quantity,
-                    }
-                    for item in o.items
-                ],
+                "id": item[0],
+                "product_id": item[1],
+                "product_name": item[2],
+                "product_sku": item[3],
+                "price": float(item[4]) if item[4] else 0,
+                "quantity": item[5],
             }
-            for o in orders
-        ],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
+            for item in items_result.fetchall()
+        ]
+
+        orders.append({
+            "id": row[0],
+            "user_id": row[1],
+            "order_number": row[2],
+            "status": row[3],
+            "subtotal": float(row[4]) if row[4] else 0,
+            "shipping_cost": float(row[5]) if row[5] else 0,
+            "tax": float(row[6]) if row[6] else 0,
+            "total": float(row[7]) if row[7] else 0,
+            "shipping_address": row[8],
+            "shipping_method": row[9],
+            "tracking_number": row[10],
+            "created_at": row[11].isoformat() if row[11] else None,
+            "updated_at": row[12].isoformat() if row[12] else None,
+            "items": items,
+        })
+
+    return {"orders": orders, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{order_id}")
@@ -115,48 +124,58 @@ async def get_order(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get single order details (admin only).
-    """
+    """Get single order details (admin only)."""
     result = await db.execute(
-        select(Order)
-        .where(Order.id == order_id)
-        .options(selectinload(Order.items))
+        text("""
+            SELECT id, user_id, order_number, status,
+                   subtotal, shipping_cost, tax, total,
+                   shipping_address, shipping_method, tracking_number,
+                   created_at, updated_at, notes
+            FROM orders WHERE id = :order_id
+        """),
+        {"order_id": order_id}
     )
-    order = result.scalar_one_or_none()
+    row = result.fetchone()
 
-    if not order:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Order not found"
-        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Get items
+    items_result = await db.execute(
+        text("""
+            SELECT id, product_id, product_name, product_sku, price, quantity
+            FROM order_items WHERE order_id = :order_id
+        """),
+        {"order_id": order_id}
+    )
+    items = [
+        {
+            "id": item[0],
+            "product_id": item[1],
+            "product_name": item[2],
+            "product_sku": item[3],
+            "price": float(item[4]) if item[4] else 0,
+            "quantity": item[5],
+        }
+        for item in items_result.fetchall()
+    ]
 
     return {
-        "id": order.id,
-        "order_number": order.order_number,
-        "user_id": order.user_id,
-        "status": order.status,
-        "subtotal": float(order.subtotal) if order.subtotal else 0,
-        "shipping_cost": float(order.shipping_cost) if order.shipping_cost else 0,
-        "tax": float(order.tax) if order.tax else 0,
-        "total": float(order.total) if order.total else 0,
-        "shipping_address": order.shipping_address,
-        "shipping_method": order.shipping_method,
-        "tracking_number": order.tracking_number,
-        "notes": order.notes,
-        "created_at": order.created_at.isoformat() if order.created_at else None,
-        "updated_at": order.updated_at.isoformat() if order.updated_at else None,
-        "items": [
-            {
-                "id": item.id,
-                "product_id": item.product_id,
-                "product_name": item.product_name,
-                "product_sku": item.product_sku,
-                "price": float(item.price) if item.price else 0,
-                "quantity": item.quantity,
-            }
-            for item in order.items
-        ],
+        "id": row[0],
+        "user_id": row[1],
+        "order_number": row[2],
+        "status": row[3],
+        "subtotal": float(row[4]) if row[4] else 0,
+        "shipping_cost": float(row[5]) if row[5] else 0,
+        "tax": float(row[6]) if row[6] else 0,
+        "total": float(row[7]) if row[7] else 0,
+        "shipping_address": row[8],
+        "shipping_method": row[9],
+        "tracking_number": row[10],
+        "created_at": row[11].isoformat() if row[11] else None,
+        "updated_at": row[12].isoformat() if row[12] else None,
+        "notes": row[13],
+        "items": items,
     }
 
 
@@ -167,35 +186,49 @@ async def update_order_status(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Update order status (admin only).
-    """
+    """Update order status (admin only)."""
+    # Check order exists
     result = await db.execute(
-        select(Order).where(Order.id == order_id)
+        text("SELECT id FROM orders WHERE id = :order_id"),
+        {"order_id": order_id}
     )
-    order = result.scalar_one_or_none()
+    if not result.fetchone():
+        raise HTTPException(status_code=404, detail="Order not found")
 
-    if not order:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Order not found"
-        )
+    # Build update
+    updates = []
+    params = {"order_id": order_id}
 
     new_status = status_update.get("status")
     if new_status:
-        order.status = new_status
+        updates.append("status = :status")
+        params["status"] = new_status
 
-    tracking_number = status_update.get("tracking_number")
-    if tracking_number:
-        order.tracking_number = tracking_number
+    tracking = status_update.get("tracking_number")
+    if tracking:
+        updates.append("tracking_number = :tracking")
+        params["tracking"] = tracking
 
-    await db.commit()
-    await db.refresh(order)
+    if updates:
+        updates.append("updated_at = NOW()")
+        sql = f"UPDATE orders SET {', '.join(updates)} WHERE id = :order_id"
+        await db.execute(text(sql), params)
+        await db.commit()
+
+    # Return updated order
+    result = await db.execute(
+        text("""
+            SELECT id, order_number, status, tracking_number, updated_at
+            FROM orders WHERE id = :order_id
+        """),
+        {"order_id": order_id}
+    )
+    row = result.fetchone()
 
     return {
-        "id": order.id,
-        "order_number": order.order_number,
-        "status": order.status,
-        "tracking_number": order.tracking_number,
-        "updated_at": order.updated_at.isoformat() if order.updated_at else None,
+        "id": row[0],
+        "order_number": row[1],
+        "status": row[2],
+        "tracking_number": row[3],
+        "updated_at": row[4].isoformat() if row[4] else None,
     }
