@@ -7,12 +7,11 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, BarChart3, Search,
-  X, Menu, ChevronLeft, ChevronDown, Users, Palette, ClipboardList
+  X, Menu, ChevronLeft, ChevronDown, Palette, ClipboardList
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import CatalogManager from './catalog/CatalogManager';
-import InventorySummary from './reports/InventorySummary';
-import UserList from './users/UserList';
+import ReportsManager from './reports/ReportsManager';
 import BrandAssets from './branding/BrandAssets';
 import IngestionManager from './ingestion/IngestionManager';
 import FulfillmentManager from './fulfillment/FulfillmentManager';
@@ -23,7 +22,6 @@ const NAV_ITEMS = [
   { id: 'catalog', label: 'Catalog', icon: Package },
   { id: 'ingestion', label: 'Ingestion', icon: Search },
   { id: 'fulfillment', label: 'Fulfillment', icon: ClipboardList },
-  { id: 'users', label: 'Users', icon: Users },
   { id: 'branding', label: 'Branding', icon: Palette },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
 ];
@@ -67,12 +65,10 @@ export default function AdminLayout({ onClose }) {
         return <IngestionManager />;
       case 'fulfillment':
         return <FulfillmentManager />;
-      case 'users':
-        return <UserList />;
       case 'branding':
         return <BrandAssets />;
       case 'reports':
-        return <InventorySummary />;
+        return <ReportsManager />;
       default:
         return <AdminDashboard onNavigate={setActiveSection} />;
     }
