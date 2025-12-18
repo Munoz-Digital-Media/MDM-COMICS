@@ -289,6 +289,10 @@ class JobCircuitBreaker:
             "metrics": self._breaker.get_metrics(),
         }
 
+    def to_db_state(self) -> dict:
+        """Convert to database-storable state for checkpoint persistence."""
+        return self._breaker.to_db_state()
+
 
 # Registry of job circuit breakers
 _job_circuits: dict[str, JobCircuitBreaker] = {}
