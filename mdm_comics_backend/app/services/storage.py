@@ -4,12 +4,14 @@ Storage Service - S3-compatible object storage
 v1.0.0: Brand assets, product images, and file uploads
 Supports AWS S3, Cloudflare R2, MinIO, and other S3-compatible services.
 """
+import os
 import logging
 import hashlib
 import mimetypes
 from datetime import datetime, timezone
 from typing import Optional, BinaryIO, Tuple
 from dataclasses import dataclass
+from threading import Lock
 
 import boto3
 from botocore.config import Config
@@ -37,6 +39,8 @@ class StorageService:
 
     Handles uploads to AWS S3, Cloudflare R2, or any S3-compatible service.
     """
+    _validation_lock: Lock = Lock()
+    _bucket_validated: bool = False
 
     # Allowed MIME types for brand assets
     ALLOWED_IMAGE_TYPES = {
@@ -55,6 +59,7 @@ class StorageService:
         self._client = None
         self._bucket = settings.S3_BUCKET
         self._region = settings.S3_REGION
+        self._validate_configuration_once()
 
     @property
     def client(self):
@@ -107,6 +112,61 @@ class StorageService:
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_').lower()
 
         return f"{folder}/{timestamp}_{content_hash}_{safe_filename}"
+
+    def _validate_configuration_once(self):
+        """Run storage validation a single time per process."""
+        if StorageService._bucket_validated:
+            return
+
+        with StorageService._validation_lock:
+            if StorageService._bucket_validated:
+                return
+            self._validate_configuration()
+            StorageService._bucket_validated = True
+
+    def _validate_configuration(self):
+        """
+        Fail fast when storage is misconfigured.
+
+        - Require bucket + credentials in prod.
+        - Reject default bucket in prod if env vars were not provided.
+        - Verify bucket exists via head_bucket (works for AWS and most S3-compatible endpoints).
+        """
+        if not self.is_configured():
+            if settings.ENVIRONMENT.lower() == "development":
+                logger.warning("S3 storage not configured; skipping validation in development")
+                return
+            raise RuntimeError("S3 storage not configured. Set S3_BUCKET/S3_BUCKET_NAME and S3 credentials.")
+
+        if settings.ENVIRONMENT.lower() == "production":
+            using_default_bucket = (
+                self._bucket == "mdm-comics"
+                and not (os.getenv("S3_BUCKET") or os.getenv("S3_BUCKET_NAME"))
+            )
+            if using_default_bucket:
+                raise RuntimeError(
+                    "S3 bucket is using the default value in production. "
+                    "Set S3_BUCKET or S3_BUCKET_NAME to the correct bucket."
+                )
+
+        try:
+            self.client.head_bucket(Bucket=self._bucket)
+            logger.info(
+                "S3 bucket validated: bucket=%s region=%s endpoint=%s",
+                self._bucket,
+                self._region,
+                settings.S3_ENDPOINT or "aws",
+            )
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_msg = e.response.get('Error', {}).get('Message', str(e))
+            raise RuntimeError(
+                f"S3 bucket validation failed for '{self._bucket}': {error_code} - {error_msg}"
+            ) from e
+        except Exception as e:
+            raise RuntimeError(
+                f"S3 bucket validation failed for '{self._bucket}': {str(e)}"
+            ) from e
 
     def _validate_image(
         self,
