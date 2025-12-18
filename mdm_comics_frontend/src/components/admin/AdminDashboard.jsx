@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Package, DollarSign, AlertTriangle, QrCode,
-  ShoppingCart, TrendingUp, TrendingDown, RefreshCw, Loader2, Info
+  TrendingUp, TrendingDown, RefreshCw, Loader2, Info
 } from 'lucide-react';
 import { adminAPI } from '../../services/adminApi';
 import PipelineStatus from './pipeline/PipelineStatus';
@@ -201,18 +201,8 @@ export default function AdminDashboard({ onNavigate }) {
           <QuickAction
             label="Process Queue"
             icon={QrCode}
-            onClick={() => onNavigate('queue')}
+            onClick={() => onNavigate('ingestion')}
             color="orange"
-          />
-          <QuickAction
-            label="Add Product"
-            icon={Package}
-            onClick={() => onNavigate('products')}
-          />
-          <QuickAction
-            label="View Orders"
-            icon={ShoppingCart}
-            onClick={() => onNavigate('orders')}
           />
           <QuickAction
             label="Low Stock Report"

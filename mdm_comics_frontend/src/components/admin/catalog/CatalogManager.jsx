@@ -1,30 +1,34 @@
 import React, { useState } from 'react';
 import ProductList from '../products/ProductList';
 import BundleList from '../bundles/BundleList';
+import ProductCreator from './ProductCreator';
 import { FEATURES } from '../../../features';
 
 const TABS = {
+  SEARCH_CREATE: 'Search & Create',
   PRODUCTS: 'Products',
   BUNDLES: 'Bundles',
 };
 
 export default function CatalogManager() {
-  const [activeTab, setActiveTab] = useState(TABS.PRODUCTS);
+  const [activeTab, setActiveTab] = useState(TABS.SEARCH_CREATE);
 
   // Build available tabs based on feature flags
-  const availableTabs = [TABS.PRODUCTS];
+  const availableTabs = [TABS.SEARCH_CREATE, TABS.PRODUCTS];
   if (FEATURES.BUNDLES_ENABLED) {
     availableTabs.push(TABS.BUNDLES);
   }
 
   const renderContent = () => {
     switch (activeTab) {
+      case TABS.SEARCH_CREATE:
+        return <ProductCreator />;
       case TABS.PRODUCTS:
         return <ProductList />;
       case TABS.BUNDLES:
         return <BundleList />;
       default:
-        return <ProductList />;
+        return <ProductCreator />;
     }
   };
 
