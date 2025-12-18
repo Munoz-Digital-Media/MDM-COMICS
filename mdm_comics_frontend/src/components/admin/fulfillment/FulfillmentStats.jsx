@@ -3,6 +3,7 @@
  */
 
 import { API_BASE } from '../../../config/api.config.js';
+import { authFetch } from '../utils/authFetch';
 import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Truck, RefreshCw, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 
@@ -22,13 +23,13 @@ export default function FulfillmentStats() {
         
 
         // Fetch order stats
-        const ordersRes = await fetch(`${API_BASE}/admin/orders/?status=paid&limit=1`, {
+        const ordersRes = await authFetch(`${API_BASE}/admin/orders/?status=paid&limit=1`, {
           credentials: 'include',
         });
         const ordersData = await ordersRes.json();
 
         // Fetch refund stats
-        const refundsRes = await fetch(`${API_BASE}/admin/refunds/stats`, {
+        const refundsRes = await authFetch(`${API_BASE}/admin/refunds/stats`, {
           credentials: 'include',
         });
         const refundsData = await refundsRes.json();

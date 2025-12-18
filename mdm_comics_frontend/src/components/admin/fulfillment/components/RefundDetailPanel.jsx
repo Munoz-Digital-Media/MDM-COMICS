@@ -14,6 +14,7 @@
  */
 
 import { API_BASE } from '../../../../config/api.config.js';
+import { authFetch } from '../utils/authFetch';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
@@ -125,7 +126,7 @@ export default function RefundDetailPanel({ refund, onClose, onUpdate, announce 
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/admin/refunds/${refund.id}/transition`, {
+      const response = await authFetch(`${API_BASE}/admin/refunds/${refund.id}/transition`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -159,7 +160,7 @@ export default function RefundDetailPanel({ refund, onClose, onUpdate, announce 
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/admin/refunds/${refund.id}/process-stripe`, {
+      const response = await authFetch(`${API_BASE}/admin/refunds/${refund.id}/process-stripe`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },

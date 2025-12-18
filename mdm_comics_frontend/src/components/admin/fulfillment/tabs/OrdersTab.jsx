@@ -8,6 +8,7 @@
  */
 
 import { API_BASE } from '../../../../config/api.config.js';
+import { authFetch } from '../utils/authFetch';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Truck, Printer, Mail, MoreHorizontal, ExternalLink } from 'lucide-react';
 import StatusBadge from '../shared/StatusBadge';
@@ -56,7 +57,7 @@ export default function OrdersTab({ announce }) {
         ...(filter.search && { search: filter.search }),
       });
 
-      const response = await fetch(`${API_BASE}/admin/orders/?${params}`, {
+      const response = await authFetch(`${API_BASE}/admin/orders/?${params}`, {
         credentials: 'include',
       });
 

@@ -3,6 +3,7 @@
  */
 
 import { API_BASE } from '../../../../config/api.config.js';
+import { authFetch } from '../utils/authFetch';
 import React, { useState, useEffect, useCallback } from 'react';
 import { CheckCircle, X, Truck, DollarSign, Clock, Eye } from 'lucide-react';
 import StatusBadge from '../shared/StatusBadge';

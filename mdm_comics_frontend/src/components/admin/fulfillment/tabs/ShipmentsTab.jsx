@@ -3,6 +3,7 @@
  */
 
 import { API_BASE } from '../../../../config/api.config.js';
+import { authFetch } from '../utils/authFetch';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Printer, XCircle, ExternalLink, ChevronDown, ChevronRight, Truck } from 'lucide-react';
 import StatusBadge from '../shared/StatusBadge';
@@ -49,7 +50,7 @@ export default function ShipmentsTab({ announce }) {
         ...(filter.status && { status: filter.status }),
       });
 
-      const response = await fetch(`${API_BASE}/shipping/shipments?${params}`, {
+      const response = await authFetch(`${API_BASE}/shipping/shipments?${params}`, {
         credentials: 'include',
       });
 
@@ -90,7 +91,7 @@ export default function ShipmentsTab({ announce }) {
   const handlePrintLabel = async (shipmentId) => {
     setActionLoading(shipmentId);
     try {
-      const response = await fetch(`${API_BASE}/shipping/shipments/${shipmentId}/label`, {
+      const response = await authFetch(`${API_BASE}/shipping/shipments/${shipmentId}/label`, {
         credentials: 'include',
       });
 
@@ -131,7 +132,7 @@ export default function ShipmentsTab({ announce }) {
 
     setActionLoading(shipmentId);
     try {
-      const response = await fetch(`${API_BASE}/shipping/shipments/${shipmentId}/void`, {
+      const response = await authFetch(`${API_BASE}/shipping/shipments/${shipmentId}/void`, {
         method: 'POST',
         credentials: 'include',
       });

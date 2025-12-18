@@ -9,6 +9,7 @@
  */
 
 import { API_BASE } from '../../../../config/api.config.js';
+import { authFetch } from '../utils/authFetch';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Truck, Mail, Printer, Package, MapPin, CreditCard, Clock, User, AlertCircle } from 'lucide-react';
 import StatusBadge from '../shared/StatusBadge';
@@ -28,7 +29,7 @@ export default function OrderDetailPanel({ orderId, onClose, onUpdate, announce 
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}`, {
+      const response = await authFetch(`${API_BASE}/admin/orders/${orderId}`, {
         credentials: 'include',
       });
 
@@ -92,7 +93,7 @@ export default function OrderDetailPanel({ orderId, onClose, onUpdate, announce 
   const handleCreateShipment = async () => {
     setActionLoading('ship');
     try {
-      const response = await fetch(`${API_BASE}/shipping/shipments`, {
+      const response = await authFetch(`${API_BASE}/shipping/shipments`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -114,7 +115,7 @@ export default function OrderDetailPanel({ orderId, onClose, onUpdate, announce 
   const handleSendEmail = async (type) => {
     setActionLoading(`email-${type}`);
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/email`, {
+      const response = await authFetch(`${API_BASE}/admin/orders/${orderId}/email`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -134,7 +135,7 @@ export default function OrderDetailPanel({ orderId, onClose, onUpdate, announce 
   const handlePrintPackingSlip = async () => {
     setActionLoading('print');
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/packing-slip`, {
+      const response = await authFetch(`${API_BASE}/admin/orders/${orderId}/packing-slip`, {
         credentials: 'include',
       });
 
