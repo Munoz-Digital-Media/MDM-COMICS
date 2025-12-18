@@ -46,6 +46,8 @@ from app.api.routes import admin_bundles, bundles
 from app.api.routes import refunds, admin_refunds
 # Admin Orders for Fulfillment Module
 from app.api.routes import admin_orders
+# BCW Catalog Search & Create v1.0.0
+from app.api.routes import bcw_catalog
 # Outreach System v1.5.0 - optional imports for graceful degradation
 try:
     from app.api.routes import newsletter, webhooks
@@ -497,6 +499,8 @@ app.include_router(refunds.router, prefix="/api", tags=["Refunds"])
 app.include_router(admin_refunds.router, prefix="/api", tags=["Admin - Refunds"])
 # Admin Orders for Fulfillment Module
 app.include_router(admin_orders.router, prefix="/api", tags=["Admin - Orders"])
+# BCW Catalog Search & Create v1.0.0
+app.include_router(bcw_catalog.router, prefix="/api", tags=["Admin - BCW Catalog"])
 # Outreach System v1.5.0
 if OUTREACH_ROUTES_AVAILABLE:
     app.include_router(newsletter.router, prefix="/api", tags=["Newsletter"])

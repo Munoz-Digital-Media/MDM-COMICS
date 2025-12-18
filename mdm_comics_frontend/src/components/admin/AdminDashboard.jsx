@@ -72,19 +72,33 @@ export default function AdminDashboard({ onNavigate }) {
   const [dashboard, setDashboard] = useState(null);
   const [lowStock, setLowStock] = useState([]);
   const [systemStatus, setSystemStatus] = useState(null);
+  const [systemStatusError, setSystemStatusError] = useState(null); // v1.1: Track status errors
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchDashboard = useCallback(async () => {
     try {
       setError(null);
-      const [dashData, lowStockData, statusData] = await Promise.all([
+
+      // Fetch dashboard and low stock data
+      const [dashData, lowStockData] = await Promise.all([
         adminAPI.getDashboard(),
         adminAPI.getLowStockItems(5),
-        adminAPI.getSystemStatus().catch(() => null), // Don't fail dashboard if status fails
       ]);
+
+      // v1.1: System status with explicit error tracking (fixes P0 bug)
+      let statusData = null;
+      let statusError = null;
+      try {
+        statusData = await adminAPI.getSystemStatus();
+      } catch (err) {
+        statusError = err.message || 'Failed to fetch system status';
+        console.error('[AdminDashboard] System status fetch failed:', err);
+      }
+
       setDashboard(dashData);
       setLowStock(lowStockData.items || []);
       setSystemStatus(statusData);
+      setSystemStatusError(statusError);
     } catch (err) {
       console.error('Dashboard fetch error:', err);
       setError(err.message);
@@ -294,15 +308,19 @@ export default function AdminDashboard({ onNavigate }) {
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
           <h3 className="text-sm font-semibold text-zinc-400 mb-4">System Status</h3>
           <div className="space-y-3">
-            {/* Database status - if we got systemStatus, DB is connected */}
+            {/* Database status - v1.1: now with error handling */}
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">Database</span>
               <span className={`text-xs px-2 py-1 rounded-full ${
-                systemStatus
-                  ? 'bg-green-500/20 text-green-400'
-                  : 'bg-yellow-500/20 text-yellow-400'
+                systemStatusError
+                  ? 'bg-red-500/20 text-red-400'
+                  : systemStatus?.database?.connected
+                    ? 'bg-green-500/20 text-green-400'
+                    : systemStatus
+                      ? 'bg-green-500/20 text-green-400'
+                      : 'bg-yellow-500/20 text-yellow-400'
               }`}>
-                {systemStatus ? 'Connected' : 'Checking...'}
+                {systemStatusError ? 'Error' : systemStatus ? 'Connected' : 'Checking...'}
               </span>
             </div>
             {/* Pipeline jobs status */}
@@ -328,24 +346,36 @@ export default function AdminDashboard({ onNavigate }) {
                     ? 'bg-yellow-500/20 text-yellow-400'
                     : 'bg-green-500/20 text-green-400'
               }`}>
-                {systemStatus?.dead_letter_queue?.pending_count || 0} Pending
+                {systemStatus?.dead_letter_queue?.pending_count ?? '?'} Pending
               </span>
             </div>
             {/* Overall health */}
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">Health</span>
               <span className={`text-xs px-2 py-1 rounded-full ${
-                systemStatus?.status === 'healthy'
-                  ? 'bg-green-500/20 text-green-400'
-                  : systemStatus?.status === 'degraded'
-                    ? 'bg-yellow-500/20 text-yellow-400'
-                    : 'bg-zinc-700/50 text-zinc-400'
+                systemStatusError
+                  ? 'bg-red-500/20 text-red-400'
+                  : systemStatus?.status === 'healthy'
+                    ? 'bg-green-500/20 text-green-400'
+                    : systemStatus?.status === 'degraded'
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : 'bg-zinc-700/50 text-zinc-400'
               }`}>
-                {systemStatus?.status === 'healthy' ? 'Healthy'
-                  : systemStatus?.status === 'degraded' ? 'Degraded'
-                  : 'Unknown'}
+                {systemStatusError
+                  ? 'Check Failed'
+                  : systemStatus?.status === 'healthy'
+                    ? 'Healthy'
+                    : systemStatus?.status === 'degraded'
+                      ? 'Degraded'
+                      : 'Unknown'}
               </span>
             </div>
+            {/* v1.1: Error message display */}
+            {systemStatusError && (
+              <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-xs text-red-400">
+                {systemStatusError}
+              </div>
+            )}
           </div>
         </div>
       </div>

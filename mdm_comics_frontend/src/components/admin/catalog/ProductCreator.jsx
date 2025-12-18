@@ -13,6 +13,7 @@ import { adminAPI } from '../../../services/adminApi';
 const SEARCH_MODES = {
   COMICS: 'comics',
   FUNKOS: 'funkos',
+  BCW_SUPPLIES: 'bcw_supplies',
 };
 
 export default function ProductCreator() {
@@ -36,6 +37,16 @@ export default function ProductCreator() {
   const [funkoTotal, setFunkoTotal] = useState(0);
   const [funkoStats, setFunkoStats] = useState(null);
 
+  // BCW search state
+  const [bcwSearchQuery, setBcwSearchQuery] = useState('');
+  const [bcwCategoryFilter, setBcwCategoryFilter] = useState('');
+  const [bcwResults, setBcwResults] = useState([]);
+  const [bcwLoading, setBcwLoading] = useState(false);
+  const [bcwPage, setBcwPage] = useState(1);
+  const [bcwTotalPages, setBcwTotalPages] = useState(1);
+  const [bcwTotal, setBcwTotal] = useState(0);
+  const [bcwCategories, setBcwCategories] = useState([]);
+
   // Product form state
   const [productForm, setProductForm] = useState({
     sku: '', name: '', description: '', category: 'comics', subcategory: '',
@@ -46,10 +57,24 @@ export default function ProductCreator() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
 
-  // Load Funko stats on mount
+  // Load Funko stats on mount - v1.1: Fixed silent error swallowing
   useEffect(() => {
-    funkosAPI.getStats().then(setFunkoStats).catch(() => {});
+    funkosAPI.getStats()
+      .then(setFunkoStats)
+      .catch((err) => {
+        console.error('[ProductCreator] Failed to load Funko stats:', err);
+        // Stats are optional, don't block UI
+      });
   }, []);
+
+  // Load BCW categories when BCW mode is selected
+  useEffect(() => {
+    if (searchMode === SEARCH_MODES.BCW_SUPPLIES && bcwCategories.length === 0) {
+      adminAPI.getBCWCategories()
+        .then(data => setBcwCategories(data.categories || []))
+        .catch(err => console.error('[ProductCreator] Failed to load BCW categories:', err));
+    }
+  }, [searchMode, bcwCategories.length]);
 
   // Comic search handler
   const handleComicSearch = async (e) => {
@@ -99,6 +124,29 @@ export default function ProductCreator() {
       setMessage({ type: 'error', text: 'Funko search failed: ' + err.message });
     } finally {
       setFunkoLoading(false);
+    }
+  };
+
+  // BCW search handler
+  const handleBCWSearch = async (pageNum = 1) => {
+    if (!bcwSearchQuery.trim() && !bcwCategoryFilter) return;
+
+    setBcwLoading(true);
+    try {
+      const data = await adminAPI.searchBCWCatalog({
+        q: bcwSearchQuery || undefined,
+        category: bcwCategoryFilter || undefined,
+        page: pageNum,
+        per_page: 20,
+      });
+      setBcwResults(data.results || []);
+      setBcwTotalPages(data.pages || 1);
+      setBcwTotal(data.total || 0);
+      setBcwPage(pageNum);
+    } catch (err) {
+      setMessage({ type: 'error', text: 'BCW search failed: ' + err.message });
+    } finally {
+      setBcwLoading(false);
     }
   };
 
@@ -208,6 +256,29 @@ export default function ProductCreator() {
     setShowCreateForm(true);
   };
 
+  // Select a BCW product to create
+  const selectBCWProduct = (bcwProduct) => {
+    setProductForm({
+      sku: bcwProduct.mdm_sku,
+      name: bcwProduct.product_name,
+      description: `BCW ${bcwProduct.product_name}. Professional-grade comic book storage and protection.`,
+      category: 'supplies',
+      subcategory: bcwProduct.bcw_category || '',
+      price: bcwProduct.pricing?.our_price || bcwProduct.pricing?.bcw_msrp || '',
+      original_price: bcwProduct.pricing?.bcw_msrp || '',
+      stock: 0,
+      image_url: bcwProduct.image_url || '',
+      issue_number: '',
+      publisher: 'BCW',
+      year: '',
+      upc: '',
+      featured: false,
+      tags: ['bcw', 'supplies'],
+      variant: '',
+    });
+    setShowCreateForm(true);
+  };
+
   // Create product
   const handleCreateProduct = async (e) => {
     e.preventDefault();
@@ -259,6 +330,9 @@ export default function ProductCreator() {
     setFunkoSearchQuery('');
     setFunkoSeriesFilter('');
     setFunkoResults([]);
+    setBcwSearchQuery('');
+    setBcwCategoryFilter('');
+    setBcwResults([]);
     setMessage(null);
   };
 
@@ -429,8 +503,19 @@ export default function ProductCreator() {
           <Package className="w-4 h-4" />
           Funkos
         </button>
+        <button
+          onClick={() => setSearchMode(SEARCH_MODES.BCW_SUPPLIES)}
+          className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${
+            searchMode === SEARCH_MODES.BCW_SUPPLIES
+              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+              : 'bg-zinc-800 text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Tag className="w-4 h-4" />
+          BCW Supplies
+        </button>
 
-        {(searchResults.length > 0 || funkoResults.length > 0) && (
+        {(searchResults.length > 0 || funkoResults.length > 0 || bcwResults.length > 0) && (
           <button
             onClick={clearSearch}
             className="ml-auto px-3 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg flex items-center gap-2"
@@ -615,6 +700,123 @@ export default function ProductCreator() {
             <div className="text-center py-12 text-zinc-500">
               <Package className="w-12 h-12 mx-auto mb-3 text-zinc-700" />
               <p>Search for Funko POPs by name or series</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* BCW Supplies Search */}
+      {searchMode === SEARCH_MODES.BCW_SUPPLIES && (
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-500">
+            Search BCW product catalog for storage and protection supplies
+          </p>
+
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={bcwSearchQuery}
+              onChange={(e) => setBcwSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleBCWSearch(1)}
+              placeholder="Search by product name or SKU..."
+              className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white"
+            />
+            <select
+              value={bcwCategoryFilter}
+              onChange={(e) => setBcwCategoryFilter(e.target.value)}
+              className="w-48 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white"
+            >
+              <option value="">All Categories</option>
+              {bcwCategories.map((cat) => (
+                <option key={cat.name} value={cat.name}>
+                  {cat.name} ({cat.count})
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => handleBCWSearch(1)}
+              disabled={bcwLoading || (!bcwSearchQuery.trim() && !bcwCategoryFilter)}
+              className="px-6 py-2 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 disabled:opacity-50"
+            >
+              {bcwLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Search'}
+            </button>
+          </div>
+
+          {/* Results */}
+          {bcwResults.length > 0 && (
+            <>
+              <p className="text-sm text-zinc-500">
+                Showing {bcwResults.length} of {bcwTotal.toLocaleString()} results
+              </p>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                {bcwResults.map((product) => (
+                  <div
+                    key={product.mapping_id}
+                    onClick={() => selectBCWProduct(product)}
+                    className="bg-zinc-800 rounded-xl border border-zinc-700 overflow-hidden cursor-pointer hover:border-green-500 transition-all group"
+                  >
+                    <div className="aspect-square bg-zinc-900 relative">
+                      {product.image_url ? (
+                        <img src={product.image_url} alt={product.product_name} className="w-full h-full object-contain group-hover:scale-105 transition-transform" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Tag className="w-12 h-12 text-zinc-700" />
+                        </div>
+                      )}
+                      {product.in_catalog && (
+                        <div className="absolute top-2 right-2 px-2 py-0.5 bg-blue-500/90 text-white text-xs rounded-full">
+                          In Catalog
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <span className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium flex items-center gap-1">
+                          <Plus className="w-4 h-4" />
+                          {product.in_catalog ? 'Edit' : 'Create'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-3">
+                      <h4 className="text-white font-bold text-sm line-clamp-2 mb-1">{product.product_name}</h4>
+                      <div className="text-xs text-zinc-500 space-y-0.5">
+                        <p><span className="text-green-400">{product.mdm_sku}</span></p>
+                        {product.bcw_category && <p>{product.bcw_category}</p>}
+                        {product.pricing?.bcw_msrp && (
+                          <p className="text-zinc-400">MSRP: ${product.pricing.bcw_msrp.toFixed(2)}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pagination */}
+              {bcwTotalPages > 1 && (
+                <div className="flex items-center justify-center gap-4">
+                  <button
+                    onClick={() => handleBCWSearch(bcwPage - 1)}
+                    disabled={bcwPage <= 1 || bcwLoading}
+                    className="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 disabled:opacity-50"
+                  >
+                    <ChevronLeft className="w-5 h-5 text-zinc-400" />
+                  </button>
+                  <span className="text-zinc-400">Page {bcwPage} of {bcwTotalPages}</span>
+                  <button
+                    onClick={() => handleBCWSearch(bcwPage + 1)}
+                    disabled={bcwPage >= bcwTotalPages || bcwLoading}
+                    className="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 disabled:opacity-50"
+                  >
+                    <ChevronRight className="w-5 h-5 text-zinc-400" />
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {bcwResults.length === 0 && !bcwLoading && (
+            <div className="text-center py-12 text-zinc-500">
+              <Tag className="w-12 h-12 mx-auto mb-3 text-zinc-700" />
+              <p>Search BCW supplies catalog by name, SKU, or category</p>
             </div>
           )}
         </div>

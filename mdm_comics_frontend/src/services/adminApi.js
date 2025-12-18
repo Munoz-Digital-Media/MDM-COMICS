@@ -834,6 +834,48 @@ export const adminAPI = {
   getPipelineJobs: async () => {
     return fetchAPI('/admin/data-health/pipeline/jobs');
   },
+
+  // ==================== BCW CATALOG v1.0.0 ====================
+
+  searchBCWCatalog: async (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.q) params.set('q', options.q);
+    if (options.category) params.set('category', options.category);
+    if (options.in_catalog !== undefined) params.set('in_catalog', options.in_catalog);
+    if (options.in_stock !== undefined) params.set('in_stock', options.in_stock);
+    params.set('page', options.page || 1);
+    params.set('per_page', options.per_page || 20);
+
+    return fetchAPI('/admin/bcw/catalog/search?' + params.toString());
+  },
+
+  getBCWProduct: async (mdmSku) => {
+    return fetchAPI('/admin/bcw/catalog/' + mdmSku);
+  },
+
+  updateBCWPricing: async (mdmSku, pricingData) => {
+    return fetchAPI('/admin/bcw/catalog/' + mdmSku + '/pricing', {
+      method: 'PATCH',
+      body: JSON.stringify(pricingData),
+    });
+  },
+
+  activateBCWProduct: async (mdmSku, price) => {
+    return fetchAPI('/admin/bcw/catalog/' + mdmSku + '/activate?price=' + price, {
+      method: 'POST',
+    });
+  },
+
+  syncBCWInventory: async (skus = null) => {
+    return fetchAPI('/admin/bcw/catalog/sync-inventory', {
+      method: 'POST',
+      body: JSON.stringify({ skus }),
+    });
+  },
+
+  getBCWCategories: async () => {
+    return fetchAPI('/admin/bcw/catalog/categories');
+  },
 };
 
 export default adminAPI;

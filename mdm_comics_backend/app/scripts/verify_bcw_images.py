@@ -21,7 +21,7 @@ from app.core.database import AsyncSessionLocal
 logger = logging.getLogger(__name__)
 
 # Path to BCW catalog
-CATALOG_PATH = Path(__file__).parent.parent.parent / "data" / "bcw_catalog.xlsx"
+CATALOG_PATH = Path("F:/apps/mdm_comics/assets/docs/implementations/bcw_implementation/20251216_mdm_comics_bcw_catalog.xlsx")
 OUTPUT_PATH = Path(__file__).parent.parent.parent / "data" / "bcw_image_verification_report.html"
 
 
@@ -53,7 +53,7 @@ async def generate_verification_report():
                 p.image_url,
                 p.images
             FROM products p
-            WHERE p.sku LIKE 'BCW-%' OR p.sku LIKE 'MDM-BCW-%'
+            WHERE p.sku LIKE 'MDM-%'
             ORDER BY p.sku
         """))
         db_products = {row.sku: dict(row._mapping) for row in result.fetchall()}

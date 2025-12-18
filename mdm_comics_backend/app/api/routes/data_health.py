@@ -10,7 +10,7 @@ Per 20251207_MDM_COMICS_DATA_ACQUISITION_PIPELINE.json:
 Requires admin role for all endpoints.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -48,9 +48,22 @@ async def get_data_health_overview(
 
     Returns counts, statuses, and recent activity.
     Gracefully handles missing tables (returns 0 counts).
+
+    v1.1: Added explicit database connection verification with latency.
     """
     now = utcnow()
     last_24h = now - timedelta(hours=24)
+
+    # v1.1: Actual database connection verification
+    db_healthy = False
+    db_latency_ms = None
+    try:
+        start = datetime.now(timezone.utc)
+        await db.execute(text("SELECT 1"))
+        db_latency_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+        db_healthy = True
+    except Exception as e:
+        logger.error(f"[data_health] Database health check failed: {e}")
 
     # Get adapter statuses
     adapter_stats = adapter_registry.get_stats()
@@ -121,9 +134,16 @@ async def get_data_health_overview(
         logger.warning(f"[data_health] price_changelog sync times query failed: {e}")
         await db.rollback()
 
+    # v1.1: Overall health considers DB connection
+    overall_healthy = db_healthy and dlq_pending_count < 100
+
     return {
-        "status": "healthy" if dlq_pending_count < 100 else "degraded",
+        "status": "healthy" if overall_healthy else "degraded",
         "timestamp": now.isoformat(),
+        "database": {  # v1.1: Explicit DB status
+            "connected": db_healthy,
+            "latency_ms": db_latency_ms,
+        },
         "adapters": adapter_stats,
         "dead_letter_queue": {
             "pending_count": dlq_pending_count,
