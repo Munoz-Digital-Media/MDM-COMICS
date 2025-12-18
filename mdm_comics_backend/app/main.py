@@ -328,6 +328,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
+    redirect_slashes=False,  # Prevent 307 redirects that break proxy auth
     lifespan=lifespan,
     title="MDM Comics API",
     description="""
