@@ -11,6 +11,7 @@ Handles:
 import hashlib
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
@@ -20,6 +21,7 @@ from sqlalchemy import select, update, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.match_review import MatchReviewQueue, MatchAuditLog, IsbnSource
+from app.services.storage import StorageService
 from app.schemas.match_review import (
     MatchQueueFilter, MatchApproval, MatchRejection, ManualLink,
     MatchQueueItem, MatchQueueStats, EntitySummary, CandidateSummary
@@ -365,6 +367,32 @@ class MatchReviewService:
         # Check lock
         if match.is_locked and match.locked_by != user_id:
             return False, "Match is locked by another user"
+
+        # Clean up associated images before rejecting
+        cleaned_s3 = False
+        cleaned_local = False
+        if match.candidate_data:
+            # Delete S3 image if exists
+            s3_key = match.candidate_data.get('s3_key')
+            if s3_key:
+                try:
+                    storage = StorageService()
+                    if storage.is_configured():
+                        cleaned_s3 = await storage.delete_object(s3_key)
+                        if cleaned_s3:
+                            logger.info(f"Deleted S3 object for rejected match {match_id}: {s3_key}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete S3 object {s3_key}: {e}")
+
+            # Delete local file if exists
+            file_path = match.candidate_data.get('file_path')
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    cleaned_local = True
+                    logger.info(f"Deleted local file for rejected match {match_id}: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete local file {file_path}: {e}")
 
         # Update queue item
         match.status = 'rejected'
