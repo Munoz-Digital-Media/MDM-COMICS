@@ -185,7 +185,7 @@ def format_admin_refund_response(refund: BCWRefundRequest) -> AdminRefundRespons
 # ENDPOINTS
 # =============================================================================
 
-@router.get("", response_model=RefundListResponse)
+@router.get("/", response_model=RefundListResponse)
 async def list_refund_requests(
     state: Optional[str] = None,
     limit: int = 50,
