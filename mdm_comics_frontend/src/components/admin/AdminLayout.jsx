@@ -5,8 +5,8 @@
  */
 import React, { useState, useEffect } from 'react';
 import {
-  LayoutDashboard, Package, ShoppingCart, BarChart3,
-  QrCode, X, Menu, ChevronLeft, ChevronDown, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image, Boxes, RefreshCw, ScanSearch
+  LayoutDashboard, Package, ShoppingCart, BarChart3, Search,
+  X, Menu, ChevronLeft, ChevronDown, Truck, Users, Palette, Boxes, RefreshCw
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
@@ -32,7 +32,7 @@ const buildNavItems = () => {
         { id: 'bundles', label: 'Bundles', icon: Boxes },
       ] : undefined,
     },
-    { id: 'ingestion', label: 'Ingestion', icon: ScanSearch },
+    { id: 'ingestion', label: 'Ingestion', icon: Search },
     { id: 'orders', label: 'Orders', icon: ShoppingCart },
     { id: 'shipping', label: 'Shipping', icon: Truck },
     { id: 'refunds', label: 'Refunds', icon: RefreshCw },
