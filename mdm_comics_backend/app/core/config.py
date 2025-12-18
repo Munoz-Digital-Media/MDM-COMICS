@@ -10,7 +10,7 @@ import json
 import os
 import logging
 from typing import List, Optional, Union
-from pydantic import field_validator, model_validator
+from pydantic import field_validator, model_validator, Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,12 @@ DEFAULT_CORS_ORIGINS = [
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",  # Ignore Railway's injected env vars like API_TOKEN
+    )
+
     # App - defaults are PRODUCTION safe
     APP_NAME: str = "MDM Comics"
     DEBUG: bool = False  # SECURE DEFAULT: off in production
@@ -82,8 +88,16 @@ class Settings(BaseSettings):
         return v
 
     # Storage (S3 compatible)
-    S3_BUCKET: str = "mdm-comics"
-    S3_REGION: str = "us-east-1"
+    S3_BUCKET: str = Field(
+        default="mdm-comics",
+        validation_alias=AliasChoices("S3_BUCKET", "S3_BUCKET_NAME"),
+        description="Canonical bucket name (aliases: S3_BUCKET, S3_BUCKET_NAME)",
+    )
+    S3_REGION: str = Field(
+        default="us-east-1",
+        validation_alias=AliasChoices("S3_REGION", "AWS_REGION"),
+        description="Region for bucket (aliases: S3_REGION, AWS_REGION)",
+    )
     S3_ACCESS_KEY: str = ""
     S3_SECRET_KEY: str = ""
     S3_ENDPOINT: str = ""  # Leave empty for AWS, set for R2/MinIO
@@ -329,12 +343,6 @@ class Settings(BaseSettings):
                 )
 
         return self
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        extra = "ignore"  # Ignore Railway's injected env vars like API_TOKEN
-
 
 # Try to load settings, provide helpful error on failure
 try:
