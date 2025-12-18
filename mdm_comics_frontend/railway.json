@@ -7,7 +7,7 @@
     "buildArgs": {
       "VITE_API_URL": "https://mdm-comics-backend-development.up.railway.app/api",
       "VITE_MIDDLEWARE_URL": "https://mdm-comics-middleware-development.up.railway.app",
-      "CACHE_BUSTER": "v3-centralized-config-20241218"
+      "CACHE_BUSTER": "v4-adminapi-fix-20241218"
     }
   },
   "deploy": {
