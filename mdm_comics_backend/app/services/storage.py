@@ -126,15 +126,15 @@ class StorageService:
 
     def _validate_configuration(self):
         """
-        Fail fast when storage is misconfigured.
+        Validate S3 storage configuration.
 
-        - Require bucket + credentials in prod.
-        - Reject default bucket in prod if env vars were not provided.
-        - Verify bucket exists via head_bucket (works for AWS and most S3-compatible endpoints).
+        Note: We don't call head_bucket because it requires s3:ListBucket permission
+        which many IAM policies don't grant (only object-level put/get).
+        Actual S3 operations will fail with clear errors if misconfigured.
         """
         if not self.is_configured():
             if settings.ENVIRONMENT.lower() == "development":
-                logger.warning("S3 storage not configured; skipping validation in development")
+                logger.warning("S3 storage not configured; skipping in development")
                 return
             raise RuntimeError("S3 storage not configured. Set S3_BUCKET/S3_BUCKET_NAME and S3 credentials.")
 
@@ -149,31 +149,12 @@ class StorageService:
                     "Set S3_BUCKET or S3_BUCKET_NAME to the correct bucket."
                 )
 
-        try:
-            self.client.head_bucket(Bucket=self._bucket)
-            logger.info(
-                "S3 bucket validated: bucket=%s region=%s endpoint=%s",
-                self._bucket,
-                self._region,
-                settings.S3_ENDPOINT or "aws",
-            )
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            error_msg = e.response.get('Error', {}).get('Message', str(e))
-            # Warn but don't crash - app can start, S3 ops will fail later if needed
-            logger.warning(
-                "S3 bucket validation failed (non-fatal): bucket=%s code=%s msg=%s",
-                self._bucket,
-                error_code,
-                error_msg,
-            )
-        except Exception as e:
-            # Warn but don't crash - app can start, S3 ops will fail later if needed
-            logger.warning(
-                "S3 bucket validation failed (non-fatal): bucket=%s error=%s",
-                self._bucket,
-                str(e),
-            )
+        logger.info(
+            "S3 storage configured: bucket=%s region=%s endpoint=%s",
+            self._bucket,
+            self._region,
+            settings.S3_ENDPOINT or "aws",
+        )
 
     def _validate_image(
         self,
