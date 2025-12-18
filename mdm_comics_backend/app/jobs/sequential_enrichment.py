@@ -903,11 +903,9 @@ async def query_metron(
         client = get_metron_client()
         await client.__aenter__()
         adapter = MetronAdapter(client=client)
-        
-        if not await adapter.health_check():
-            logger.warning(f"[{source}] Health check failed")
-            await client.__aexit__(None, None, None)
-            return updates
+
+        # NOTE: Health check removed - it was calling /api/publisher/ on EVERY query
+        # causing 429s. Circuit breaker handles failures instead.
 
         # Check if source is available (non-blocking check)
         if not await rate_mgr.wait_for_source(source):

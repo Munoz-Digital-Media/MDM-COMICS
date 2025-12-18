@@ -626,26 +626,29 @@ def get_pricecharting_client() -> ResilientHTTPClient:
 def get_metron_client() -> ResilientHTTPClient:
     """
     Get client configured for Metron API.
-    
-    Metron has reasonable limits but we stay conservative.
+
+    Metron enforces: 30 requests/minute, 10,000 requests/day
+    We use 0.4 req/sec (24/min) for safety margin.
+
+    Per Mokkari docs: https://github.com/Metron-Project/mokkari
     """
     return ResilientHTTPClient(
         rate_limit_config=RateLimitConfig(
-            requests_per_second=2.0,
-            burst_limit=5,
-            min_request_interval=0.5,
+            requests_per_second=0.4,       # 24 req/min (Metron limit: 30/min)
+            burst_limit=2,                 # Max 2 requests in quick succession
+            min_request_interval=2.5,      # At least 2.5s between requests
         ),
         retry_config=RetryConfig(
-            max_retries=5,
-            base_delay=1.0,
-            max_delay=60.0,
+            max_retries=3,                 # Fewer retries - respect the API
+            base_delay=5.0,                # Start with 5s (longer for rate limits)
+            max_delay=120.0,               # Up to 2 minutes on 429
             exponential_base=2.0,
             jitter_factor=0.5,
         ),
         circuit_config=CircuitBreakerConfig(
-            failure_threshold=5,
+            failure_threshold=3,           # Open circuit after 3 failures
             success_threshold=2,
-            timeout_seconds=60.0,
+            timeout_seconds=120.0,         # Wait 2 min before retry after circuit opens
         ),
         timeout=30.0,
     )
