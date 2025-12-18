@@ -179,7 +179,7 @@ export const adminAPI = {
     params.set('limit', options.limit || 25);
     params.set('offset', options.offset || 0);
 
-    return fetchAPI('/admin/products?' + params.toString());
+    return fetchAPI('/admin/products/?' + params.toString());
   },
 
   adjustStock: async (productId, data) => {
@@ -201,7 +201,7 @@ export const adminAPI = {
 
   // --- Barcode Queue ---
   submitBarcodes: async (barcodes) => {
-    return fetchAPI('/admin/barcode-queue', {
+    return fetchAPI('/admin/barcode-queue/', {
       method: 'POST',
       body: JSON.stringify({ barcodes }),
     });
@@ -213,7 +213,7 @@ export const adminAPI = {
     params.set('limit', options.limit || 50);
     params.set('offset', options.offset || 0);
 
-    return fetchAPI('/admin/barcode-queue?' + params.toString());
+    return fetchAPI('/admin/barcode-queue/?' + params.toString());
   },
 
   processQueueItem: async (queueId, action, productData = null) => {
@@ -240,7 +240,7 @@ export const adminAPI = {
     params.set('limit', options.limit || 25);
     params.set('offset', options.offset || 0);
 
-    return fetchAPI('/admin/orders?' + params.toString());
+    return fetchAPI('/admin/orders/?' + params.toString());
   },
 
   getOrder: async (orderId) => {
@@ -289,7 +289,7 @@ export const adminAPI = {
     params.set('limit', options.limit || 25);
     params.set('offset', options.offset || 0);
 
-    return fetchAPI('/admin/users?' + params.toString());
+    return fetchAPI('/admin/users/?' + params.toString());
   },
 
   getUser: async (userId) => {
@@ -297,7 +297,7 @@ export const adminAPI = {
   },
 
   createUser: async (userData) => {
-    return fetchAPI('/admin/users', {
+    return fetchAPI('/admin/users/', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
@@ -332,7 +332,7 @@ export const adminAPI = {
     params.set('limit', options.limit || 50);
     params.set('offset', options.offset || 0);
 
-    return fetchAPI('/admin/assets?' + params.toString());
+    return fetchAPI('/admin/assets/?' + params.toString());
   },
 
   getAsset: async (assetId) => {
@@ -402,7 +402,7 @@ export const adminAPI = {
   getSettings: async (category = null) => {
     const params = new URLSearchParams();
     if (category) params.set('category', category);
-    return fetchAPI('/admin/settings?' + params.toString());
+    return fetchAPI('/admin/settings/?' + params.toString());
   },
 
   getSetting: async (key) => {
@@ -419,7 +419,7 @@ export const adminAPI = {
   },
 
   createSetting: async (data) => {
-    return fetchAPI('/admin/settings', {
+    return fetchAPI('/admin/settings/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -603,7 +603,7 @@ export const adminAPI = {
     params.set('page', options.page || 1);
     params.set('page_size', options.pageSize || 20);
 
-    return fetchAPI('/shipping/shipments?' + params.toString());
+    return fetchAPI('/shipping/shipments/?' + params.toString());
   },
 
   // Create shipment for an order (admin)
