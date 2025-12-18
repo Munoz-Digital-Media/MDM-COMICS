@@ -3299,6 +3299,64 @@ async def get_ingestion_status(
 # BCW Image Sync
 # =============================================================================
 
+@router.get("/bcw/images")
+async def list_bcw_images(
+    current_user: User = Depends(get_current_admin),
+):
+    """
+    List BCW product images stored in S3.
+
+    Returns grouped by MDM SKU for verification.
+    """
+    from app.services.storage import StorageService
+    import boto3
+
+    storage = StorageService()
+    if not storage.is_configured():
+        return {"error": "S3 not configured", "images": []}
+
+    try:
+        s3 = boto3.client('s3',
+            aws_access_key_id=storage.aws_access_key,
+            aws_secret_access_key=storage.aws_secret_key,
+            region_name=storage.aws_region
+        )
+
+        # List all BCW product images
+        paginator = s3.get_paginator('list_objects_v2')
+        pages = paginator.paginate(Bucket=storage.s3_bucket, Prefix='bcw-products/')
+
+        images_by_sku = {}
+        total_images = 0
+
+        for page in pages:
+            for obj in page.get('Contents', []):
+                key = obj['Key']
+                # Extract MDM SKU from path: bcw-products/{mdm_sku}/{filename}
+                parts = key.split('/')
+                if len(parts) >= 3:
+                    mdm_sku = parts[1]
+                    if mdm_sku not in images_by_sku:
+                        images_by_sku[mdm_sku] = []
+                    images_by_sku[mdm_sku].append({
+                        "key": key,
+                        "url": f"https://{storage.s3_bucket}.s3.{storage.aws_region}.amazonaws.com/{key}",
+                        "size": obj['Size'],
+                        "last_modified": obj['LastModified'].isoformat(),
+                    })
+                    total_images += 1
+
+        return {
+            "total_skus": len(images_by_sku),
+            "total_images": total_images,
+            "images_by_sku": images_by_sku,
+        }
+
+    except Exception as e:
+        logger.error(f"[BCW Images] Failed to list: {e}")
+        return {"error": str(e), "images": []}
+
+
 @router.post("/bcw/sync-images")
 async def trigger_bcw_image_sync(
     current_user: User = Depends(get_current_admin),
