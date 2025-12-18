@@ -5,30 +5,30 @@ import ProductCreator from './ProductCreator';
 import { FEATURES } from '../../../features';
 
 const TABS = {
-  SEARCH_CREATE: 'Search & Create',
   PRODUCTS: 'Products',
+  SEARCH_CREATE: 'Search & Create',
   BUNDLES: 'Bundles',
 };
 
 export default function CatalogManager() {
-  const [activeTab, setActiveTab] = useState(TABS.SEARCH_CREATE);
+  const [activeTab, setActiveTab] = useState(TABS.PRODUCTS);
 
   // Build available tabs based on feature flags
-  const availableTabs = [TABS.SEARCH_CREATE, TABS.PRODUCTS];
+  const availableTabs = [TABS.PRODUCTS, TABS.SEARCH_CREATE];
   if (FEATURES.BUNDLES_ENABLED) {
     availableTabs.push(TABS.BUNDLES);
   }
 
   const renderContent = () => {
     switch (activeTab) {
-      case TABS.SEARCH_CREATE:
-        return <ProductCreator />;
       case TABS.PRODUCTS:
         return <ProductList />;
+      case TABS.SEARCH_CREATE:
+        return <ProductCreator />;
       case TABS.BUNDLES:
         return <BundleList />;
       default:
-        return <ProductCreator />;
+        return <ProductList />;
     }
   };
 
