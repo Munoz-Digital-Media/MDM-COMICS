@@ -151,7 +151,7 @@ async def get_dashboard(
 
 # ----- Barcode Queue Endpoints -----
 
-@router.post("/barcode-queue")
+@router.post("/barcode-queue/")
 async def add_to_barcode_queue(
     request: BarcodeQueueRequest,
     current_user: User = Depends(get_current_admin),
@@ -214,7 +214,7 @@ async def add_to_barcode_queue(
     }
 
 
-@router.get("/barcode-queue")
+@router.get("/barcode-queue/")
 async def list_barcode_queue(
     status: Optional[str] = Query(None, pattern="^(pending|matched|processing|processed|failed|skipped)$"),
     limit: int = Query(50, ge=1, le=200),
@@ -354,7 +354,7 @@ async def batch_process_queue(
 
 # ----- Product Management -----
 
-@router.get("/products")
+@router.get("/products/")
 async def list_products(
     search: Optional[str] = None,
     category: Optional[str] = None,
