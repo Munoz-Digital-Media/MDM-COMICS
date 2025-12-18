@@ -4,9 +4,8 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Vite env vars must be available at build time
-# Force HTTPS to prevent mixed content errors in production
-ARG VITE_API_URL
-ARG VITE_MIDDLEWARE_URL
+ARG VITE_API_URL=https://mdm-comics-backend-development.up.railway.app/api
+ARG VITE_MIDDLEWARE_URL=https://mdm-comics-middleware-development.up.railway.app
 
 # Debug: Print received build args
 RUN echo "=== BUILD ARGS RECEIVED ===" && \
@@ -14,12 +13,12 @@ RUN echo "=== BUILD ARGS RECEIVED ===" && \
     echo "VITE_MIDDLEWARE_URL=$VITE_MIDDLEWARE_URL" && \
     echo "==========================="
 
-ARG CACHE_BUSTER=fix-https-20241218
+ARG CACHE_BUSTER=https-hardcode-20241218
 COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-# Ensure HTTPS at build time for all service URLs
+# Ensure HTTPS at build time (sed as extra safety)
 RUN VITE_API_URL=$(echo "$VITE_API_URL" | sed 's|^http://|https://|') \
     VITE_MIDDLEWARE_URL=$(echo "$VITE_MIDDLEWARE_URL" | sed 's|^http://|https://|') \
     sh -c 'echo "Building with VITE_API_URL=$VITE_API_URL" && npm run build'
