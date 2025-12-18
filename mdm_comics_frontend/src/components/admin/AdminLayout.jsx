@@ -1,53 +1,38 @@
 /**
  * AdminLayout - Full-page admin console layout with sidebar navigation
  * Phase 3: MDM Admin Console Inventory System v1.3.0
- * BUNDLE-001: Added nested navigation with feature flag support
+ * CATALOG-001: Refactored Products/Bundles into tabbed CatalogManager
  * FULFILLMENT-001: Consolidated Orders/Shipping/Refunds into Fulfillment module
  */
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, BarChart3, Search,
-  X, Menu, ChevronLeft, ChevronDown, Users, Palette, Boxes, ClipboardList
+  X, Menu, ChevronLeft, ChevronDown, Users, Palette, ClipboardList
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
-import ProductList from './products/ProductList';
+import CatalogManager from './catalog/CatalogManager';
 import InventorySummary from './reports/InventorySummary';
 import UserList from './users/UserList';
 import BrandAssets from './branding/BrandAssets';
 import IngestionManager from './ingestion/IngestionManager';
-import BundleList from './bundles/BundleList';
 import FulfillmentManager from './fulfillment/FulfillmentManager';
-import { FEATURES } from '../../features';
 
-// Build navigation items with feature flag support
-const buildNavItems = () => {
-  const items = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    {
-      id: 'products',
-      label: 'Products',
-      icon: Package,
-      children: FEATURES.BUNDLES_ENABLED ? [
-        { id: 'bundles', label: 'Bundles', icon: Boxes },
-      ] : undefined,
-    },
-    { id: 'ingestion', label: 'Ingestion', icon: Search },
-    { id: 'fulfillment', label: 'Fulfillment', icon: ClipboardList },
-    { id: 'users', label: 'Users', icon: Users },
-    { id: 'branding', label: 'Branding', icon: Palette },
-    { id: 'reports', label: 'Reports', icon: BarChart3 },
-  ];
-
-  return items;
-};
-
-const NAV_ITEMS = buildNavItems();
+// Navigation items
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'catalog', label: 'Catalog', icon: Package },
+  { id: 'ingestion', label: 'Ingestion', icon: Search },
+  { id: 'fulfillment', label: 'Fulfillment', icon: ClipboardList },
+  { id: 'users', label: 'Users', icon: Users },
+  { id: 'branding', label: 'Branding', icon: Palette },
+  { id: 'reports', label: 'Reports', icon: BarChart3 },
+];
 
 export default function AdminLayout({ onClose }) {
   const [activeSection, setActiveSection] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [expandedItems, setExpandedItems] = useState(['products']); // Products expanded by default
+  const [expandedItems, setExpandedItems] = useState([]);
 
   // Close mobile menu when section changes
   useEffect(() => {
@@ -76,10 +61,8 @@ export default function AdminLayout({ onClose }) {
     switch (activeSection) {
       case 'dashboard':
         return <AdminDashboard onNavigate={setActiveSection} />;
-      case 'products':
-        return <ProductList />;
-      case 'bundles':
-        return <BundleList />;
+      case 'catalog':
+        return <CatalogManager />;
       case 'ingestion':
         return <IngestionManager />;
       case 'fulfillment':
