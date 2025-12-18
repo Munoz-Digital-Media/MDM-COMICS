@@ -40,25 +40,34 @@ async def list_orders(
 
     P2-10: Added pagination to prevent unbounded queries.
     """
-    # Get total count
-    count_result = await db.execute(
-        select(func.count(Order.id)).where(Order.user_id == user.id)
-    )
-    total = count_result.scalar() or 0
+    import logging
+    logger = logging.getLogger(__name__)
 
-    # Get paginated orders
-    offset = (page - 1) * per_page
-    result = await db.execute(
-        select(Order)
-        .where(Order.user_id == user.id)
-        .options(selectinload(Order.items))
-        .order_by(Order.created_at.desc())
-        .offset(offset)
-        .limit(per_page)
-    )
-    orders = result.scalars().all()
+    try:
+        # Get total count
+        count_result = await db.execute(
+            select(func.count(Order.id)).where(Order.user_id == user.id)
+        )
+        total = count_result.scalar() or 0
+        logger.info(f"[orders] User {user.id} has {total} orders")
 
-    return OrderList(orders=orders, total=total)
+        # Get paginated orders
+        offset = (page - 1) * per_page
+        result = await db.execute(
+            select(Order)
+            .where(Order.user_id == user.id)
+            .options(selectinload(Order.items))
+            .order_by(Order.created_at.desc())
+            .offset(offset)
+            .limit(per_page)
+        )
+        orders = result.scalars().all()
+        logger.info(f"[orders] Retrieved {len(orders)} orders for page {page}")
+
+        return OrderList(orders=orders, total=total)
+    except Exception as e:
+        logger.error(f"[orders] Error listing orders for user {user.id}: {e}", exc_info=True)
+        raise
 
 
 @router.get("/{order_id}", response_model=OrderResponse)
