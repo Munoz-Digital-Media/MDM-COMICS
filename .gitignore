@@ -73,3 +73,6 @@ assets/
 .claude/
 nul
 F:/apps/governance
+mdm_comics_backend/app/core/circuit_breaker.py
+mdm_comics_backend/app/jobs/pricecharting_jobs.py
+mdm_comics_backend/app/migrations/pricecharting_resilience.py
