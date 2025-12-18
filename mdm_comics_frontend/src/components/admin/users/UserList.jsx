@@ -237,7 +237,7 @@ export default function UserList() {
       }
 
       const data = await adminAPI.getUsers(options);
-      setUsers(data.items);
+      setUsers(data.users || []);
       setTotal(data.total);
     } catch (err) {
       setError(err.message);
