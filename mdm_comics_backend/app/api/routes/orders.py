@@ -33,7 +33,7 @@ async def list_orders(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, alias="per_page", description="Items per page"),
+    per_page: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Items per page"),
 ):
     """
     Get current user's orders with pagination.
