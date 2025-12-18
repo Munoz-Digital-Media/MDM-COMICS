@@ -1,10 +1,18 @@
 """
-Data Source Adapter Registry v1.0.0
+Data Source Adapter Registry v2.1.0
 
 Per 20251207_MDM_COMICS_DATA_ACQUISITION_PIPELINE.json:
 - Abstract DataSourceAdapter interface for all data sources
 - Adapter registry for enable/disable and discovery
 - Extensible: new adapters plug in via config
+
+v2.1.0 Changes (Multi-Source Resilience):
+- NEW: COMICVINE_CONFIG now registered and enabled
+- NEW: DC_FANDOM_CONFIG, IMAGE_FANDOM_CONFIG registered
+- NEW: IDW_FANDOM_CONFIG, DARKHORSE_FANDOM_CONFIG, DYNAMITE_FANDOM_CONFIG registered
+- NEW: MYCOMICSHOP_CONFIG, COMICBOOKREALM_CONFIG registered
+- FIX: MARVEL_FANDOM_CONFIG now enabled (was disabled)
+- get_source_config() now returns all 11 registered adapters
 
 Each source has its own Adapter responsible for:
 - Authentication
@@ -380,10 +388,25 @@ GCD_CONFIG = AdapterConfig(
     images_allowed=False,  # Images are publisher copyright
 )
 
+COMICVINE_CONFIG = AdapterConfig(
+    name="comicvine",
+    source_type=DataSourceType.API,
+    enabled=True,  # v2.1.0: Now registered and enabled
+    priority=15,  # Between GCD (5) and Metron (20)
+    requests_per_second=1.0,  # ComicVine is rate sensitive
+    burst_limit=3,
+    auth_type="api_key",
+    api_key_env_var="COMIC_VINE_API_KEY",
+    license_type="proprietary",
+    requires_attribution=True,
+    attribution_text="Comic data from Comic Vine (https://comicvine.gamespot.com).",
+    images_allowed=True,
+)
+
 MARVEL_FANDOM_CONFIG = AdapterConfig(
     name="marvel_fandom",
     source_type=DataSourceType.API,  # MediaWiki API
-    enabled=False,  # Disabled by default - P3 priority
+    enabled=True,  # v2.1.0: ENABLED - multi-source resilience
     priority=40,
     requests_per_second=1.0,
     burst_limit=3,
@@ -391,6 +414,95 @@ MARVEL_FANDOM_CONFIG = AdapterConfig(
     requires_attribution=True,
     attribution_text="Character data sourced from Marvel Database (https://marvel.fandom.com) under CC BY-SA 3.0 license.",
     images_allowed=False,  # Images are NOT covered by CC BY-SA
+)
+
+DC_FANDOM_CONFIG = AdapterConfig(
+    name="dc_fandom",
+    source_type=DataSourceType.API,  # MediaWiki API
+    enabled=True,  # v2.1.0: multi-source resilience
+    priority=40,
+    requests_per_second=1.0,
+    burst_limit=3,
+    license_type="CC-BY-SA-3.0",
+    requires_attribution=True,
+    attribution_text="Character data sourced from DC Database (https://dc.fandom.com) under CC BY-SA 3.0 license.",
+    images_allowed=False,
+)
+
+IMAGE_FANDOM_CONFIG = AdapterConfig(
+    name="image_fandom",
+    source_type=DataSourceType.API,  # MediaWiki API
+    enabled=True,  # v2.1.0: multi-source resilience
+    priority=40,
+    requests_per_second=1.0,
+    burst_limit=3,
+    license_type="CC-BY-SA-3.0",
+    requires_attribution=True,
+    attribution_text="Character data sourced from Image Comics Database (https://imagecomics.fandom.com) under CC BY-SA 3.0 license.",
+    images_allowed=False,
+)
+
+IDW_FANDOM_CONFIG = AdapterConfig(
+    name="idw_fandom",
+    source_type=DataSourceType.API,  # MediaWiki API
+    enabled=True,  # v2.1.0: multi-source resilience
+    priority=45,
+    requests_per_second=1.0,
+    burst_limit=3,
+    license_type="CC-BY-SA-3.0",
+    requires_attribution=True,
+    attribution_text="Character data sourced from IDW Database (https://idw.fandom.com) under CC BY-SA 3.0 license.",
+    images_allowed=False,
+)
+
+DARKHORSE_FANDOM_CONFIG = AdapterConfig(
+    name="darkhorse_fandom",
+    source_type=DataSourceType.API,  # MediaWiki API
+    enabled=True,  # v2.1.0: multi-source resilience
+    priority=45,
+    requests_per_second=1.0,
+    burst_limit=3,
+    license_type="CC-BY-SA-3.0",
+    requires_attribution=True,
+    attribution_text="Character data sourced from Dark Horse Database (https://darkhorse.fandom.com) under CC BY-SA 3.0 license.",
+    images_allowed=False,
+)
+
+DYNAMITE_FANDOM_CONFIG = AdapterConfig(
+    name="dynamite_fandom",
+    source_type=DataSourceType.API,  # MediaWiki API
+    enabled=True,  # v2.1.0: multi-source resilience
+    priority=45,
+    requests_per_second=1.0,
+    burst_limit=3,
+    license_type="CC-BY-SA-3.0",
+    requires_attribution=True,
+    attribution_text="Character data sourced from Dynamite Database under CC BY-SA 3.0 license.",
+    images_allowed=False,
+)
+
+MYCOMICSHOP_CONFIG = AdapterConfig(
+    name="mycomicshop",
+    source_type=DataSourceType.SCRAPER,
+    enabled=True,  # v2.1.0: multi-source resilience
+    priority=50,
+    requests_per_second=0.5,  # Be respectful - scraping
+    burst_limit=2,
+    license_type="proprietary",
+    requires_attribution=False,
+    images_allowed=False,
+)
+
+COMICBOOKREALM_CONFIG = AdapterConfig(
+    name="comicbookrealm",
+    source_type=DataSourceType.API,
+    enabled=True,  # v2.1.0: multi-source resilience
+    priority=50,
+    requests_per_second=0.5,
+    burst_limit=2,
+    license_type="proprietary",
+    requires_attribution=False,
+    images_allowed=False,
 )
 
 
@@ -553,12 +665,23 @@ def merge_records_with_priority(
 
 
 def get_source_config(source_name: str) -> Optional[AdapterConfig]:
-    """Get the config for a source by name."""
+    """Get the config for a source by name.
+
+    v2.1.0: Now includes all registered adapters for multi-source resilience.
+    """
     configs = {
         "gcd": GCD_CONFIG,
         "pricecharting": PRICECHARTING_CONFIG,
         "metron": METRON_CONFIG,
+        "comicvine": COMICVINE_CONFIG,
         "marvel_fandom": MARVEL_FANDOM_CONFIG,
+        "dc_fandom": DC_FANDOM_CONFIG,
+        "image_fandom": IMAGE_FANDOM_CONFIG,
+        "idw_fandom": IDW_FANDOM_CONFIG,
+        "darkhorse_fandom": DARKHORSE_FANDOM_CONFIG,
+        "dynamite_fandom": DYNAMITE_FANDOM_CONFIG,
+        "mycomicshop": MYCOMICSHOP_CONFIG,
+        "comicbookrealm": COMICBOOKREALM_CONFIG,
     }
     return configs.get(source_name)
 

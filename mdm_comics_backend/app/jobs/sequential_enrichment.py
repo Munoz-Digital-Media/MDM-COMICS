@@ -1,5 +1,13 @@
 """
-Sequential Exhaustive Enrichment Job v2.0.0
+Sequential Exhaustive Enrichment Job v2.1.0
+
+v2.1.0 Changes (P0 CRITICAL - RATE LIMITER FIX):
+- FIX: Race condition causing 4+ requests per second to Metron after 429
+- NEW: RateLimitExceeded exception handled separately from errors
+- NEW: Rate limited sources are skipped (not marked as circuit breaker failures)
+- NEW: Per-host request serialization in http_client.py (one request at a time)
+- NEW: Pre-flight block check before queuing requests
+- This resolves Metron API suspension incident
 
 v2.0.0 Changes (PERFORMANCE OPTIMIZATION):
 - PARALLEL source queries within each comic (Phase 1: all sources, Phase 2: PriceCharting with UPC)
@@ -77,6 +85,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
 from app.core.utils import utcnow
+from app.core.http_client import RateLimitExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -2091,14 +2100,40 @@ async def run_sequential_exhaustive_enrichment_job(
                 relevant_phase1 = get_relevant_sources_for_comic(comic, PHASE1_SOURCES, missing)
 
                 async def safe_query(source_name: str, query_func, comic: Dict, missing: Set, rate_mgr):
-                    """Wrapper to handle errors and circuit breaker."""
+                    """Wrapper to handle errors, timeouts, and circuit breaker.
+
+                    v2.1.0 Changes:
+                    - 15-second timeout per query (Phase 2)
+                    - RateLimitExceeded handled separately (Phase 0)
+                    - Timeout doesn't count as circuit breaker failure
+                    """
+                    QUERY_TIMEOUT = 15.0  # Max seconds per source query
+
                     if not circuit_breaker.is_available(source_name):
                         return source_name, {}
                     try:
-                        updates = await query_func(comic, missing, rate_mgr)
+                        # v2.1.0: Add timeout to prevent individual queries from blocking
+                        updates = await asyncio.wait_for(
+                            query_func(comic, missing, rate_mgr),
+                            timeout=QUERY_TIMEOUT
+                        )
                         if updates:
                             circuit_breaker.record_success(source_name)
                         return source_name, updates or {}
+                    except asyncio.TimeoutError:
+                        # Timeout is not a circuit breaker failure - source may be slow
+                        logger.warning(
+                            f"[enrichment] {source_name} timed out after {QUERY_TIMEOUT}s - skipping"
+                        )
+                        return source_name, {"_timeout": True}
+                    except RateLimitExceeded as e:
+                        # NOT a circuit breaker failure - source is working but rate limited
+                        # Just skip this source for this comic and move on
+                        logger.info(
+                            f"[enrichment] {source_name} rate limited for {e.wait_time:.0f}s - "
+                            f"skipping to other sources"
+                        )
+                        return source_name, {"_rate_limited": True}
                     except Exception as e:
                         circuit_breaker.record_failure(source_name)
                         logger.warning(f"[enrichment] Error querying {source_name}: {e}")
@@ -2121,6 +2156,10 @@ async def run_sequential_exhaustive_enrichment_job(
                         if updates.get("_error"):
                             error_count += 1
                             continue
+                        if updates.get("_rate_limited") or updates.get("_timeout"):
+                            # Not an error - just skipped due to rate limiting or timeout
+                            # Don't increment error_count, just skip
+                            continue
                         for field, value in updates.items():
                             if field in missing or field.endswith("_id"):
                                 comic[field] = value
@@ -2136,11 +2175,17 @@ async def run_sequential_exhaustive_enrichment_job(
                 if missing:
                     relevant_phase2 = get_relevant_sources_for_comic(comic, PHASE2_SOURCES, missing)
 
+                    QUERY_TIMEOUT = 15.0  # Max seconds per source query
+
                     for source_name, query_func in relevant_phase2:
                         if not circuit_breaker.is_available(source_name):
                             continue
                         try:
-                            updates = await query_func(comic, missing, rate_mgr)
+                            # v2.1.0: Add timeout to Phase 2 queries as well
+                            updates = await asyncio.wait_for(
+                                query_func(comic, missing, rate_mgr),
+                                timeout=QUERY_TIMEOUT
+                            )
                             if updates:
                                 circuit_breaker.record_success(source_name)
                                 for field, value in updates.items():
@@ -2148,6 +2193,18 @@ async def run_sequential_exhaustive_enrichment_job(
                                         comic[field] = value
                                         all_updates[field] = value
                                         source_counts[source_name] = source_counts.get(source_name, 0) + 1
+                        except asyncio.TimeoutError:
+                            # Timeout is not a failure - source may be slow
+                            logger.warning(
+                                f"[enrichment] {source_name} timed out after {QUERY_TIMEOUT}s - skipping"
+                            )
+                            continue
+                        except RateLimitExceeded as e:
+                            # Not an error - just rate limited, skip this source
+                            logger.info(
+                                f"[enrichment] {source_name} rate limited for {e.wait_time:.0f}s - skipping"
+                            )
+                            continue
                         except Exception as e:
                             circuit_breaker.record_failure(source_name)
                             error_count += 1
@@ -2159,14 +2216,40 @@ async def run_sequential_exhaustive_enrichment_job(
                 return (comic_id, all_updates, error_count, fully_enriched, source_counts)
 
             # =========================================================
-            # v2.0.0: HELPER - Batch write updates to database
+            # v2.1.0: HELPER - Batch write updates to database
+            # v2.1.0 FIX: Input validation to prevent SQL injection
             # =========================================================
+            # Allowlist of valid column names for updates
+            ALLOWED_UPDATE_FIELDS = frozenset({
+                # IDs from external sources
+                "metron_id", "comicvine_id", "gcd_id", "pricecharting_id",
+                "gcd_series_id", "gcd_publisher_id",
+                # Bibliographic
+                "series_name", "number", "issue_name", "publisher_name",
+                "cover_date", "store_date", "description", "page_count", "price",
+                "upc", "isbn", "isbn_normalized", "volume",
+                # Images
+                "image", "cover_hash", "cover_hash_prefix", "cover_hash_bytes",
+                # Pricing
+                "price_loose", "price_graded", "price_cib", "price_new",
+                # Credits
+                "writer", "penciller", "inker", "colorist", "letterer",
+                "cover_artist", "editor",
+                # Characters/story
+                "characters", "teams", "locations", "story_arc", "synopsis",
+            })
+
             async def flush_pending_writes(pending: List[tuple], db) -> int:
-                """Write accumulated updates to database in a batch."""
+                """Write accumulated updates to database in a batch.
+
+                v2.1.0: Now validates field names against ALLOWED_UPDATE_FIELDS
+                to prevent SQL injection attacks.
+                """
                 if not pending:
                     return 0
 
                 written = 0
+                skipped_fields = set()
                 try:
                     async with db.begin_nested():
                         for comic_id, updates in pending:
@@ -2176,14 +2259,26 @@ async def run_sequential_exhaustive_enrichment_job(
                             set_clauses = []
                             params = {"id": comic_id}
                             for field, value in updates.items():
+                                # v2.1.0: SECURITY - Only allow known field names
+                                if field not in ALLOWED_UPDATE_FIELDS:
+                                    skipped_fields.add(field)
+                                    continue
                                 set_clauses.append(f"{field} = :{field}")
                                 params[field] = value
+
+                            if not set_clauses:
+                                continue
+
                             set_clauses.append("updated_at = NOW()")
 
                             sql = f"UPDATE comic_issues SET {', '.join(set_clauses)} WHERE id = :id"
                             await db.execute(text(sql), params)
                             written += 1
 
+                    if skipped_fields:
+                        logger.warning(
+                            f"[enrichment] Skipped invalid field names: {skipped_fields}"
+                        )
                     logger.info(f"[enrichment] Batch wrote {written} comic updates")
                 except Exception as e:
                     logger.error(f"[enrichment] Batch write failed: {e}")

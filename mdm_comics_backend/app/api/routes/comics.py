@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.core.upload_validation import validate_image_upload
 from app.services.comic_cache import comic_cache
 from app.services.metron import metron_service
+from app.services.multi_source_search import multi_source_search
 from app.models.comic_data import ComicIssue, ComicSeries
 
 router = APIRouter(prefix="/comics", tags=["comics"])
@@ -34,9 +35,9 @@ async def search_comics(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Search for comic issues in the Metron database.
-    All results are cached locally for future use.
-    Supports UPC barcode search for exact match.
+    Search for comic issues across multiple data sources.
+    Uses multi-source fallback: Local cache → Metron → Fandom wikis.
+    No single point of failure - if one source is rate limited, others are tried.
     """
     import asyncio
     import logging
@@ -45,9 +46,9 @@ async def search_comics(
     try:
         ip_address = request.client.host if request.client else None
 
-        # Add timeout to prevent Railway 502
+        # Use multi-source search with automatic failover
         results = await asyncio.wait_for(
-            comic_cache.search_issues(
+            multi_source_search.search_issues(
                 db=db,
                 series_name=series,
                 number=number,
@@ -59,17 +60,19 @@ async def search_comics(
             ),
             timeout=25.0  # Fail before Railway's 30s timeout
         )
+
+        # Log which sources were used
+        sources = results.get("_sources_tried", [])
+        failed = results.get("_sources_failed", [])
+        if failed:
+            logger.info(f"[comics/search] Sources tried: {sources}, failed: {failed}")
+
         return results
     except asyncio.TimeoutError:
         logger.warning(f"[comics/search] Timeout searching for series={series}, number={number}")
-        # Return empty results instead of error - better UX
-        return {"results": [], "count": 0, "next": None, "previous": None, "message": "Search timed out. External API may be rate limited. Try again later."}
+        return {"results": [], "count": 0, "next": None, "previous": None, "message": "Search timed out across all sources. Try again later."}
     except Exception as e:
         logger.error(f"[comics/search] Error: {e}")
-        # Check if it's a rate limit error
-        error_str = str(e).lower()
-        if "429" in error_str or "rate limit" in error_str:
-            return {"results": [], "count": 0, "next": None, "previous": None, "message": "External API rate limited. Please try again later."}
         raise HTTPException(status_code=500, detail=f"Error searching comics: {str(e)}")
 
 
@@ -110,7 +113,8 @@ async def search_series(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Search for comic series. Results are cached locally.
+    Search for comic series across multiple sources.
+    Falls back to local cache if external APIs are rate limited.
     """
     import asyncio
     import logging
@@ -119,27 +123,67 @@ async def search_series(
     try:
         ip_address = request.client.host if request.client else None
 
-        # Add timeout to prevent Railway 502
-        results = await asyncio.wait_for(
-            comic_cache.search_series(
-                db=db,
-                name=name,
-                publisher_name=publisher,
-                year_began=year,
-                page=page,
-                ip_address=ip_address
-            ),
-            timeout=25.0
-        )
-        return results
+        # Try external API first with short timeout
+        try:
+            results = await asyncio.wait_for(
+                comic_cache.search_series(
+                    db=db,
+                    name=name,
+                    publisher_name=publisher,
+                    year_began=year,
+                    page=page,
+                    ip_address=ip_address
+                ),
+                timeout=10.0
+            )
+            return results
+        except (asyncio.TimeoutError, Exception) as api_error:
+            error_str = str(api_error).lower()
+            is_rate_limited = "429" in error_str or "rate limit" in error_str or isinstance(api_error, asyncio.TimeoutError)
+
+            if is_rate_limited:
+                logger.info(f"[comics/series] API unavailable, falling back to local cache")
+
+                # Fallback to local database search
+                from sqlalchemy import select
+                query = select(ComicSeries)
+
+                if name:
+                    query = query.where(ComicSeries.name.ilike(f"%{name}%"))
+                if publisher:
+                    query = query.where(ComicSeries.publisher_name.ilike(f"%{publisher}%"))
+                if year:
+                    query = query.where(ComicSeries.year_began == year)
+
+                query = query.limit(20)
+                result = await db.execute(query)
+                series_list = result.scalars().all()
+
+                return {
+                    "results": [
+                        {
+                            "id": s.metron_id or s.id,
+                            "name": s.name,
+                            "publisher": {"name": s.publisher_name},
+                            "year_began": s.year_began,
+                            "issue_count": s.issue_count,
+                            "_source": "local_cache",
+                        }
+                        for s in series_list
+                    ],
+                    "count": len(series_list),
+                    "next": None,
+                    "previous": None,
+                    "message": "Showing cached results. External API temporarily unavailable.",
+                }
+            else:
+                raise api_error
+
     except asyncio.TimeoutError:
         logger.warning(f"[comics/series] Timeout searching for name={name}")
-        return {"results": [], "count": 0, "next": None, "previous": None, "message": "Search timed out. External API may be rate limited. Try again later."}
+        return {"results": [], "count": 0, "next": None, "previous": None, "message": "Search timed out across all sources."}
     except Exception as e:
         logger.error(f"[comics/series] Error: {e}")
-        error_str = str(e).lower()
-        if "429" in error_str or "rate limit" in error_str:
-            return {"results": [], "count": 0, "next": None, "previous": None, "message": "External API rate limited. Please try again later."}
         raise HTTPException(status_code=500, detail=f"Error searching series: {str(e)}")
 
 

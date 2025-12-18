@@ -2225,6 +2225,93 @@ async def get_sequential_enrichment_status(
 
 
 # ============================================================================
+# SOURCE HEALTH OBSERVABILITY (v2.1.0 - Multi-Source Resilience)
+# Per constitution_observability.json: Background jobs emit observables
+# ============================================================================
+
+@router.get("/source-health")
+async def get_source_health(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get real-time health status of all data sources.
+
+    v2.1.0 Phase 3: Observability endpoint for multi-source resilience.
+
+    Returns per-source:
+    - enabled: Whether the source is enabled in adapter registry
+    - circuit_state: CLOSED (healthy), OPEN (failing), HALF_OPEN (testing)
+    - blocked_until: Timestamp when rate limit block expires (if blocked)
+    - rate_limit_remaining: Requests remaining in current window
+    - failure_count: Recent consecutive failures
+    - last_success: Timestamp of last successful request
+    """
+    from app.core.adapter_registry import get_source_config
+    from app.core.http_client import _host_locks, ResilientHTTPClient
+    from app.services.source_rotator import SOURCE_CONFIGS
+    import time
+
+    # Get host states from the global HTTP client if available
+    # Note: This is a snapshot - states change in real-time
+    sources = []
+
+    # All registered sources
+    source_names = list(SOURCE_CONFIGS.keys())
+
+    for source_name in source_names:
+        config = get_source_config(source_name)
+
+        source_info = {
+            "name": source_name,
+            "enabled": config.enabled if config else False,
+            "priority": config.priority if config else 999,
+            "source_type": config.source_type.value if config else "unknown",
+            "requests_per_second": config.requests_per_second if config else 0,
+        }
+
+        # Try to get circuit breaker state from quota tracker
+        try:
+            from app.services.quota_tracker import quota_tracker
+            status = await quota_tracker.get_status(db, source_name)
+            source_info["circuit_state"] = status.circuit_state
+            source_info["is_healthy"] = status.is_healthy
+            source_info["can_request"] = status.can_request
+            source_info["remaining_today"] = status.remaining_today
+            source_info["failure_count"] = status.failure_count
+            source_info["last_failure"] = status.last_failure.isoformat() if status.last_failure else None
+            source_info["blocked_until"] = status.blocked_until.isoformat() if status.blocked_until else None
+        except Exception as e:
+            source_info["circuit_state"] = "unknown"
+            source_info["is_healthy"] = None
+            source_info["can_request"] = None
+            source_info["error"] = str(e)
+
+        sources.append(source_info)
+
+    # Sort by priority (lower = higher priority)
+    sources.sort(key=lambda x: x.get("priority", 999))
+
+    # Summary stats
+    healthy_count = sum(1 for s in sources if s.get("is_healthy") is True)
+    blocked_count = sum(1 for s in sources if s.get("blocked_until") is not None)
+    enabled_count = sum(1 for s in sources if s.get("enabled") is True)
+
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "total_sources": len(sources),
+            "enabled": enabled_count,
+            "healthy": healthy_count,
+            "blocked": blocked_count,
+        },
+        "sources": sources,
+        "_version": "2.1.0",
+        "_description": "Multi-source resilience observability per constitution_observability.json"
+    }
+
+
+# ============================================================================
 # COVER INGESTION ENDPOINTS (v1.21.0)
 # ============================================================================
 

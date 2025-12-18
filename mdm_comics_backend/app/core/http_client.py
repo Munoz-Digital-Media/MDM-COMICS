@@ -10,11 +10,17 @@ Per 20251207_MDM_COMICS_DATA_ACQUISITION_PIPELINE.json v1.1.0:
 
 CRITICAL: This client is designed to PREVENT API BANS.
 All external API calls MUST use this client.
+
+v2.0.0 (2024-12-18): Per-host request serialization to fix race condition
+- HostLockManager ensures only ONE request per host at a time
+- Pre-flight block check before queuing requests
+- RateLimitExceeded exception for fail-fast on long waits
 """
 import asyncio
 import logging
 import random
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -23,6 +29,44 @@ from typing import Any, Dict, Optional, Callable
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimitExceeded(Exception):
+    """
+    Raised when a host is rate-limited for longer than MAX_RATE_LIMIT_WAIT.
+
+    This allows callers to fail fast and try alternative sources instead
+    of blocking for extended periods (e.g., 37 minutes).
+    """
+    def __init__(self, host: str, wait_time: float):
+        self.host = host
+        self.wait_time = wait_time
+        super().__init__(f"Rate limited by {host} for {wait_time:.0f}s")
+
+
+class HostLockManager:
+    """
+    Manages per-host locks to serialize requests.
+
+    CRITICAL: This fixes the race condition where 5 concurrent comics
+    would fire requests SIMULTANEOUSLY before rate limit state propagated.
+
+    With this, only ONE request to any given host can be in-flight at a time.
+    """
+    def __init__(self):
+        self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._lock = asyncio.Lock()  # Protects _locks dict creation
+
+    async def get_lock(self, host: str) -> asyncio.Lock:
+        """Get or create a lock for a specific host."""
+        async with self._lock:
+            if host not in self._locks:
+                self._locks[host] = asyncio.Lock()
+            return self._locks[host]
+
+
+# Global host lock manager - shared across all client instances
+_host_locks = HostLockManager()
 
 
 class CircuitState(Enum):
@@ -69,16 +113,20 @@ class HostState:
     last_request_time: float = 0.0
     request_count: int = 0
     window_start: float = field(default_factory=time.time)
-    
+
     # Circuit breaker state
     circuit_state: CircuitState = CircuitState.CLOSED
     failure_count: int = 0
     success_count: int = 0
     last_failure_time: float = 0.0
-    
+
     # Rate limit state from server
     rate_limit_reset: Optional[float] = None
     retry_after: Optional[float] = None
+
+    # Blocked until timestamp (for pre-flight checks)
+    # This is set when we receive a 429 and should block ALL requests
+    blocked_until: Optional[float] = None
 
 
 class ResilientHTTPClient:
@@ -176,24 +224,54 @@ class ResilientHTTPClient:
     async def _wait_for_rate_limit(self, host: str) -> None:
         """
         Wait if necessary to respect rate limits.
-        
+
         Implements token bucket algorithm with server-side Retry-After respect.
+        IMPORTANT: Fails fast if wait time exceeds MAX_RATE_LIMIT_WAIT (60s).
+        This prevents blocking for absurdly long periods (e.g., 37 minutes).
         """
+        MAX_RATE_LIMIT_WAIT = 60.0  # Maximum seconds we'll wait for rate limit
+
         async with self._lock:
             state = self._get_host_state(host)
             now = time.time()
-            
+
             # Check if server told us to wait (429 Retry-After)
             if state.retry_after and now < state.retry_after:
                 wait_time = state.retry_after - now
+
+                # FAIL FAST: Don't block for absurdly long rate limits
+                if wait_time > MAX_RATE_LIMIT_WAIT:
+                    logger.warning(
+                        f"[RATE_LIMIT] {host}: Rate limited for {wait_time:.0f}s - "
+                        f"failing fast (max wait: {MAX_RATE_LIMIT_WAIT}s). Try other sources."
+                    )
+                    raise httpx.HTTPStatusError(
+                        f"Rate limited for {wait_time:.0f}s (exceeds max wait)",
+                        request=None,
+                        response=httpx.Response(429)
+                    )
+
                 logger.info(f"[RATE_LIMIT] {host}: Server requested wait of {wait_time:.1f}s")
                 await asyncio.sleep(wait_time)
                 state.retry_after = None
                 return
-                
+
             # Check if rate limit reset time has passed
             if state.rate_limit_reset and now < state.rate_limit_reset:
                 wait_time = state.rate_limit_reset - now
+
+                # FAIL FAST: Same check for rate limit reset
+                if wait_time > MAX_RATE_LIMIT_WAIT:
+                    logger.warning(
+                        f"[RATE_LIMIT] {host}: Rate limit reset in {wait_time:.0f}s - "
+                        f"failing fast. Try other sources."
+                    )
+                    raise httpx.HTTPStatusError(
+                        f"Rate limit reset in {wait_time:.0f}s (exceeds max wait)",
+                        request=None,
+                        response=httpx.Response(429)
+                    )
+
                 logger.info(f"[RATE_LIMIT] {host}: Waiting {wait_time:.1f}s for rate limit reset")
                 await asyncio.sleep(wait_time)
                 state.rate_limit_reset = None
@@ -319,6 +397,33 @@ class ResilientHTTPClient:
                 except ValueError:
                     pass
                     
+    async def _check_preflight_block(self, host: str) -> None:
+        """
+        PRE-FLIGHT CHECK: Verify host is not blocked before even queuing.
+
+        This runs BEFORE acquiring the per-host lock to fail fast.
+        If blocked for > MAX_RATE_LIMIT_WAIT, raises RateLimitExceeded.
+        If blocked for shorter, waits then clears the block.
+        """
+        MAX_RATE_LIMIT_WAIT = 60.0
+
+        state = self._get_host_state(host)
+        now = time.time()
+
+        if state.blocked_until and now < state.blocked_until:
+            wait_time = state.blocked_until - now
+
+            if wait_time > MAX_RATE_LIMIT_WAIT:
+                logger.warning(
+                    f"[PRE-FLIGHT] {host}: Blocked for {wait_time:.0f}s - "
+                    f"failing fast (max: {MAX_RATE_LIMIT_WAIT}s)"
+                )
+                raise RateLimitExceeded(host, wait_time)
+
+            logger.info(f"[PRE-FLIGHT] {host}: Waiting {wait_time:.1f}s for block to clear")
+            await asyncio.sleep(wait_time)
+            state.blocked_until = None
+
     async def request(
         self,
         method: str,
@@ -327,32 +432,53 @@ class ResilientHTTPClient:
     ) -> httpx.Response:
         """
         Make an HTTP request with full resilience.
-        
+
+        v2.0.0: Now serializes requests per-host to prevent race conditions.
+
         Args:
             method: HTTP method (GET, POST, etc.)
             url: Target URL
             **kwargs: Additional arguments passed to httpx
-            
+
         Returns:
             httpx.Response on success
-            
+
         Raises:
             httpx.HTTPStatusError: On non-retryable error
+            RateLimitExceeded: On rate limit exceeding MAX_RATE_LIMIT_WAIT
             Exception: On circuit breaker rejection or max retries exceeded
         """
         # Auto-initialize if not using context manager
         if not self._client:
             await self.init()
-            
+
         host = self._get_host(url)
         cfg = self.retry_config
-        
-        # Check circuit breaker first
+
+        # PRE-FLIGHT CHECK: Fail fast if host is blocked
+        await self._check_preflight_block(host)
+
+        # Check circuit breaker
         if not self._check_circuit_breaker(host):
             raise Exception(f"Circuit breaker OPEN for {host}. Request rejected.")
-            
+
+        # SERIALIZE: Acquire per-host lock to ensure only ONE request at a time
+        host_lock = await _host_locks.get_lock(host)
+
+        async with host_lock:
+            return await self._do_request_with_retry(method, url, host, cfg, **kwargs)
+
+    async def _do_request_with_retry(
+        self,
+        method: str,
+        url: str,
+        host: str,
+        cfg: RetryConfig,
+        **kwargs
+    ) -> httpx.Response:
+        """Execute request with retry logic. Called under per-host lock."""
         last_exception = None
-        
+
         for attempt in range(cfg.max_retries + 1):
             try:
                 # Wait for rate limiting
@@ -365,22 +491,38 @@ class ResilientHTTPClient:
                 # Extract rate limit headers for future requests
                 self._extract_rate_limit_headers(response, host)
                 
-                # Handle 429 specifically
+                # Handle 429 specifically - CRITICAL for race condition fix
                 if response.status_code == 429:
                     retry_after = self._parse_retry_after(response)
                     state = self._get_host_state(host)
-                    
+
                     if retry_after:
-                        state.retry_after = retry_after
                         wait_time = retry_after - time.time()
-                        logger.warning(f"[429] {host}: Rate limited, server says wait {wait_time:.1f}s")
+                        # SET blocked_until IMMEDIATELY so other requests see it
+                        state.blocked_until = retry_after
+                        state.retry_after = retry_after
+                        logger.warning(
+                            f"[429] {host}: Rate limited for {wait_time:.1f}s - "
+                            f"blocking ALL requests until {retry_after}"
+                        )
                     else:
-                        # Default backoff if no Retry-After
+                        # Default backoff if no Retry-After header
                         wait_time = self._calculate_backoff(attempt)
+                        state.blocked_until = time.time() + wait_time
                         logger.warning(f"[429] {host}: Rate limited, backing off {wait_time:.1f}s")
-                        
+
+                    # FAIL FAST: If wait is too long, raise immediately
+                    MAX_RATE_LIMIT_WAIT = 60.0
+                    if wait_time > MAX_RATE_LIMIT_WAIT:
+                        logger.error(
+                            f"[429] {host}: Wait time {wait_time:.0f}s exceeds max "
+                            f"({MAX_RATE_LIMIT_WAIT}s) - failing fast"
+                        )
+                        raise RateLimitExceeded(host, wait_time)
+
                     if attempt < cfg.max_retries:
-                        await asyncio.sleep(wait_time if retry_after else self._calculate_backoff(attempt))
+                        await asyncio.sleep(min(wait_time, MAX_RATE_LIMIT_WAIT))
+                        state.blocked_until = None  # Clear after waiting
                         continue
                         
                 # Handle other retryable errors

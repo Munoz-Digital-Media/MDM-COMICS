@@ -124,8 +124,10 @@ class Settings(BaseSettings):
     REDIS_URL: str = ""
 
     # Database Pool Configuration (P2-7)
-    DB_POOL_SIZE: int = 5
-    DB_MAX_OVERFLOW: int = 10
+    # v2.1.0: Increased for concurrent enrichment job (5 comics in parallel)
+    # Previous: pool_size=5, max_overflow=10 was causing contention
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 40
     DB_POOL_RECYCLE: int = 3600  # 1 hour
 
     # Stock Cleanup Scheduler (P0-1)

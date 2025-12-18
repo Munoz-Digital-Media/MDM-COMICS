@@ -1,10 +1,14 @@
 """
-Multi-Source Rotator v1.10.0
+Multi-Source Rotator v2.1.0
 
 Manages multiple data sources with intelligent failover and load balancing.
 
 Per constitution_cyberSec.json: No single point of failure.
 Per constitution_observability.json: Health monitoring with metrics.
+
+v2.1.0 Changes (Multi-Source Resilience):
+- NEW: Added idw_fandom, darkhorse_fandom, dynamite_fandom sources
+- All 11 data sources now registered for maximum coverage
 
 Features:
 - Priority-based source selection
@@ -38,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 class SourceCapability(str, Enum):
     """Data types a source can provide."""
+    SEARCH = "search"  # Can search for issues by series/number
     COVERS = "covers"
     DESCRIPTIONS = "descriptions"
     CREATORS = "creators"
@@ -87,6 +92,7 @@ SOURCE_CONFIGS: Dict[str, SourceConfig] = {
         adapter_name="metron",
         priority=1,
         capabilities={
+            SourceCapability.SEARCH,
             SourceCapability.COVERS,
             SourceCapability.DESCRIPTIONS,
             SourceCapability.CREATORS,
@@ -100,6 +106,7 @@ SOURCE_CONFIGS: Dict[str, SourceConfig] = {
         adapter_name="comicvine",
         priority=2,
         capabilities={
+            SourceCapability.SEARCH,
             SourceCapability.COVERS,
             SourceCapability.DESCRIPTIONS,
             SourceCapability.CREATORS,
@@ -107,10 +114,74 @@ SOURCE_CONFIGS: Dict[str, SourceConfig] = {
         },
         is_api=True,
     ),
+    # Fandom wikis - publisher-specific, Priority 3
+    "dc_fandom": SourceConfig(
+        name="dc_fandom",
+        adapter_name="dc_fandom",
+        priority=3,
+        capabilities={
+            SourceCapability.SEARCH,
+            SourceCapability.COVERS,
+            SourceCapability.DESCRIPTIONS,
+        },
+        is_api=True,  # MediaWiki API
+    ),
+    "marvel_fandom": SourceConfig(
+        name="marvel_fandom",
+        adapter_name="marvel_fandom",
+        priority=3,
+        capabilities={
+            SourceCapability.SEARCH,
+            SourceCapability.COVERS,
+            SourceCapability.DESCRIPTIONS,
+        },
+        is_api=True,
+    ),
+    "image_fandom": SourceConfig(
+        name="image_fandom",
+        adapter_name="image_fandom",
+        priority=3,
+        capabilities={
+            SourceCapability.SEARCH,
+            SourceCapability.COVERS,
+            SourceCapability.DESCRIPTIONS,
+        },
+        is_api=True,
+    ),
+    "idw_fandom": SourceConfig(
+        name="idw_fandom",
+        adapter_name="idw_fandom",
+        priority=3,
+        capabilities={
+            SourceCapability.SEARCH,
+            SourceCapability.DESCRIPTIONS,
+        },
+        is_api=True,  # MediaWiki API
+    ),
+    "darkhorse_fandom": SourceConfig(
+        name="darkhorse_fandom",
+        adapter_name="darkhorse_fandom",
+        priority=3,
+        capabilities={
+            SourceCapability.SEARCH,
+            SourceCapability.DESCRIPTIONS,
+        },
+        is_api=True,
+    ),
+    "dynamite_fandom": SourceConfig(
+        name="dynamite_fandom",
+        adapter_name="dynamite_fandom",
+        priority=3,
+        capabilities={
+            SourceCapability.SEARCH,
+            SourceCapability.DESCRIPTIONS,
+        },
+        is_api=True,
+    ),
     "comicbookrealm": SourceConfig(
         name="comicbookrealm",
         adapter_name="comicbookrealm",
-        priority=3,
+        priority=4,
         capabilities={
             SourceCapability.COVERS,
             SourceCapability.PRICING,
@@ -122,8 +193,9 @@ SOURCE_CONFIGS: Dict[str, SourceConfig] = {
     "mycomicshop": SourceConfig(
         name="mycomicshop",
         adapter_name="mycomicshop",
-        priority=4,
+        priority=5,
         capabilities={
+            SourceCapability.SEARCH,
             SourceCapability.COVERS,
             SourceCapability.PRICING,
         },
@@ -133,7 +205,7 @@ SOURCE_CONFIGS: Dict[str, SourceConfig] = {
     "gradingtool": SourceConfig(
         name="gradingtool",
         adapter_name="gradingtool",
-        priority=5,
+        priority=6,
         capabilities={
             SourceCapability.GRADING,
         },
