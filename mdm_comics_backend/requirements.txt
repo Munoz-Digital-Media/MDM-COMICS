@@ -35,6 +35,10 @@ httpx==0.26.0
 # Web Scraping
 beautifulsoup4==4.12.3
 
+# Data Processing (BCW catalog)
+pandas>=2.0.0
+openpyxl>=3.1.0
+
 # Browser Automation (BCW Dropship Integration)
 playwright>=1.40.0
 

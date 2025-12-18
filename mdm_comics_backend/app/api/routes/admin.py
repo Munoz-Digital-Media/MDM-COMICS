@@ -2938,3 +2938,36 @@ async def get_ingestion_status(
         "last_run_completed": row.last_run_completed.isoformat() if row.last_run_completed else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
+
+
+# =============================================================================
+# BCW Image Sync
+# =============================================================================
+
+@router.post("/bcw/sync-images")
+async def trigger_bcw_image_sync(
+    current_user: User = Depends(get_current_admin),
+):
+    """
+    Trigger BCW product image sync job.
+
+    Fetches images from BCW product pages and uploads to S3.
+    """
+    import asyncio
+    from app.jobs.bcw_image_sync import run_bcw_image_sync_job
+
+    logger.info(f"[BCW Image Sync] Triggered by admin {current_user.email}")
+
+    # Run job in background
+    result = await run_bcw_image_sync_job()
+
+    return {
+        "status": "completed",
+        "total_products": result.total_products,
+        "products_processed": result.products_processed,
+        "products_with_images": result.products_with_images,
+        "total_images_uploaded": result.total_images_uploaded,
+        "errors": result.errors[:10] if result.errors else [],
+        "error_count": len(result.errors),
+        "duration_ms": result.duration_ms,
+    }

@@ -319,6 +319,47 @@ class StorageService:
             logger.error(f"Product image upload error: {e}")
             return UploadResult(success=False, error=f"Upload failed: {str(e)}")
 
+    async def upload_bytes(
+        self,
+        content: bytes,
+        key: str,
+        content_type: str = "application/octet-stream",
+        cache_control: str = "public, max-age=86400",
+    ) -> Optional[str]:
+        """
+        Upload raw bytes to S3 with a custom key.
+
+        Args:
+            content: File content as bytes
+            key: S3 key (path) for the object
+            content_type: MIME type
+            cache_control: Cache-Control header value
+
+        Returns:
+            Public URL on success, None on failure
+        """
+        if not self.is_configured():
+            logger.error("S3 storage not configured")
+            return None
+
+        try:
+            self.client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=content,
+                ContentType=content_type,
+                CacheControl=cache_control,
+                ACL='public-read',
+            )
+
+            url = self._get_public_url(key)
+            logger.info(f"Uploaded: {key}")
+            return url
+
+        except Exception as e:
+            logger.error(f"Upload failed for {key}: {e}")
+            return None
+
     async def delete_object(self, key: str) -> bool:
         """Delete an object from S3."""
         try:
