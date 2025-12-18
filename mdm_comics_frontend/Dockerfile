@@ -8,6 +8,7 @@ WORKDIR /app
 ARG VITE_API_URL
 ARG VITE_MIDDLEWARE_URL
 
+ARG CACHE_BUSTER=2025-12-18T01:30:00Z
 COPY package.json package-lock.json ./
 RUN npm ci
 

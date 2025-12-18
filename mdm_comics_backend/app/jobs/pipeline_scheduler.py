@@ -3135,8 +3135,7 @@ async def run_self_healing_job():
     v1.23.0: Enhanced with Autonomous Resilience System features:
     - Auto-unpause jobs paused > 30 minutes
     - Decay error counts on recovery
-    - Audit logging
-
+    - Audit logging with hash chain
     This job runs periodically (every 10 minutes by default) and:
     1. Checks for jobs marked as running but not making progress
     2. Clears stale checkpoints and restarts stuck jobs
