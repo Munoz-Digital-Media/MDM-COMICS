@@ -11,7 +11,7 @@ import ProductDetailPage from "./components/ProductDetailPage";
 // Phase 5: Lazy load admin to reduce initial bundle size
 const AdminLayout = lazy(() => import("./components/admin/AdminLayout"));
 // Phase 4: Lazy load scanner to avoid bundle bloat
-const ScannerApp = lazy(() => import("./components/scanner/ScannerApp"));
+const ScannerApp = lazy(() => import("./components/admin/ingestion/ScannerApp"));
   import CheckoutForm, { OrderSuccess } from "./components/CheckoutForm";
   import ComingSoon from "./components/ComingSoon";
   import AuthModal from "./components/AuthModal";
