@@ -4,9 +4,9 @@
  * Serves static files and proxies /api/* to the backend.
  * This eliminates cross-origin issues - everything is same-origin.
  */
-const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
-const path = require('path');
+import express from 'express';
+import { createProxyMiddleware } from 'http-proxy-middleware';
+import path from 'path';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
