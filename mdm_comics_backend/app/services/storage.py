@@ -160,13 +160,20 @@ class StorageService:
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
             error_msg = e.response.get('Error', {}).get('Message', str(e))
-            raise RuntimeError(
-                f"S3 bucket validation failed for '{self._bucket}': {error_code} - {error_msg}"
-            ) from e
+            # Warn but don't crash - app can start, S3 ops will fail later if needed
+            logger.warning(
+                "S3 bucket validation failed (non-fatal): bucket=%s code=%s msg=%s",
+                self._bucket,
+                error_code,
+                error_msg,
+            )
         except Exception as e:
-            raise RuntimeError(
-                f"S3 bucket validation failed for '{self._bucket}': {str(e)}"
-            ) from e
+            # Warn but don't crash - app can start, S3 ops will fail later if needed
+            logger.warning(
+                "S3 bucket validation failed (non-fatal): bucket=%s error=%s",
+                self._bucket,
+                str(e),
+            )
 
     def _validate_image(
         self,
