@@ -6,19 +6,16 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, ShoppingCart, BarChart3,
-  QrCode, X, Menu, ChevronLeft, ChevronDown, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image, Boxes, RefreshCw
+  QrCode, X, Menu, ChevronLeft, ChevronDown, AlertTriangle, Truck, Camera, Users, Palette, GitCompare, Image, Boxes, RefreshCw, ScanSearch
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import ProductList from './products/ProductList';
-import ScanQueue from './queue/ScanQueue';
 import OrderList from './orders/OrderList';
 import InventorySummary from './reports/InventorySummary';
 import ShipmentList from './shipping/ShipmentList';
-import ScannerApp from '../scanner/ScannerApp';
 import UserList from './users/UserList';
 import BrandAssets from './branding/BrandAssets';
-import { MatchReviewQueue } from './match-review';
-import CoverIngestion from './inventory/CoverIngestion';
+import IngestionManager from './ingestion/IngestionManager';
 import BundleList from './bundles/BundleList';
 import RefundList from './refunds/RefundList';
 import { FEATURES } from '../../features';
@@ -35,10 +32,7 @@ const buildNavItems = () => {
         { id: 'bundles', label: 'Bundles', icon: Boxes },
       ] : undefined,
     },
-    { id: 'cover-ingestion', label: 'Cover Ingestion', icon: Image },
-    { id: 'scanner', label: 'Scanner', icon: Camera },
-    { id: 'queue', label: 'Scan Queue', icon: QrCode },
-    { id: 'match-review', label: 'Match Review', icon: GitCompare },
+    { id: 'ingestion', label: 'Ingestion', icon: ScanSearch },
     { id: 'orders', label: 'Orders', icon: ShoppingCart },
     { id: 'shipping', label: 'Shipping', icon: Truck },
     { id: 'refunds', label: 'Refunds', icon: RefreshCw },
@@ -89,14 +83,8 @@ export default function AdminLayout({ onClose }) {
         return <ProductList />;
       case 'bundles':
         return <BundleList />;
-      case 'cover-ingestion':
-        return <CoverIngestion />;
-      case 'scanner':
-        return <ScannerApp onClose={() => setActiveSection('dashboard')} embedded />;
-      case 'queue':
-        return <ScanQueue />;
-      case 'match-review':
-        return <MatchReviewQueue />;
+      case 'ingestion':
+        return <IngestionManager />;
       case 'orders':
         return <OrderList />;
       case 'shipping':

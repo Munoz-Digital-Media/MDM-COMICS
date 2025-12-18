@@ -10,7 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { adminAPI } from '../../../services/adminApi';
+import { adminAPI } from '../../../../services/adminApi';
 
 const MatchComparison = ({
   match,

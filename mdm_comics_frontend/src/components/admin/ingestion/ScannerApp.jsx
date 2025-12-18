@@ -10,7 +10,7 @@ import {
   List, Keyboard, ChevronDown, ChevronUp, Trash2, Loader2
 } from 'lucide-react';
 import CameraPermission from './CameraPermission';
-import scannerDB, { queueBarcode, getQueueStats, getAllBarcodes, syncQueue, detectBarcodeType, clearQueue } from '../../services/scannerDB';
+import scannerDB, { queueBarcode, getQueueStats, getAllBarcodes, syncQueue, detectBarcodeType, clearQueue } from '../../../services/scannerDB';
 
 // Lazy load the scanner to avoid bundle bloat
 const BarcodeScanner = lazy(() => import('./BarcodeScanner'));

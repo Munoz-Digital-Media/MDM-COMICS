@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { matchReviewAPI } from '../../../services/api';
+import { matchReviewAPI } from '../../../../services/api';
 import MatchCard from './MatchCard';
 import MatchComparison from './MatchComparison';
 import ManualSearchModal from './ManualSearchModal';
