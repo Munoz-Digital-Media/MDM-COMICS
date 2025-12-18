@@ -128,15 +128,17 @@ class StorageService:
         """
         Validate S3 storage configuration and verify bucket access.
 
-        Requires s3:ListBucket permission on the bucket.
+        Requires s3:ListBucket (head_bucket) permission on the bucket.
         """
+        env = settings.ENVIRONMENT.lower()
+
         if not self.is_configured():
-            if settings.ENVIRONMENT.lower() == "development":
+            if env == "development":
                 logger.warning("S3 storage not configured; skipping in development")
                 return
-            raise RuntimeError("S3 storage not configured. Set S3_BUCKET/S3_BUCKET_NAME and credentials.")
+            raise RuntimeError("S3 storage not configured. Set S3_BUCKET or S3_BUCKET_NAME.")
 
-        if settings.ENVIRONMENT.lower() == "production":
+        if env == "production":
             using_default_bucket = (
                 self._bucket == "mdm-comics"
                 and not (os.getenv("S3_BUCKET") or os.getenv("S3_BUCKET_NAME"))
@@ -158,9 +160,13 @@ class StorageService:
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
             error_msg = e.response.get('Error', {}).get('Message', str(e))
-            raise RuntimeError(
-                f"S3 bucket validation failed for \'{self._bucket}\': {error_code} - {error_msg}"
-            ) from e
+            expected_region = e.response.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-amz-bucket-region')
+            detail = f"S3 bucket validation failed for '{self._bucket}': {error_code} - {error_msg}"
+            if expected_region and expected_region != self._region:
+                detail += f" (hint: bucket region is {expected_region}; set S3_REGION/AWS_REGION accordingly)"
+            if error_code in ("InvalidAccessKeyId", "SignatureDoesNotMatch", "AccessDenied"):
+                detail += " (hint: credentials/role are missing access to this bucket)"
+            raise RuntimeError(detail) from e
 
     def _validate_image(
         self,
@@ -324,9 +330,10 @@ class StorageService:
             return False
 
     def is_configured(self) -> bool:
-        """Check if S3 is properly configured."""
-        return bool(
-            settings.S3_BUCKET and
-            settings.S3_ACCESS_KEY and
-            settings.S3_SECRET_KEY
-        )
+        """
+        Check if S3 is configured.
+
+        Note: We allow missing access/secret keys to support IAM/role-based
+        auth; boto3 will fall back to the default credential chain.
+        """
+        return bool(settings.S3_BUCKET)
