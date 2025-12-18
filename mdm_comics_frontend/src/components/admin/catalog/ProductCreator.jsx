@@ -66,7 +66,10 @@ export default function ProductCreator() {
         page: 1,
       });
       setSearchResults(result.results || []);
-      if (result.results?.length === 0) {
+      // Check for API message (rate limit, timeout, etc.)
+      if (result.message) {
+        setMessage({ type: 'warning', text: result.message });
+      } else if (result.results?.length === 0) {
         setMessage({ type: 'info', text: 'No results found' });
       }
     } catch (err) {
@@ -266,6 +269,7 @@ export default function ProductCreator() {
         <div className={`p-3 rounded-lg text-sm flex items-center justify-between ${
           message.type === 'error' ? 'bg-red-500/10 border border-red-500/20 text-red-400' :
           message.type === 'success' ? 'bg-green-500/10 border border-green-500/20 text-green-400' :
+          message.type === 'warning' ? 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400' :
           'bg-blue-500/10 border border-blue-500/20 text-blue-400'
         }`}>
           {message.text}
