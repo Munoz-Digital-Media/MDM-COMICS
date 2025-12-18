@@ -47,7 +47,7 @@ class BulkUpdateRequest(BaseModel):
 
 # ----- Endpoints -----
 
-@router.get("")
+@router.get("/")
 async def list_settings(
     category: Optional[str] = Query(None, pattern="^(branding|newsletter|social|system|general)$"),
     limit: int = Query(100, ge=1, le=500),

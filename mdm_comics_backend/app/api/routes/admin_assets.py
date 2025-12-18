@@ -258,7 +258,7 @@ async def upload_brand_asset(
     }
 
 
-@router.get("")
+@router.get("/")
 async def list_brand_assets(
     asset_type: Optional[str] = Query(None, pattern="^(logo|banner|icon|favicon|social)$"),
     include_deleted: bool = Query(False),
