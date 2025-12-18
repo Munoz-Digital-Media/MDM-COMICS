@@ -3,7 +3,7 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile",
-    "watchPatterns": ["src/**", "package.json", "vite.config.js", "Dockerfile", "railway.json"]
+    "watchPatterns": ["mdm_comics_frontend/src/**", "mdm_comics_frontend/package.json", "mdm_comics_frontend/vite.config.js", "mdm_comics_frontend/Dockerfile", "mdm_comics_frontend/railway.json"]
   },
   "deploy": {
     "healthcheckPath": "/",
