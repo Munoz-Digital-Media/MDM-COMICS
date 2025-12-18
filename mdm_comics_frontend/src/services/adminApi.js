@@ -37,7 +37,6 @@ function getCsrfToken() {
  * Cross-origin: Also uses stored token for Authorization header
  */
 async function fetchAPI(endpoint, options = {}) {
-  const API_BASE = API_BASE;
   const url = API_BASE + endpoint;
   const method = options.method || 'GET';
 
@@ -133,7 +132,6 @@ export const adminAPI = {
   },
 
   searchByImage: async (token, formData) => {
-    const API_BASE = API_BASE;
     const url = API_BASE + '/comics/search-by-image';
 
     const headers = {};
@@ -348,7 +346,6 @@ export const adminAPI = {
     formData.append('asset_type', assetType);
     if (settingKey) formData.append('setting_key', settingKey);
 
-    const API_BASE = API_BASE;
     const url = API_BASE + '/admin/assets/upload';
     const headers = {};
 
@@ -759,7 +756,6 @@ export const adminAPI = {
     if (metadata.variant_code) formData.append('variant_code', metadata.variant_code);
     if (metadata.cgc_grade) formData.append('cgc_grade', metadata.cgc_grade);
 
-    const API_BASE = API_BASE;
     const url = API_BASE + '/admin/cover-ingestion/upload';
     const headers = {};
 
@@ -794,7 +790,6 @@ export const adminAPI = {
     const formData = new FormData();
     formData.append('file', file);
 
-    const API_BASE = API_BASE;
     const url = API_BASE + '/admin/cover-ingestion/update/' + queueId;
     const headers = {};
 
