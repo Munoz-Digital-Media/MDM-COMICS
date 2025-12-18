@@ -25,25 +25,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// Proxy /api/* to backend
-app.use('/api', createProxyMiddleware({
+// Proxy /api/* to backend (http-proxy-middleware v3 syntax)
+const apiProxy = createProxyMiddleware({
   target: BACKEND_URL,
   changeOrigin: true,
   secure: true,
-  logLevel: 'debug',
-  onProxyReq: (proxyReq, req, res) => {
-    console.log(`[Proxy] Forwarding ${req.method} ${req.originalUrl} -> ${BACKEND_URL}${req.url}`);
-    proxyReq.setHeader('X-Forwarded-Host', req.headers.host);
-    proxyReq.setHeader('X-Forwarded-Proto', 'https');
-  },
-  onProxyRes: (proxyRes, req, res) => {
-    console.log(`[Proxy] Response ${proxyRes.statusCode} for ${req.originalUrl}`);
-  },
-  onError: (err, req, res) => {
-    console.error('[Proxy Error]', err.message);
-    res.status(502).json({ error: 'Proxy error', message: err.message });
+  pathFilter: '/api',
+  logger: console,
+  on: {
+    proxyReq: (proxyReq, req, res) => {
+      console.log(`[Proxy] Forwarding ${req.method} ${req.originalUrl} -> ${BACKEND_URL}${req.originalUrl}`);
+      proxyReq.setHeader('X-Forwarded-Host', req.headers.host);
+      proxyReq.setHeader('X-Forwarded-Proto', 'https');
+    },
+    proxyRes: (proxyRes, req, res) => {
+      console.log(`[Proxy] Response ${proxyRes.statusCode} for ${req.originalUrl}`);
+    },
+    error: (err, req, res) => {
+      console.error('[Proxy Error]', err.message);
+      res.status(502).json({ error: 'Proxy error', message: err.message });
+    }
   }
-}));
+});
+app.use(apiProxy);
 
 // Serve static files from dist/
 app.use(express.static(join(__dirname, 'dist')));
