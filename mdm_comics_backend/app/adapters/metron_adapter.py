@@ -77,8 +77,14 @@ class MetronAdapter(DataSourceAdapter):
     ):
         # Don't call super().__init__ with client - we manage our own
         self.config = config
-        self.name = config.name
+        self._name = config.name  # Store name separately (base class has read-only property)
         self._client = None
+        self._status = "enabled"
+
+    @property
+    def name(self) -> str:
+        """Override base class property."""
+        return self._name
 
     def _get_client(self):
         """Get the Mokkari client."""
