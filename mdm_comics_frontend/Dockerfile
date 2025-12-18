@@ -8,7 +8,13 @@ WORKDIR /app
 ARG VITE_API_URL
 ARG VITE_MIDDLEWARE_URL
 
-ARG CACHE_BUSTER=49a95db
+# Debug: Print received build args
+RUN echo "=== BUILD ARGS RECEIVED ===" && \
+    echo "VITE_API_URL=$VITE_API_URL" && \
+    echo "VITE_MIDDLEWARE_URL=$VITE_MIDDLEWARE_URL" && \
+    echo "==========================="
+
+ARG CACHE_BUSTER=fix-https-20241218
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -16,7 +22,7 @@ COPY . .
 # Ensure HTTPS at build time for all service URLs
 RUN VITE_API_URL=$(echo "$VITE_API_URL" | sed 's|^http://|https://|') \
     VITE_MIDDLEWARE_URL=$(echo "$VITE_MIDDLEWARE_URL" | sed 's|^http://|https://|') \
-    npm run build
+    sh -c 'echo "Building with VITE_API_URL=$VITE_API_URL" && npm run build'
 
 FROM node:20-alpine
 
