@@ -69,6 +69,43 @@ class ComicVineAdapter(DataSourceAdapter):
         query = urlencode(params)
         return f"{self.base_url}/{endpoint}?{query}"
 
+    def _parse_response(self, response) -> Dict[str, Any]:
+        """
+        Safely parse JSON response with HTTP status code checking.
+
+        Returns:
+            Parsed JSON dict, or error dict with status_code=-1
+        """
+        # Check HTTP status first
+        if response.status_code == 401:
+            logger.error("[COMICVINE] 401 Unauthorized - invalid API key")
+            return {"status_code": -1, "error": "Invalid API key (401)"}
+        elif response.status_code == 403:
+            logger.error("[COMICVINE] 403 Forbidden - check API key permissions")
+            return {"status_code": -1, "error": "API key forbidden (403)"}
+        elif response.status_code == 420:
+            logger.warning("[COMICVINE] 420 Rate limited - slow down requests")
+            return {"status_code": -1, "error": "Rate limited (420)"}
+        elif response.status_code == 429:
+            logger.warning("[COMICVINE] 429 Too Many Requests - rate limited")
+            return {"status_code": -1, "error": "Rate limited (429)"}
+        elif response.status_code >= 500:
+            logger.error(f"[COMICVINE] Server error ({response.status_code})")
+            return {"status_code": -1, "error": f"Server error ({response.status_code})"}
+        elif response.status_code != 200:
+            logger.warning(f"[COMICVINE] Unexpected status: {response.status_code}")
+
+        # Try to parse JSON
+        try:
+            text = response.text
+            if not text or not text.strip():
+                logger.error("[COMICVINE] Empty response body")
+                return {"status_code": -1, "error": "Empty response body"}
+            return response.json()
+        except Exception as e:
+            logger.error(f"[COMICVINE] JSON parse error: {e}, body: {response.text[:200] if response.text else 'empty'}")
+            return {"status_code": -1, "error": f"JSON parse error: {e}"}
+
     async def health_check(self) -> bool:
         """Check if Comic Vine API is reachable."""
         if not self.api_key:
@@ -77,7 +114,7 @@ class ComicVineAdapter(DataSourceAdapter):
         try:
             url = self._build_url("types", {"limit": 1})
             response = await self.client.get(url)
-            data = response.json()
+            data = self._parse_response(response)
             return data.get("status_code") == 1
         except Exception as e:
             logger.error(f"[COMICVINE] Health check failed: {e}")
@@ -124,7 +161,7 @@ class ComicVineAdapter(DataSourceAdapter):
 
             url = self._build_url("issues", params)
             response = await self.client.get(url)
-            data = response.json()
+            data = self._parse_response(response)
 
             if data.get("status_code") != 1:
                 return FetchResult(
@@ -161,10 +198,10 @@ class ComicVineAdapter(DataSourceAdapter):
 
             url = self._build_url(f"issue/{external_id}")
             response = await self.client.get(url)
-            data = response.json()
+            data = self._parse_response(response)
 
             if data.get("status_code") != 1:
-                logger.warning(f"[COMICVINE] Issue {external_id} not found")
+                logger.warning(f"[COMICVINE] Issue {external_id} not found: {data.get('error', 'unknown')}")
                 return None
 
             return data.get("results")
@@ -203,7 +240,7 @@ class ComicVineAdapter(DataSourceAdapter):
 
             url = self._build_url("search", params)
             response = await self.client.get(url)
-            data = response.json()
+            data = self._parse_response(response)
 
             if data.get("status_code") != 1:
                 return FetchResult(
@@ -218,7 +255,7 @@ class ComicVineAdapter(DataSourceAdapter):
             )
 
         except Exception as e:
-            logger.error(f"[COMICVINE] Search failed: {e}")
+            logger.error(f"[COMICVINE] Search issues failed: {e}")
             return FetchResult(
                 success=False,
                 errors=[{"message": str(e)}],
@@ -235,9 +272,10 @@ class ComicVineAdapter(DataSourceAdapter):
 
             url = self._build_url(f"volume/{volume_id}")
             response = await self.client.get(url)
-            data = response.json()
+            data = self._parse_response(response)
 
             if data.get("status_code") != 1:
+                logger.warning(f"[COMICVINE] Volume {volume_id} not found: {data.get('error', 'unknown')}")
                 return None
 
             return data.get("results")
@@ -267,7 +305,7 @@ class ComicVineAdapter(DataSourceAdapter):
 
             url = self._build_url("search", params)
             response = await self.client.get(url)
-            data = response.json()
+            data = self._parse_response(response)
 
             if data.get("status_code") != 1:
                 return FetchResult(
