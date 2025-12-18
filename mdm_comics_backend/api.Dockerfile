@@ -10,14 +10,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for caching
-COPY mdm_comics_backend/requirements.txt .
+COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY mdm_comics_backend/ .
+COPY . .
 
 # Ensure Python can import the project package.
 ENV PYTHONPATH=/app
