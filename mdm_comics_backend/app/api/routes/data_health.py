@@ -64,6 +64,7 @@ async def get_data_health_overview(
         dlq_pending_count = dlq_pending.scalar() or 0
     except Exception as e:
         logger.warning(f"[data_health] dead_letter_queue query failed: {e}")
+        await db.rollback()
 
     # Quarantine stats (graceful if table missing)
     quarantine_pending_count = 0
@@ -74,6 +75,7 @@ async def get_data_health_overview(
         quarantine_pending_count = quarantine_pending.scalar() or 0
     except Exception as e:
         logger.warning(f"[data_health] data_quarantine query failed: {e}")
+        await db.rollback()
 
     # Recent changes (last 24h) - graceful if table missing
     changes_24h_count = 0
@@ -88,6 +90,7 @@ async def get_data_health_overview(
         changes_24h_count = changes_24h.scalar() or 0
     except Exception as e:
         logger.warning(f"[data_health] price_changelog query failed: {e}")
+        await db.rollback()
 
     # Pipeline job status (graceful if table missing)
     running_jobs_count = 0
@@ -98,6 +101,7 @@ async def get_data_health_overview(
         running_jobs_count = running_jobs.scalar() or 0
     except Exception as e:
         logger.warning(f"[data_health] pipeline_checkpoints query failed: {e}")
+        await db.rollback()
 
     # Get last sync times for each entity type (graceful if table missing)
     last_sync_by_type = {}
@@ -115,6 +119,7 @@ async def get_data_health_overview(
         }
     except Exception as e:
         logger.warning(f"[data_health] price_changelog sync times query failed: {e}")
+        await db.rollback()
 
     return {
         "status": "healthy" if dlq_pending_count < 100 else "degraded",
