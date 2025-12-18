@@ -1,17 +1,23 @@
 """
-Metron Adapter v1.0.0
+Metron Adapter v2.0.0
 
-Adapter for Metron API - rich comic metadata.
+Adapter for Metron API using official Mokkari library.
 https://metron.cloud/
+https://github.com/Metron-Project/mokkari
+
+v2.0.0 Changes:
+- REFACTOR: Use official Mokkari library instead of custom HTTP client
+- Built-in rate limiting: 30 req/min, 10,000 req/day (SQLite persisted)
+- Proper RateLimitError handling with retry_after
+- No more manual rate limit management needed
 
 Per pipeline spec:
 - Rich comic metadata (issues, variants, creators, publisher, print runs, story arcs)
-- Uses existing MetronService as base
 """
+import asyncio
 import os
-import base64
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.core.adapter_registry import (
     DataSourceAdapter,
@@ -19,55 +25,78 @@ from app.core.adapter_registry import (
     FetchResult,
     METRON_CONFIG,
 )
-from app.core.http_client import ResilientHTTPClient
 
 logger = logging.getLogger(__name__)
+
+# Lazy import mokkari to avoid import errors if not installed
+_mokkari_client = None
+
+
+class RateLimitError(Exception):
+    """Rate limit exceeded - wraps mokkari.exceptions.RateLimitError."""
+    def __init__(self, message: str, retry_after: float = 60.0):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _get_mokkari_client():
+    """Get or create the Mokkari client singleton."""
+    global _mokkari_client
+    if _mokkari_client is None:
+        try:
+            import mokkari
+            username = os.getenv("METRON_USERNAME", "")
+            password = os.getenv("METRON_PASSWORD", "")
+            if username and password:
+                _mokkari_client = mokkari.api(username, password)
+                logger.info("[Metron] Mokkari client initialized with built-in rate limiting")
+            else:
+                logger.warning("[Metron] Credentials not configured")
+        except ImportError:
+            logger.error("[Metron] mokkari package not installed - run: pip install mokkari")
+        except Exception as e:
+            logger.error(f"[Metron] Failed to initialize Mokkari client: {e}")
+    return _mokkari_client
 
 
 class MetronAdapter(DataSourceAdapter):
     """
-    Adapter for Metron comic database API.
+    Adapter for Metron comic database API using official Mokkari library.
 
-    Provides rich metadata for comic issues, series, characters, and creators.
+    Mokkari handles:
+    - Rate limiting (30/min, 10,000/day) with SQLite persistence
+    - Authentication
+    - Retry logic with proper backoff
+    - RateLimitError with retry_after attribute
     """
-
-    BASE_URL = "https://metron.cloud/api"
 
     def __init__(
         self,
         config: AdapterConfig = METRON_CONFIG,
-        client: Optional[ResilientHTTPClient] = None
+        client = None  # Ignored - we use Mokkari singleton
     ):
-        if client is None:
-            from app.core.http_client import get_metron_client
-            client = get_metron_client()
+        # Don't call super().__init__ with client - we manage our own
+        self.config = config
+        self.name = config.name
+        self._client = None
 
-        super().__init__(config, client)
-
-        self._username = os.getenv(config.username_env_var or "METRON_USERNAME", "")
-        self._password = os.getenv(config.password_env_var or "METRON_PASSWORD", "")
-
-        if not self._username or not self._password:
-            logger.warning(f"[{self.name}] Credentials not configured - adapter will not function")
-
-    def _build_auth_header(self) -> Dict[str, str]:
-        """Build Basic Auth header."""
-        credentials = f"{self._username}:{self._password}"
-        encoded = base64.b64encode(credentials.encode()).decode()
-        return {"Authorization": f"Basic {encoded}"}
+    def _get_client(self):
+        """Get the Mokkari client."""
+        if self._client is None:
+            self._client = _get_mokkari_client()
+        return self._client
 
     async def health_check(self) -> bool:
         """Check if Metron API is reachable and credentials are valid."""
-        if not self._username or not self._password:
+        client = self._get_client()
+        if client is None:
             return False
 
         try:
-            response = await self.client.get(
-                f"{self.BASE_URL}/publisher/",
-                headers=self._build_auth_header(),
-                params={"page": 1}
-            )
-            return response.status_code == 200
+            # Use a lightweight call - get a single publisher
+            # Run sync mokkari in thread pool
+            result = await asyncio.to_thread(client.publishers_list, {"name": "marvel"})
+            return result is not None
         except Exception as e:
             logger.error(f"[{self.name}] Health check failed: {e}")
             return False
@@ -90,40 +119,63 @@ class MetronAdapter(DataSourceAdapter):
             endpoint: API endpoint (issue, series, publisher, character, creator)
             **filters: Metron-specific filters
         """
-        if not self._username or not self._password:
+        client = self._get_client()
+        if client is None:
             return FetchResult(
                 success=False,
-                errors=[{"error": "Credentials not configured"}]
+                errors=[{"error": "Mokkari client not initialized"}]
             )
 
         try:
-            params = {"page": page}
-            params.update(filters)
+            import mokkari.exceptions as mokkari_exc
 
-            response = await self.client.get(
-                f"{self.BASE_URL}/{endpoint}/",
-                headers=self._build_auth_header(),
-                params=params
-            )
+            params = {"page": page, **filters}
 
-            if response.status_code != 200:
+            # Map endpoint to Mokkari method
+            method_map = {
+                "issue": client.issues_list,
+                "series": client.series_list,
+                "publisher": client.publishers_list,
+                "character": client.characters_list,
+                "creator": client.creators_list,
+            }
+
+            method = method_map.get(endpoint)
+            if not method:
                 return FetchResult(
                     success=False,
-                    errors=[{"error": f"API returned {response.status_code}"}]
+                    errors=[{"error": f"Unknown endpoint: {endpoint}"}]
                 )
 
-            data = response.json()
-            results = data.get("results", [])
-            next_url = data.get("next")
+            # Run sync mokkari in thread pool
+            results = await asyncio.to_thread(method, params)
+
+            # Convert Mokkari objects to dicts
+            records = []
+            for item in results:
+                if hasattr(item, '__dict__'):
+                    records.append(self._mokkari_obj_to_dict(item))
+                else:
+                    records.append(item)
 
             return FetchResult(
                 success=True,
-                records=results,
-                has_more=next_url is not None,
-                total_count=data.get("count"),
+                records=records,
+                has_more=len(records) >= 20,  # Metron default page size
+                total_count=len(records),
             )
 
         except Exception as e:
+            # Check for rate limit error
+            error_str = str(e).lower()
+            if "rate" in error_str or "429" in error_str:
+                retry_after = getattr(e, 'retry_after', 60.0)
+                logger.warning(f"[{self.name}] Rate limited, retry after {retry_after}s")
+                return FetchResult(
+                    success=False,
+                    errors=[{"error": "rate_limited", "retry_after": retry_after}]
+                )
+
             logger.error(f"[{self.name}] Fetch failed: {e}")
             return FetchResult(
                 success=False,
@@ -132,23 +184,55 @@ class MetronAdapter(DataSourceAdapter):
 
     async def fetch_by_id(self, external_id: str, endpoint: str = "issue") -> Optional[Dict[str, Any]]:
         """Fetch a single record by Metron ID."""
-        if not self._username or not self._password:
+        client = self._get_client()
+        if client is None:
             return None
 
         try:
-            response = await self.client.get(
-                f"{self.BASE_URL}/{endpoint}/{external_id}/",
-                headers=self._build_auth_header()
-            )
+            import mokkari.exceptions as mokkari_exc
 
-            if response.status_code != 200:
+            # Map endpoint to Mokkari method
+            method_map = {
+                "issue": client.issue,
+                "series": client.series,
+                "publisher": client.publisher,
+                "character": client.character,
+                "creator": client.creator,
+            }
+
+            method = method_map.get(endpoint)
+            if not method:
+                logger.error(f"[{self.name}] Unknown endpoint: {endpoint}")
                 return None
 
-            return response.json()
+            # Run sync mokkari in thread pool
+            result = await asyncio.to_thread(method, int(external_id))
+
+            if result:
+                return self._mokkari_obj_to_dict(result)
+            return None
 
         except Exception as e:
+            error_str = str(e).lower()
+            if "rate" in error_str or "429" in error_str:
+                retry_after = getattr(e, 'retry_after', 60.0)
+                logger.warning(f"[{self.name}] Rate limited on fetch_by_id, retry after {retry_after}s")
+                raise RateLimitError(f"Rate limited: {e}", retry_after)
+
             logger.error(f"[{self.name}] Fetch by ID {external_id} failed: {e}")
             return None
+
+    def _mokkari_obj_to_dict(self, obj) -> Dict[str, Any]:
+        """Convert a Mokkari pydantic object to a dict."""
+        if hasattr(obj, 'model_dump'):
+            # Pydantic v2
+            return obj.model_dump()
+        elif hasattr(obj, 'dict'):
+            # Pydantic v1
+            return obj.dict()
+        elif hasattr(obj, '__dict__'):
+            return dict(obj.__dict__)
+        return {}
 
     def normalize(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -156,7 +240,12 @@ class MetronAdapter(DataSourceAdapter):
         """
         # Handle series info
         series = record.get("series", {}) or {}
+        if hasattr(series, '__dict__'):
+            series = self._mokkari_obj_to_dict(series)
+
         publisher = record.get("publisher", {}) or series.get("publisher", {}) or {}
+        if hasattr(publisher, '__dict__'):
+            publisher = self._mokkari_obj_to_dict(publisher)
 
         # Parse cover date
         cover_date = record.get("cover_date")
@@ -169,13 +258,13 @@ class MetronAdapter(DataSourceAdapter):
             "isbn": record.get("isbn"),
 
             # Series info
-            "series_id": series.get("id"),
-            "series_name": series.get("name"),
-            "series_volume": series.get("volume"),
+            "series_id": series.get("id") if isinstance(series, dict) else getattr(series, 'id', None),
+            "series_name": series.get("name") if isinstance(series, dict) else getattr(series, 'name', None),
+            "series_volume": series.get("volume") if isinstance(series, dict) else getattr(series, 'volume', None),
 
             # Publisher info
-            "publisher_id": publisher.get("id"),
-            "publisher_name": publisher.get("name"),
+            "publisher_id": publisher.get("id") if isinstance(publisher, dict) else getattr(publisher, 'id', None),
+            "publisher_name": publisher.get("name") if isinstance(publisher, dict) else getattr(publisher, 'name', None),
 
             # Issue details
             "number": record.get("number"),
@@ -191,14 +280,14 @@ class MetronAdapter(DataSourceAdapter):
             "page_count": record.get("page_count"),
 
             # Description
-            "description": record.get("desc"),
+            "description": record.get("desc") or record.get("description"),
 
             # Variant info
             "is_variant": record.get("is_variant", False),
             "variant_name": record.get("variant_name"),
 
             # Ratings
-            "rating": record.get("rating", {}).get("name") if record.get("rating") else None,
+            "rating": record.get("rating", {}).get("name") if isinstance(record.get("rating"), dict) else None,
 
             # Store raw data for future parsing
             "raw_data": record,

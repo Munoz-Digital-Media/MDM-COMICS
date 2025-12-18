@@ -1,5 +1,12 @@
 """
-Sequential Exhaustive Enrichment Job v2.1.1
+Sequential Exhaustive Enrichment Job v2.2.0
+
+v2.2.0 Changes (MOKKARI INTEGRATION):
+- REFACTOR: Metron queries now use official Mokkari library
+- Built-in rate limiting: 30 req/min, 10,000 req/day (SQLite persisted)
+- Proper RateLimitError handling with retry_after attribute
+- No more manual HTTP client management for Metron
+- Removed wasteful per-query health checks
 
 v2.1.1 Changes (SEJ-SOURCE-PRIORITY):
 - REORDER: Source priority updated per business requirements:
@@ -891,59 +898,56 @@ async def query_metron(
     missing_fields: Set[str],
     rate_mgr: RateLimitManager
 ) -> Dict[str, Any]:
-    """Query Metron for missing fields. Returns dict of field->value."""
-    from app.adapters.metron_adapter import MetronAdapter
-    from app.core.http_client import get_metron_client
+    """
+    Query Metron for missing fields. Returns dict of field->value.
+
+    v2.0.0: Uses official Mokkari library with built-in rate limiting.
+    Mokkari handles: 30 req/min, 10,000 req/day (SQLite persisted).
+    """
+    from app.adapters.metron_adapter import MetronAdapter, RateLimitError
 
     updates = {}
     source = "metron"
 
     try:
-        # Properly initialize the HTTP client
-        client = get_metron_client()
-        await client.__aenter__()
-        adapter = MetronAdapter(client=client)
+        # v2.0.0: Mokkari handles rate limiting internally - no manual client management
+        adapter = MetronAdapter()
 
-        # NOTE: Health check removed - it was calling /api/publisher/ on EVERY query
-        # causing 429s. Circuit breaker handles failures instead.
-
-        # Check if source is available (non-blocking check)
+        # Check if source is available (non-blocking check from our rate manager)
         if not await rate_mgr.wait_for_source(source):
-            # Source is blocked - return empty, caller will try other sources
             return updates
 
         # Strategy: If we have metron_id, direct lookup. Otherwise, search.
         metron_id = comic.get("metron_id")
 
+        def extract_fields(data: Dict[str, Any]) -> None:
+            """Extract available fields from Metron response."""
+            if "upc" in missing_fields and data.get("upc"):
+                updates["upc"] = data["upc"]
+            if "isbn" in missing_fields and data.get("isbn"):
+                updates["isbn"] = data["isbn"]
+            if "description" in missing_fields and (data.get("desc") or data.get("description")):
+                updates["description"] = data.get("desc") or data.get("description")
+            if "page_count" in missing_fields and data.get("page_count"):
+                updates["page_count"] = data["page_count"]
+            if "cover_date" in missing_fields and data.get("cover_date"):
+                updates["cover_date"] = data["cover_date"]
+            if "store_date" in missing_fields and data.get("store_date"):
+                updates["store_date"] = data["store_date"]
+            if "image" in missing_fields and data.get("image"):
+                updates["image"] = data["image"]
+            if "price" in missing_fields and data.get("price"):
+                updates["price"] = data["price"]
+
         if metron_id:
-            # Direct lookup
+            # Direct lookup by ID
             data = await adapter.fetch_by_id(str(metron_id), endpoint="issue")
             if data:
                 rate_mgr.get_limiter(source).record_success()
-
-                # Extract available fields
-                if "upc" in missing_fields and data.get("upc"):
-                    updates["upc"] = data["upc"]
-                if "isbn" in missing_fields and data.get("isbn"):
-                    updates["isbn"] = data["isbn"]
-                if "description" in missing_fields and data.get("description"):
-                    updates["description"] = data["description"]
-                if "page_count" in missing_fields and data.get("page_count"):
-                    updates["page_count"] = data["page_count"]
-                if "cover_date" in missing_fields and data.get("cover_date"):
-                    updates["cover_date"] = data["cover_date"]
-                if "store_date" in missing_fields and data.get("store_date"):
-                    updates["store_date"] = data["store_date"]
-                if "image" in missing_fields and data.get("image"):
-                    updates["image"] = data["image"]
-                if "price" in missing_fields and data.get("price"):
-                    updates["price"] = data["price"]
+                extract_fields(data)
         else:
             # Search by series + issue
             if comic.get("series_name") and comic.get("number"):
-                if not await rate_mgr.wait_for_source(source):
-                    return updates
-
                 search_result = await adapter.search_issues(
                     series_name=comic["series_name"],
                     number=str(comic["number"]),
@@ -956,47 +960,36 @@ async def query_metron(
                     # Find best match
                     best = _find_best_match(comic, search_result.records)
                     if best:
-                        # If we found a match, store the metron_id for future lookups
+                        # Store metron_id for future lookups
                         if best.get("id"):
                             updates["metron_id"] = best["id"]
 
-                        # Fetch full details
-                        if best.get("id"):
-                            if not await rate_mgr.wait_for_source(source):
-                                return updates  # Return what we have so far
+                            # Fetch full details
                             data = await adapter.fetch_by_id(str(best["id"]), endpoint="issue")
                             if data:
                                 rate_mgr.get_limiter(source).record_success()
+                                extract_fields(data)
+                elif search_result.success:
+                    rate_mgr.get_limiter(source).record_success()  # Search worked, no results
+                elif search_result.errors:
+                    # Check if rate limited
+                    for err in search_result.errors:
+                        if isinstance(err, dict) and err.get("error") == "rate_limited":
+                            retry_after = err.get("retry_after", 60)
+                            rate_mgr.get_limiter(source).record_rate_limit(retry_after)
+                            logger.warning(f"[{source}] Mokkari rate limited, retry after {retry_after}s")
+                            return updates
 
-                                if "upc" in missing_fields and data.get("upc"):
-                                    updates["upc"] = data["upc"]
-                                if "isbn" in missing_fields and data.get("isbn"):
-                                    updates["isbn"] = data["isbn"]
-                                if "description" in missing_fields and data.get("description"):
-                                    updates["description"] = data["description"]
-                                if "page_count" in missing_fields and data.get("page_count"):
-                                    updates["page_count"] = data["page_count"]
-                                if "cover_date" in missing_fields and data.get("cover_date"):
-                                    updates["cover_date"] = data["cover_date"]
-                                if "store_date" in missing_fields and data.get("store_date"):
-                                    updates["store_date"] = data["store_date"]
-                                if "image" in missing_fields and data.get("image"):
-                                    updates["image"] = data["image"]
-                else:
-                    rate_mgr.get_limiter(source).record_success()  # Search worked, just no results
-
+    except RateLimitError as e:
+        # Mokkari rate limit - use retry_after from exception
+        rate_mgr.get_limiter(source).record_rate_limit(e.retry_after)
+        logger.warning(f"[{source}] Mokkari rate limited: {e}, retry after {e.retry_after}s")
     except Exception as e:
         error_str = str(e).lower()
         if "429" in error_str or "rate" in error_str:
             rate_mgr.get_limiter(source).record_rate_limit()
         else:
             logger.warning(f"[{source}] Error querying: {e}")
-    finally:
-        # Cleanup client - SOLUTION-002: Log cleanup errors
-        try:
-            await client.__aexit__(None, None, None)
-        except Exception as e:
-            logger.debug(f"[{source}] Client cleanup error: {e}")
 
     if updates:
         logger.info(f"[{source}] Found {len(updates)} fields for comic {comic.get('id')}")
