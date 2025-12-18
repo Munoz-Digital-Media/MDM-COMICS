@@ -75,6 +75,21 @@ class BulkApproval(BaseModel):
         return v
 
 
+class BulkRejection(BaseModel):
+    """Bulk reject matches."""
+    match_ids: List[int] = Field(..., min_length=1, max_length=100)
+    reason: str = Field(..., pattern='^(wrong_item|wrong_variant|wrong_year|duplicate|other)$')
+    notes: Optional[str] = Field(None, max_length=500)
+
+    @field_validator('match_ids')
+    @classmethod
+    def validate_reject_ids(cls, v: List[int]) -> List[int]:
+        """Ensure all IDs are positive."""
+        if any(id <= 0 for id in v):
+            raise ValueError('All match IDs must be positive integers')
+        return v
+
+
 class ManualSearch(BaseModel):
     """Search PriceCharting for manual linking."""
     query: str = Field(..., min_length=2, max_length=200)
@@ -165,6 +180,17 @@ class BulkApprovalResult(BaseModel):
     approved_count: int
     failed_count: int
     failed_ids: List[int]
+    message: str
+
+
+class BulkRejectionResult(BaseModel):
+    """Result of bulk rejection."""
+    success: bool
+    rejected_count: int
+    failed_count: int
+    failed_ids: List[int]
+    cleaned_s3: int
+    cleaned_local: int
     message: str
 
 

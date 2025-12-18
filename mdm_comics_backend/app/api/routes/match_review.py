@@ -23,9 +23,9 @@ from app.models.user import User
 from app.models.match_review import MatchReviewQueue
 from app.schemas.match_review import (
     MatchQueueFilter, MatchApproval, MatchRejection, MatchSkip,
-    ManualLink, BulkApproval, ManualSearch,
+    ManualLink, BulkApproval, BulkRejection, ManualSearch,
     MatchQueueResponse, MatchQueueItem, MatchQueueStats,
-    MatchActionResult, BulkApprovalResult, ManualSearchResponse,
+    MatchActionResult, BulkApprovalResult, BulkRejectionResult, ManualSearchResponse,
     EntitySummary, CandidateSummary
 )
 from app.services.match_review_service import MatchReviewService
@@ -350,6 +350,34 @@ async def bulk_approve_matches(
         failed_count=len(failed_ids),
         failed_ids=failed_ids,
         message=f"Approved {approved_count} matches" + (f", {len(failed_ids)} failed" if failed_ids else "")
+    )
+
+
+@router.post("/bulk-reject", response_model=BulkRejectionResult)
+async def bulk_reject_matches(
+    bulk: BulkRejection,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Bulk reject matches with S3/local image cleanup.
+    """
+    service = MatchReviewService(db)
+    rejected_count, failed_ids, s3_cleaned, local_cleaned = await service.bulk_reject(
+        match_ids=bulk.match_ids,
+        user_id=current_user.id,
+        reason=bulk.reason,
+        notes=bulk.notes
+    )
+
+    return BulkRejectionResult(
+        success=len(failed_ids) == 0,
+        rejected_count=rejected_count,
+        failed_count=len(failed_ids),
+        failed_ids=failed_ids,
+        cleaned_s3=s3_cleaned,
+        cleaned_local=local_cleaned,
+        message=f"Rejected {rejected_count} matches (cleaned {s3_cleaned} S3, {local_cleaned} local)" + (f", {len(failed_ids)} failed" if failed_ids else "")
     )
 
 

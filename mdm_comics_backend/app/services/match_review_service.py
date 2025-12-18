@@ -453,6 +453,82 @@ class MatchReviewService:
 
         return approved, failed
 
+    async def bulk_reject(
+        self,
+        match_ids: List[int],
+        user_id: int,
+        reason: str,
+        notes: Optional[str] = None
+    ) -> Tuple[int, List[int], int, int]:
+        """
+        Bulk reject matches with S3/local cleanup.
+
+        Returns: (rejected_count, failed_ids, s3_cleaned, local_cleaned)
+        """
+        rejected = 0
+        failed = []
+        s3_cleaned = 0
+        local_cleaned = 0
+
+        storage = StorageService()
+        s3_configured = storage.is_configured()
+
+        for match_id in match_ids:
+            match = await self.db.get(MatchReviewQueue, match_id)
+
+            if not match:
+                failed.append(match_id)
+                continue
+
+            if match.status != 'pending':
+                failed.append(match_id)
+                continue
+
+            # Clean up images
+            if match.candidate_data:
+                s3_key = match.candidate_data.get('s3_key')
+                if s3_key and s3_configured:
+                    try:
+                        if await storage.delete_object(s3_key):
+                            s3_cleaned += 1
+                    except Exception as e:
+                        logger.warning(f"Bulk reject: failed to delete S3 {s3_key}: {e}")
+
+                file_path = match.candidate_data.get('file_path')
+                if file_path and os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                        local_cleaned += 1
+                    except Exception as e:
+                        logger.warning(f"Bulk reject: failed to delete local {file_path}: {e}")
+
+            # Update status
+            match.status = 'rejected'
+            match.reviewed_by = user_id
+            match.reviewed_at = datetime.utcnow()
+            match.resolution_notes = f"Reason: {reason}. {notes or ''} [bulk]"
+            match.locked_by = None
+            match.locked_at = None
+
+            await self.db.commit()
+
+            # Log audit
+            await self._log_action(
+                action='bulk_reject',
+                entity_type=match.entity_type,
+                entity_id=match.entity_id,
+                actor_type='user',
+                actor_id=user_id,
+                match_source=match.candidate_source,
+                match_id=match.candidate_id,
+                match_method=match.match_method,
+                match_score=match.match_score
+            )
+
+            rejected += 1
+
+        return rejected, failed, s3_cleaned, local_cleaned
+
     # =========================================================
     # Escalation
     # =========================================================
