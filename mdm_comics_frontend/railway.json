@@ -6,7 +6,8 @@
     "dockerfilePath": "Dockerfile",
     "watchPatterns": ["src/**", "package.json", "vite.config.js", "Dockerfile", "railway.json"],
     "buildArgs": {
-      "VITE_API_URL": "${{VITE_API_URL}}"
+      "VITE_API_URL": "${{VITE_API_URL}}",
+      "VITE_MIDDLEWARE_URL": "${{VITE_MIDDLEWARE_URL}}"
     }
   },
   "deploy": {
