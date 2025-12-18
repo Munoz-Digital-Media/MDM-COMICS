@@ -362,7 +362,7 @@ import './styles/animations.css';
         )}
 
         {/* Header */}
-        <header className="sticky top-0 z-40 bg-zinc-950/95 backdrop-blur-md border-b border-zinc-800 overflow-x-hidden">
+        <header className="sticky top-0 z-[45] bg-zinc-950/95 backdrop-blur-md border-b border-zinc-800 overflow-x-hidden">
           <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
             <div className="flex items-center justify-between gap-2">
               {/* Logo */}
@@ -424,7 +424,7 @@ import './styles/animations.css';
                     </button>
                     {/* Dropdown */}
                     <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible
-  transition-all z-50">
+  transition-all z-[60]">
                       <div className="p-3 border-b border-zinc-800">
                         <p className="text-sm font-semibold text-white flex items-center gap-2">
                           {user.name}
