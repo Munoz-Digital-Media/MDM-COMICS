@@ -195,29 +195,35 @@ async def list_refund_requests(
 ):
     """
     List all refund requests with optional state filter.
+    Returns empty list if table doesn't exist yet.
     """
-    query = select(BCWRefundRequest).options(
-        selectinload(BCWRefundRequest.events)
-    ).order_by(BCWRefundRequest.created_at.desc())
+    try:
+        query = select(BCWRefundRequest).options(
+            selectinload(BCWRefundRequest.events)
+        ).order_by(BCWRefundRequest.created_at.desc())
 
-    if state:
-        try:
-            state_enum = BCWRefundState(state)
-            query = query.where(BCWRefundRequest.state == state_enum)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid state: {state}"
-            )
+        if state:
+            try:
+                state_enum = BCWRefundState(state)
+                query = query.where(BCWRefundRequest.state == state_enum)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid state: {state}"
+                )
 
-    query = query.limit(limit).offset(offset)
-    result = await db.execute(query)
-    refunds = list(result.scalars().all())
+        query = query.limit(limit).offset(offset)
+        result = await db.execute(query)
+        refunds = list(result.scalars().all())
 
-    return RefundListResponse(
-        refunds=[format_admin_refund_response(r) for r in refunds],
-        total=len(refunds),
-    )
+        return RefundListResponse(
+            refunds=[format_admin_refund_response(r) for r in refunds],
+            total=len(refunds),
+        )
+    except Exception as e:
+        # Table may not exist yet - return empty list
+        logger.warning(f"Refund list query failed (table may not exist): {e}")
+        return RefundListResponse(refunds=[], total=0)
 
 
 @router.get("/stats", response_model=RefundStatsResponse)
@@ -227,74 +233,88 @@ async def get_refund_stats(
 ):
     """
     Get refund statistics.
+    Returns zeros if table doesn't exist yet.
     """
-    from sqlalchemy import func
+    try:
+        from sqlalchemy import func
 
-    # Total requests
-    total_result = await db.execute(
-        select(func.count(BCWRefundRequest.id))
-    )
-    total = total_result.scalar() or 0
+        # Total requests
+        total_result = await db.execute(
+            select(func.count(BCWRefundRequest.id))
+        )
+        total = total_result.scalar() or 0
 
-    # Pending review
-    pending_review_result = await db.execute(
-        select(func.count(BCWRefundRequest.id))
-        .where(BCWRefundRequest.state.in_([
-            BCWRefundState.REQUESTED,
-            BCWRefundState.UNDER_REVIEW,
-        ]))
-    )
-    pending_review = pending_review_result.scalar() or 0
+        # Pending review
+        pending_review_result = await db.execute(
+            select(func.count(BCWRefundRequest.id))
+            .where(BCWRefundRequest.state.in_([
+                BCWRefundState.REQUESTED,
+                BCWRefundState.UNDER_REVIEW,
+            ]))
+        )
+        pending_review = pending_review_result.scalar() or 0
 
-    # Pending vendor credit
-    pending_vendor_result = await db.execute(
-        select(func.count(BCWRefundRequest.id))
-        .where(BCWRefundRequest.state.in_([
-            BCWRefundState.VENDOR_RETURN_INITIATED,
-            BCWRefundState.VENDOR_RETURN_IN_TRANSIT,
-            BCWRefundState.VENDOR_RETURN_RECEIVED,
-            BCWRefundState.VENDOR_CREDIT_PENDING,
-        ]))
-    )
-    pending_vendor = pending_vendor_result.scalar() or 0
+        # Pending vendor credit
+        pending_vendor_result = await db.execute(
+            select(func.count(BCWRefundRequest.id))
+            .where(BCWRefundRequest.state.in_([
+                BCWRefundState.VENDOR_RETURN_INITIATED,
+                BCWRefundState.VENDOR_RETURN_IN_TRANSIT,
+                BCWRefundState.VENDOR_RETURN_RECEIVED,
+                BCWRefundState.VENDOR_CREDIT_PENDING,
+            ]))
+        )
+        pending_vendor = pending_vendor_result.scalar() or 0
 
-    # Ready for refund
-    ready_result = await db.execute(
-        select(func.count(BCWRefundRequest.id))
-        .where(BCWRefundRequest.state == BCWRefundState.VENDOR_CREDIT_RECEIVED)
-    )
-    ready_for_refund = ready_result.scalar() or 0
+        # Ready for refund
+        ready_result = await db.execute(
+            select(func.count(BCWRefundRequest.id))
+            .where(BCWRefundRequest.state == BCWRefundState.VENDOR_CREDIT_RECEIVED)
+        )
+        ready_for_refund = ready_result.scalar() or 0
 
-    # Completed
-    completed_result = await db.execute(
-        select(func.count(BCWRefundRequest.id))
-        .where(BCWRefundRequest.state == BCWRefundState.COMPLETED)
-    )
-    completed = completed_result.scalar() or 0
+        # Completed
+        completed_result = await db.execute(
+            select(func.count(BCWRefundRequest.id))
+            .where(BCWRefundRequest.state == BCWRefundState.COMPLETED)
+        )
+        completed = completed_result.scalar() or 0
 
-    # Denied
-    denied_result = await db.execute(
-        select(func.count(BCWRefundRequest.id))
-        .where(BCWRefundRequest.state == BCWRefundState.DENIED)
-    )
-    denied = denied_result.scalar() or 0
+        # Denied
+        denied_result = await db.execute(
+            select(func.count(BCWRefundRequest.id))
+            .where(BCWRefundRequest.state == BCWRefundState.DENIED)
+        )
+        denied = denied_result.scalar() or 0
 
-    # Total refunded amount
-    refunded_result = await db.execute(
-        select(func.sum(BCWRefundRequest.refund_amount))
-        .where(BCWRefundRequest.state == BCWRefundState.COMPLETED)
-    )
-    total_refunded = refunded_result.scalar() or 0
+        # Total refunded amount
+        refunded_result = await db.execute(
+            select(func.sum(BCWRefundRequest.refund_amount))
+            .where(BCWRefundRequest.state == BCWRefundState.COMPLETED)
+        )
+        total_refunded = refunded_result.scalar() or 0
 
-    return RefundStatsResponse(
-        total_requests=total,
-        pending_review=pending_review,
-        pending_vendor_credit=pending_vendor,
-        ready_for_refund=ready_for_refund,
-        completed=completed,
-        denied=denied,
-        total_refunded_amount=float(total_refunded),
-    )
+        return RefundStatsResponse(
+            total_requests=total,
+            pending_review=pending_review,
+            pending_vendor_credit=pending_vendor,
+            ready_for_refund=ready_for_refund,
+            completed=completed,
+            denied=denied,
+            total_refunded_amount=float(total_refunded),
+        )
+    except Exception as e:
+        # Table may not exist yet - return zeros
+        logger.warning(f"Refund stats query failed (table may not exist): {e}")
+        return RefundStatsResponse(
+            total_requests=0,
+            pending_review=0,
+            pending_vendor_credit=0,
+            ready_for_refund=0,
+            completed=0,
+            denied=0,
+            total_refunded_amount=0.0,
+        )
 
 
 @router.get("/{refund_id}", response_model=AdminRefundResponse)
