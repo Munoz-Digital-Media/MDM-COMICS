@@ -53,8 +53,8 @@ export default function RefundsTab({ announce }) {
       });
 
       const [refundsRes, statsRes] = await Promise.all([
-        fetch(`${API_BASE}/admin/refunds/?${params}`, { credentials: 'include' }),
-        fetch(`${API_BASE}/admin/refunds/stats`, { credentials: 'include' }),
+        authFetch(`${API_BASE}/admin/refunds/?${params}`),
+        authFetch(`${API_BASE}/admin/refunds/stats`),
       ]);
 
       if (!refundsRes.ok) throw new Error('Failed to fetch refunds');
@@ -62,10 +62,10 @@ export default function RefundsTab({ announce }) {
       const refundsData = await refundsRes.json();
       const statsData = statsRes.ok ? await statsRes.json() : null;
 
-      setRefunds(refundsData.items || []);
+      setRefunds(refundsData.refunds || []);
       setTotal(refundsData.total || 0);
       setStats(statsData);
-      announce?.(`Loaded ${refundsData.items?.length || 0} refunds`);
+      announce?.(`Loaded ${refundsData.refunds?.length || 0} refunds`);
     } catch (err) {
       setError(err.message);
       announce?.('Error loading refunds');
