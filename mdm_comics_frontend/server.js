@@ -40,7 +40,8 @@ app.use('/api', createProxyMiddleware({
 app.use(express.static(join(__dirname, 'dist')));
 
 // SPA fallback - serve index.html for all non-file routes
-app.get('*', (req, res) => {
+// Using app.use instead of app.get('*') for path-to-regexp v8 compatibility
+app.use((req, res) => {
   res.sendFile(join(__dirname, 'dist', 'index.html'));
 });
 
