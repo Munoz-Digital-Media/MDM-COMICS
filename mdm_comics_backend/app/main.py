@@ -25,6 +25,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select, func, text
@@ -647,3 +648,8 @@ async def restore_guide():
         content=get_restore_instructions(),
         media_type="text/plain; charset=utf-8"
     )
+
+# HTTPS proxy fix: Trust Railway proxy headers for correct URL generation
+# This fixes 307 redirects using HTTP instead of HTTPS
+app = ProxyHeadersMiddleware(app, trusted_hosts=["*"])
+
