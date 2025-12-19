@@ -6,7 +6,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Filter, Plus, Minus, Trash2, RotateCcw,
   ChevronLeft, ChevronRight, Loader2, X,
-  Package, History, Eye, Pencil
+  Package, History, Eye, Pencil, ArrowUp, ArrowDown, ArrowUpDown
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 import ProductPreviewModal from './ProductPreviewModal';
@@ -229,6 +229,8 @@ export default function ProductList() {
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
+  const [sortBy, setSortBy] = useState('updated_at');
+  const [sortDir, setSortDir] = useState('desc');
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [showStockModal, setShowStockModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -242,11 +244,13 @@ export default function ProductList() {
     setError(null);
 
     try {
+      const sortParam = sortDir === 'desc' ? `-${sortBy}` : sortBy;
       const data = await adminAPI.getAdminProducts({
         search,
         category,
         lowStock: lowStockOnly,
         includeDeleted,
+        sort: sortParam,
         limit,
         offset,
       });
@@ -257,7 +261,7 @@ export default function ProductList() {
     } finally {
       setLoading(false);
     }
-  }, [search, category, lowStockOnly, includeDeleted, offset]);
+  }, [search, category, lowStockOnly, includeDeleted, sortBy, sortDir, offset]);
 
   useEffect(() => {
     fetchProducts();
@@ -311,6 +315,35 @@ export default function ProductList() {
   const handleEdit = (product) => {
     setSelectedProduct(product);
     setShowEditModal(true);
+  };
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortDir('asc');
+    }
+    setOffset(0);
+  };
+
+  const SortHeader = ({ field, children }) => {
+    const isActive = sortBy === field;
+    return (
+      <th
+        onClick={() => handleSort(field)}
+        className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase cursor-pointer hover:text-zinc-300 select-none"
+      >
+        <div className="flex items-center gap-1">
+          {children}
+          {isActive ? (
+            sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+          ) : (
+            <ArrowUpDown className="w-3 h-3 opacity-30" />
+          )}
+        </div>
+      </th>
+    );
   };
 
   const totalPages = Math.ceil(total / limit);
@@ -386,11 +419,11 @@ export default function ProductList() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-zinc-800 text-left">
-                  <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">Product</th>
+                  <SortHeader field="name">Product</SortHeader>
                   <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">Category</th>
                   <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">SKU</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">Price</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">Stock</th>
+                  <SortHeader field="price">Price</SortHeader>
+                  <SortHeader field="stock">Stock</SortHeader>
                   <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">Bin</th>
                   <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">Actions</th>
                 </tr>
