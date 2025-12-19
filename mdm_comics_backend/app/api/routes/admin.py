@@ -660,6 +660,251 @@ async def get_stock_history(
     }
 
 
+
+
+# ----- Product Image Management -----
+
+class BulkClearImagesRequest(BaseModel):
+    product_ids: List[int] = Field(..., min_length=1)
+
+
+@router.post("/products/{product_id}/image")
+async def upload_product_image(
+    product_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload and set the primary image for a product.
+    Uploads to S3 and updates product.image_url.
+    """
+    from app.services.storage import StorageService
+
+    result = await db.execute(
+        select(Product).where(Product.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot update deleted product")
+
+    allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: JPEG, PNG, GIF, WebP")
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Max 10MB.")
+    await file.seek(0)
+
+    storage = StorageService()
+    if not storage.is_configured():
+        raise HTTPException(status_code=503, detail="S3 storage not configured")
+
+    try:
+        upload_result = await storage.upload_product_image(
+            file=file,
+            product_type="product",
+            product_id=str(product_id)
+        )
+    except Exception as e:
+        logger.error(f"Failed to upload product image: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload image")
+
+    product.image_url = upload_result.url
+    product.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"Product {product_id} image updated by user {current_user.id}")
+
+    return {"status": "uploaded", "product_id": product_id, "image_url": upload_result.url}
+
+
+@router.delete("/products/{product_id}/image")
+async def remove_product_image(
+    product_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove the primary image from a product (disassociate). Does NOT delete from S3."""
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot update deleted product")
+
+    previous_url = product.image_url
+    product.image_url = None
+    product.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"Product {product_id} image removed by user {current_user.id}")
+    return {"status": "removed", "product_id": product_id, "previous_url": previous_url}
+
+
+@router.post("/products/{product_id}/gallery")
+async def add_gallery_image(
+    product_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Add an image to the product gallery (images array)."""
+    from app.services.storage import StorageService
+
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot update deleted product")
+
+    allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid file type")
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Max 10MB.")
+    await file.seek(0)
+
+    storage = StorageService()
+    if not storage.is_configured():
+        raise HTTPException(status_code=503, detail="S3 storage not configured")
+
+    try:
+        upload_result = await storage.upload_product_image(file=file, product_type="product", product_id=str(product_id))
+    except Exception as e:
+        logger.error(f"Failed to upload gallery image: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload image")
+
+    images = product.images or []
+    images.append(upload_result.url)
+    product.images = images
+    product.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"Product {product_id} gallery image added by user {current_user.id}")
+    return {"status": "added", "product_id": product_id, "image_url": upload_result.url, "gallery_count": len(images)}
+
+
+@router.delete("/products/{product_id}/gallery/{index}")
+async def remove_gallery_image(
+    product_id: int,
+    index: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove an image from the product gallery by index. Does NOT delete from S3."""
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot update deleted product")
+
+    images = product.images or []
+    if index < 0 or index >= len(images):
+        raise HTTPException(status_code=400, detail=f"Invalid index. Gallery has {len(images)} images.")
+
+    removed_url = images.pop(index)
+    product.images = images
+    product.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"Product {product_id} gallery image {index} removed by user {current_user.id}")
+    return {"status": "removed", "product_id": product_id, "removed_url": removed_url, "gallery_count": len(images)}
+
+
+class ReorderGalleryRequest(BaseModel):
+    order: List[int] = Field(..., description="New order of image indices")
+
+
+@router.put("/products/{product_id}/gallery/reorder")
+async def reorder_gallery_images(
+    product_id: int,
+    request: ReorderGalleryRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Reorder gallery images. order is a list of current indices in the new desired order."""
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot update deleted product")
+
+    images = product.images or []
+    if not images:
+        raise HTTPException(status_code=400, detail="No gallery images to reorder")
+
+    # Validate order indices
+    if len(request.order) != len(images):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order must contain exactly {len(images)} indices"
+        )
+    if set(request.order) != set(range(len(images))):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order must contain each index from 0 to {len(images) - 1} exactly once"
+        )
+
+    # Reorder images
+    new_images = [images[i] for i in request.order]
+    product.images = new_images
+    product.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"Product {product_id} gallery reordered by user {current_user.id}")
+    return {"status": "reordered", "product_id": product_id, "gallery_count": len(new_images)}
+
+
+@router.post("/products/bulk/clear-images")
+async def bulk_clear_images(
+    request: BulkClearImagesRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Clear image_url from multiple products at once. Does NOT delete files from S3."""
+    updated = 0
+    failed = []
+
+    for product_id in request.product_ids:
+        try:
+            result = await db.execute(select(Product).where(Product.id == product_id))
+            product = result.scalar_one_or_none()
+
+            if not product:
+                failed.append({"id": product_id, "reason": "not found"})
+                continue
+            if product.deleted_at:
+                failed.append({"id": product_id, "reason": "deleted"})
+                continue
+
+            if product.image_url:
+                product.image_url = None
+                product.updated_at = datetime.now(timezone.utc)
+                updated += 1
+        except Exception as e:
+            logger.error(f"Failed to clear image for product {product_id}: {e}")
+            failed.append({"id": product_id, "reason": str(e)})
+
+    await db.commit()
+    logger.info(f"Bulk clear images: {updated} updated, {len(failed)} failed by user {current_user.id}")
+    return {"status": "completed", "updated": updated, "failed": failed}
+
+
 # ----- Reports -----
 
 @router.get("/reports/inventory-summary")

@@ -199,6 +199,97 @@ export const adminAPI = {
     });
   },
 
+  // --- Product Image Management ---
+  uploadProductImage: async (productId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = API_BASE + '/admin/products/' + productId + '/image';
+    const headers = {};
+
+    const storedToken = getStoredToken();
+    if (storedToken) {
+      headers['Authorization'] = 'Bearer ' + storedToken;
+    }
+
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Image upload failed');
+    }
+
+    return response.json();
+  },
+
+  removeProductImage: async (productId) => {
+    return fetchAPI('/admin/products/' + productId + '/image', {
+      method: 'DELETE',
+    });
+  },
+
+  uploadGalleryImage: async (productId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = API_BASE + '/admin/products/' + productId + '/gallery';
+    const headers = {};
+
+    const storedToken = getStoredToken();
+    if (storedToken) {
+      headers['Authorization'] = 'Bearer ' + storedToken;
+    }
+
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Gallery upload failed');
+    }
+
+    return response.json();
+  },
+
+  removeGalleryImage: async (productId, index) => {
+    return fetchAPI('/admin/products/' + productId + '/gallery/' + index, {
+      method: 'DELETE',
+    });
+  },
+
+  reorderGalleryImages: async (productId, order) => {
+    return fetchAPI('/admin/products/' + productId + '/gallery/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ order }),
+    });
+  },
+
+  bulkClearImages: async (productIds) => {
+    return fetchAPI('/admin/products/bulk/clear-images', {
+      method: 'POST',
+      body: JSON.stringify({ product_ids: productIds }),
+    });
+  },
+
   // --- Barcode Queue ---
   submitBarcodes: async (barcodes) => {
     return fetchAPI('/admin/barcode-queue/', {

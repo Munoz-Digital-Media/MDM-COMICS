@@ -6,7 +6,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Filter, Plus, Minus, Trash2, RotateCcw,
   ChevronLeft, ChevronRight, Loader2, X,
-  Package, History, Eye, Pencil, ArrowUp, ArrowDown, ArrowUpDown
+  Package, History, Eye, Pencil, ArrowUp, ArrowDown, ArrowUpDown, ImageOff
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 import ProductPreviewModal from './ProductPreviewModal';
@@ -236,6 +236,8 @@ export default function ProductList() {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   const limit = 25;
 
@@ -317,6 +319,40 @@ export default function ProductList() {
     setShowEditModal(true);
   };
 
+  // Bulk selection handlers
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === products.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(products.map(p => p.id)));
+    }
+  };
+
+  const handleBulkClearImages = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Clear images from ${selectedIds.size} selected products?`)) return;
+
+    setBulkLoading(true);
+    try {
+      await adminAPI.bulkClearImages(Array.from(selectedIds));
+      setSelectedIds(new Set());
+      fetchProducts();
+    } catch (err) {
+      setError('Bulk clear failed: ' + err.message);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   const handleSort = (field) => {
     if (sortBy === field) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -396,6 +432,27 @@ export default function ProductList() {
         </label>
       </div>
 
+      {/* Bulk Actions Toolbar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+          <span className="text-sm text-orange-400">{selectedIds.size} selected</span>
+          <button
+            onClick={handleBulkClearImages}
+            disabled={bulkLoading}
+            className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 disabled:opacity-50 text-sm"
+          >
+            {bulkLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageOff className="w-4 h-4" />}
+            Clear Images
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="px-3 py-1.5 bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600 text-sm"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* Error state */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
@@ -419,6 +476,14 @@ export default function ProductList() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-zinc-800 text-left">
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={products.length > 0 && selectedIds.size === products.length}
+                      onChange={toggleSelectAll}
+                      className="rounded border-zinc-600"
+                    />
+                  </th>
                   <SortHeader field="name">Product</SortHeader>
                   <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">Category</th>
                   <th className="px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">SKU</th>
@@ -434,6 +499,14 @@ export default function ProductList() {
                     key={product.id}
                     className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 ${product.deleted_at ? 'opacity-50' : ''}`}
                   >
+                    <td className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(product.id)}
+                        onChange={() => toggleSelect(product.id)}
+                        className="rounded border-zinc-600"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <img

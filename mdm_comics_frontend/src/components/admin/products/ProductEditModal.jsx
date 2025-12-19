@@ -1,9 +1,9 @@
 /**
  * ProductEditModal - Full product editor for all fields
- * Admin Console v1.4.0
+ * Admin Console v1.5.0 - Added image upload/remove/gallery management
  */
-import React, { useState, useEffect } from 'react';
-import { X, Save, Loader2, Image as ImageIcon, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Save, Loader2, Image as ImageIcon, AlertTriangle, Upload, Trash2, GripVertical, Plus } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 
 const FEATURED_LIMIT = 5; // Max featured products per category section on homepage
@@ -86,6 +86,7 @@ export default function ProductEditModal({ product, onClose, onSave }) {
     original_price: '',
     stock: 0,
     image_url: '',
+    images: [],
     tags: [],
     featured: false,
     upc: '',
@@ -110,6 +111,15 @@ export default function ProductEditModal({ product, onClose, onSave }) {
   const [featuredCount, setFeaturedCount] = useState(0);
   const [featuredLimitReached, setFeaturedLimitReached] = useState(false);
 
+  // Image management state
+  const [uploadingPrimary, setUploadingPrimary] = useState(false);
+  const [uploadingGallery, setUploadingGallery] = useState(false);
+  const [draggedIndex, setDraggedIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+
+  const primaryFileRef = useRef(null);
+  const galleryFileRef = useRef(null);
+
   // Initialize form with product data
   useEffect(() => {
     if (product) {
@@ -122,6 +132,7 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         original_price: product.original_price?.toString() || '',
         stock: product.stock || 0,
         image_url: product.image_url || '',
+        images: product.images || [],
         tags: product.tags || [],
         featured: product.featured || false,
         upc: product.upc || '',
@@ -166,6 +177,93 @@ export default function ProductEditModal({ product, onClose, onSave }) {
     }
     setForm({ ...form, featured: checked });
   };
+  // Primary image upload
+  const handlePrimaryUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPrimary(true);
+    setError(null);
+    try {
+      const result = await adminAPI.uploadProductImage(product.id, file);
+      setForm({ ...form, image_url: result.image_url });
+    } catch (err) {
+      setError('Failed to upload image: ' + err.message);
+    } finally {
+      setUploadingPrimary(false);
+      if (primaryFileRef.current) primaryFileRef.current.value = '';
+    }
+  };
+
+  // Remove primary image
+  const handleRemovePrimary = async () => {
+    if (!window.confirm('Remove primary image from this product?')) return;
+    setUploadingPrimary(true);
+    setError(null);
+    try {
+      await adminAPI.removeProductImage(product.id);
+      setForm({ ...form, image_url: '' });
+    } catch (err) {
+      setError('Failed to remove image: ' + err.message);
+    } finally {
+      setUploadingPrimary(false);
+    }
+  };
+
+  // Gallery image upload
+  const handleGalleryUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingGallery(true);
+    setError(null);
+    try {
+      const result = await adminAPI.uploadGalleryImage(product.id, file);
+      setForm({ ...form, images: [...form.images, result.image_url] });
+    } catch (err) {
+      setError('Failed to upload gallery image: ' + err.message);
+    } finally {
+      setUploadingGallery(false);
+      if (galleryFileRef.current) galleryFileRef.current.value = '';
+    }
+  };
+
+  // Remove gallery image
+  const handleRemoveGallery = async (index) => {
+    if (!window.confirm('Remove this image from the gallery?')) return;
+    setError(null);
+    try {
+      await adminAPI.removeGalleryImage(product.id, index);
+      const newImages = [...form.images];
+      newImages.splice(index, 1);
+      setForm({ ...form, images: newImages });
+    } catch (err) {
+      setError('Failed to remove gallery image: ' + err.message);
+    }
+  };
+
+  // Drag and drop for gallery reordering
+  const handleDragStart = (index) => setDraggedIndex(index);
+  const handleDragOver = (e, index) => { e.preventDefault(); setDragOverIndex(index); };
+  const handleDragEnd = async () => {
+    if (draggedIndex === null || dragOverIndex === null || draggedIndex === dragOverIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+    const newOrder = form.images.map((_, i) => i);
+    const [removed] = newOrder.splice(draggedIndex, 1);
+    newOrder.splice(dragOverIndex, 0, removed);
+    const newImages = newOrder.map(i => form.images[i]);
+    setForm({ ...form, images: newImages });
+    try {
+      await adminAPI.reorderGalleryImages(product.id, newOrder);
+    } catch (err) {
+      setError('Failed to reorder gallery: ' + err.message);
+      setForm({ ...form, images: product.images || [] });
+    }
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -476,18 +574,6 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                 </div>
               )}
 
-              {/* Image URL */}
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">Image URL</label>
-                <input
-                  type="url"
-                  value={form.image_url}
-                  onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-600 focus:border-orange-500 focus:outline-none"
-                />
-              </div>
-
               {/* Featured */}
               <div className="space-y-2">
                 <label className={`flex items-center gap-2 ${featuredLimitReached && !product?.featured ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
@@ -509,74 +595,78 @@ export default function ProductEditModal({ product, onClose, onSave }) {
               </div>
             </div>
 
-            {/* Right Column - Preview */}
-            <div className="bg-zinc-800 rounded-xl p-4">
-              <h4 className="font-medium text-zinc-400 mb-3">Preview</h4>
-              <div className="bg-zinc-900 rounded-lg overflow-hidden">
-                <div className="h-48 bg-zinc-700 flex items-center justify-center">
-                  {form.image_url ? (
-                    <img
-                      src={form.image_url}
-                      alt="Preview"
-                      className="w-full h-full object-contain"
-                      onError={(e) => { e.target.style.display = 'none'; }}
-                    />
-                  ) : (
-                    <ImageIcon className="w-16 h-16 text-zinc-600" />
-                  )}
-                </div>
-                <div className="p-4">
-                  <p className="text-xs text-orange-500 mb-1">{form.subcategory || form.publisher || form.category}</p>
-                  <h4 className="font-bold text-white mb-2">{form.name || 'Product Name'}</h4>
-                  <p className="text-sm text-zinc-500 mb-3 line-clamp-2">{form.description || 'Description...'}</p>
-                  <div className="flex items-center justify-between">
+            {/* Right Column - Images & Preview */}
+            <div className="space-y-4">
+              {/* Primary Image Section */}
+              <div className="bg-zinc-800 rounded-xl p-4">
+                <h4 className="font-medium text-zinc-300 mb-3 flex items-center gap-2">
+                  <ImageIcon className="w-4 h-4" />
+                  Primary Image
+                </h4>
+                <div className="flex gap-4">
+                  <div className="w-32 h-40 bg-zinc-900 rounded-lg overflow-hidden flex-shrink-0">
+                    {form.image_url ? (
+                      <img src={form.image_url} alt="Primary" className="w-full h-full object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center"><ImageIcon className="w-8 h-8 text-zinc-700" /></div>
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-3">
                     <div>
-                      <span className="text-xl font-bold text-white">${form.price || '0.00'}</span>
-                      {form.original_price && (
-                        <span className="ml-2 text-sm text-zinc-500 line-through">${form.original_price}</span>
+                      <label className="block text-xs text-zinc-500 mb-1">Image URL</label>
+                      <input type="url" value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://..." className="w-full px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-white text-sm placeholder-zinc-600 focus:border-orange-500 focus:outline-none" />
+                    </div>
+                    <div className="flex gap-2">
+                      <input ref={primaryFileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={handlePrimaryUpload} className="hidden" />
+                      <button type="button" onClick={() => primaryFileRef.current?.click()} disabled={uploadingPrimary} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600 disabled:opacity-50 text-sm">
+                        {uploadingPrimary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload
+                      </button>
+                      {form.image_url && (
+                        <button type="button" onClick={handleRemovePrimary} disabled={uploadingPrimary} className="flex items-center justify-center gap-2 px-3 py-2 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 disabled:opacity-50 text-sm">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
-                    <span className="text-sm text-zinc-400">Stock: {form.stock}</span>
                   </div>
                 </div>
               </div>
 
+              {/* Gallery Section */}
+              <div className="bg-zinc-800 rounded-xl p-4">
+                <h4 className="font-medium text-zinc-300 mb-3 flex items-center gap-2">
+                  <ImageIcon className="w-4 h-4" />Gallery Images <span className="text-xs text-zinc-500">({form.images.length})</span>
+                </h4>
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  {form.images.map((url, index) => (
+                    <div key={index} draggable onDragStart={() => handleDragStart(index)} onDragOver={(e) => handleDragOver(e, index)} onDragEnd={handleDragEnd}
+                      className={`relative group aspect-square bg-zinc-900 rounded overflow-hidden cursor-grab ${draggedIndex === index ? 'opacity-50' : ''} ${dragOverIndex === index ? 'ring-2 ring-orange-500' : ''}`}>
+                      <img src={url} alt={`Gallery ${index + 1}`} className="w-full h-full object-cover" onError={(e) => { e.target.src = ''; }} />
+                      <div className="absolute top-1 left-1 p-1 bg-black/50 rounded opacity-0 group-hover:opacity-100 transition-opacity"><GripVertical className="w-3 h-3 text-white" /></div>
+                      <button type="button" onClick={() => handleRemoveGallery(index)} className="absolute top-1 right-1 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"><X className="w-3 h-3 text-white" /></button>
+                    </div>
+                  ))}
+                  <input ref={galleryFileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={handleGalleryUpload} className="hidden" />
+                  <button type="button" onClick={() => galleryFileRef.current?.click()} disabled={uploadingGallery} className="aspect-square bg-zinc-900 rounded border-2 border-dashed border-zinc-700 flex items-center justify-center hover:border-orange-500 hover:bg-zinc-800 transition-colors disabled:opacity-50">
+                    {uploadingGallery ? <Loader2 className="w-5 h-5 text-zinc-500 animate-spin" /> : <Plus className="w-5 h-5 text-zinc-500" />}
+                  </button>
+                </div>
+                <p className="text-xs text-zinc-500">Drag to reorder. Click + to add. Max 10MB per image.</p>
+              </div>
+
               {/* Tags */}
-              <div className="mt-4">
-                <label className="block text-sm text-zinc-400 mb-2">Tags</label>
+              <div className="bg-zinc-800 rounded-xl p-4">
+                <label className="block text-sm text-zinc-300 mb-2">Tags</label>
                 <div className="flex gap-2 mb-2 flex-wrap">
                   {form.tags.map(tag => (
-                    <span
-                      key={tag}
-                      className="px-2 py-1 bg-orange-500/20 text-orange-400 text-xs rounded-full flex items-center gap-1"
-                    >
+                    <span key={tag} className="px-2 py-1 bg-orange-500/20 text-orange-400 text-xs rounded-full flex items-center gap-1">
                       {tag}
-                      <button
-                        type="button"
-                        onClick={() => removeTag(tag)}
-                        className="hover:text-white"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
+                      <button type="button" onClick={() => removeTag(tag)} className="hover:text-white"><X className="w-3 h-3" /></button>
                     </span>
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addTag())}
-                    placeholder="Add tag..."
-                    className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white placeholder-zinc-600 focus:border-orange-500 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={addTag}
-                    className="px-3 py-2 bg-zinc-700 text-zinc-300 rounded-lg hover:bg-zinc-600"
-                  >
-                    Add
-                  </button>
+                  <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addTag())} placeholder="Add tag..." className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white placeholder-zinc-600 text-sm focus:border-orange-500 focus:outline-none" />
+                  <button type="button" onClick={addTag} className="px-3 py-2 bg-zinc-700 text-zinc-300 rounded-lg hover:bg-zinc-600 text-sm">Add</button>
                 </div>
               </div>
             </div>
