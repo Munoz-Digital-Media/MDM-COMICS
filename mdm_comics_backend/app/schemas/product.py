@@ -3,7 +3,7 @@ Product schemas
 """
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class ProductBase(BaseModel):
@@ -59,26 +59,47 @@ class ProductUpdate(BaseModel):
 class ProductResponse(ProductBase):
     id: int
     sku: str
-    stock: int
-    image_url: Optional[str]
-    images: List[str]
-    tags: List[str]
-    featured: bool
-    rating: float
-    review_count: int
-    
+    stock: int = 0
+    image_url: Optional[str] = None
+    images: List[str] = []
+    tags: List[str] = []
+    featured: bool = False
+    rating: float = 0.0
+    review_count: int = 0
+
     # Comic-specific
-    issue_number: Optional[str]
-    publisher: Optional[str]
-    year: Optional[int]
-    
+    issue_number: Optional[str] = None
+    publisher: Optional[str] = None
+    year: Optional[int] = None
+
     # Grading
-    cgc_grade: Optional[float]
-    estimated_grade: Optional[float]
-    grade_confidence: Optional[float]
-    is_graded: bool
-    
-    created_at: datetime
+    cgc_grade: Optional[float] = None
+    estimated_grade: Optional[float] = None
+    grade_confidence: Optional[float] = None
+    is_graded: bool = False
+
+    created_at: Optional[datetime] = None
+
+    # Handle NULL values from database
+    @field_validator('stock', 'review_count', mode='before')
+    @classmethod
+    def default_int(cls, v):
+        return v if v is not None else 0
+
+    @field_validator('rating', mode='before')
+    @classmethod
+    def default_float(cls, v):
+        return v if v is not None else 0.0
+
+    @field_validator('images', 'tags', mode='before')
+    @classmethod
+    def default_list(cls, v):
+        return v if v is not None else []
+
+    @field_validator('featured', 'is_graded', mode='before')
+    @classmethod
+    def default_bool(cls, v):
+        return v if v is not None else False
 
     class Config:
         from_attributes = True
