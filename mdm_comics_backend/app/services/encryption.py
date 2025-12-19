@@ -213,16 +213,14 @@ def sanitize_for_logging(text: str, max_length: int = 500) -> str:
 
     # Patterns to redact
     patterns = [
-        # Phone numbers
-        (r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b', '[PHONE]'),
-        (r'\b\(\d{3}\)\s*\d{3}[-.\s]?\d{4}\b', '[PHONE]'),
-        (r'\b1[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b', '[PHONE]'),
-        (r'\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}\b', '[PHONE]'),
+        # Phone numbers (US + international), allowing parentheses without word-boundary issues
+        (r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', '[PHONE]'),
+        (r'\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}', '[PHONE]'),
         # Emails
         (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL]'),
-        # Postal codes (various formats)
-        (r'\b\d{5}-\d{4}\b', '[ZIP]'),
-        (r'\b\d{5}\b', '[ZIP]'),
+        # Postal codes (US/Intl) but avoid order numbers prefixed with '#'
+        (r'(?<!#)\b\d{5}-\d{4}\b', '[ZIP]'),
+        (r'(?<!#)\b\d{5}\b', '[ZIP]'),
         (r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b', '[POSTAL]'),  # UK
         (r'\b[A-Z]\d[A-Z]\s*\d[A-Z]\d\b', '[POSTAL]'),  # Canada
     ]

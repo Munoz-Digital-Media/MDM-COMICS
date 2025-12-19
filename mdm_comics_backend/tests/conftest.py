@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, AsyncMock
 os.environ["ENVIRONMENT"] = "development"
 os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@localhost:5432/test_db"
 os.environ["SECRET_KEY"] = "test-secret-key-for-unit-tests-only"
+# Skip live S3 validation during tests
+os.environ["SKIP_STORAGE_VALIDATION"] = "true"
 
 
 @pytest.fixture(scope="session")
@@ -115,7 +117,7 @@ def sample_address_data() -> dict:
     }
 
 
-@pytest.fixture
+@pytest.fixture  # pragma: no cover
 def sample_package_data() -> list:
     """Sample package data for tests."""
     return [

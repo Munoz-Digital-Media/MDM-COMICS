@@ -4,7 +4,7 @@ Shipping Schemas for Multi-Carrier Shipping Integration v1.29.0
 Pydantic models for shipping API requests and responses.
 Supports UPS, USPS, and future carriers.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 import re
@@ -66,19 +66,19 @@ class AddressCreate(BaseModel):
 class AddressResponse(BaseModel):
     """Address response (PII masked)."""
     id: int
-    address_type: str
-    recipient_name_masked: str = Field(..., description="First initial + ***")
+    address_type: str = "shipping"
+    recipient_name_masked: str = Field("", description="First initial + ***")
     company_name: Optional[str] = None
-    address_line1_masked: str = Field(..., description="Street number + ***")
-    city: str
-    state_province: str
-    postal_code: str
-    country_code: str
-    residential: bool
-    validation_status: str
+    address_line1_masked: str = Field("", description="Street number + ***")
+    city: str = ""
+    state_province: str = ""
+    postal_code: str = ""
+    country_code: str = ""
+    residential: bool = False
+    validation_status: str = "PENDING"
     validated_at: Optional[datetime] = None
     is_default: bool = False
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Config:
         from_attributes = True
@@ -214,12 +214,12 @@ class ShipmentResponse(BaseModel):
     order_id: int
     tracking_number: Optional[str] = None
     tracking_url: Optional[str] = None
-    service_code: str
-    service_name: str
-    status: str
+    service_code: str = ""
+    service_name: str = ""
+    status: str = ""
     status_detail: Optional[str] = None
-    weight: float
-    package_count: int
+    weight: float = 0.0
+    package_count: int = 0
     shipping_cost: Optional[float] = None
     carrier_cost: Optional[float] = None
     label_format: Optional[str] = None
@@ -250,12 +250,12 @@ class LabelResponse(BaseModel):
     tracking_number: str
     label_format: str
     label_data: str  # Base64 encoded
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class TrackingResponse(BaseModel):
     """Complete tracking information."""
-    shipment_id: int
+    shipment_id: Optional[int] = None
     tracking_number: str
     status: str
     status_detail: Optional[str] = None
@@ -277,3 +277,33 @@ class VoidShipmentResponse(BaseModel):
     success: bool
     shipment_id: int
     message: str
+
+
+# Aliases/compatibility models for tests
+class TrackingEvent(TrackingEventResponse):
+    """Alias to maintain compatibility with legacy schemas."""
+    location: Optional[str] = None
+
+    @property
+    def location(self) -> str:  # type: ignore[override]
+        """Legacy location string combining provided location or city/state."""
+        if getattr(self, "_location", None):
+            return self._location  # type: ignore[attr-defined]
+        parts = [p for p in [self.city, self.state_province] if p]
+        return ", ".join(parts)
+
+    @location.setter  # type: ignore[override]
+    def location(self, value: Optional[str]) -> None:
+        self._location = value  # type: ignore[attr-defined]
+
+
+class PackageDetail(PackageInfo):
+    """Alias to maintain compatibility with legacy schemas."""
+    pass
+
+
+class CarrierResponse(CarrierInfo):
+    """Alias to maintain compatibility with legacy schemas."""
+    is_enabled: bool = True
+    is_active: bool = True
+    model_config = {"extra": "allow"}

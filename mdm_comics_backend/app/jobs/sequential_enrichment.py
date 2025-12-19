@@ -1,5 +1,11 @@
 """
-Sequential Exhaustive Enrichment Job v2.2.0
+Sequential Exhaustive Enrichment Job v2.2.1
+
+v2.2.1 Changes (PHASE 1.5 + FUZZY MATCH FIX):
+- NEW: Phase 1.5 Conditional Execution - Metron only queried if description missing
+- FIX: Lowered fuzzy match threshold from 5 to 3 (was rejecting valid matches)
+- Metron moved from PHASE1_SOURCES to PHASE1_5_SOURCES
+- This prevents 429 rate limit storms from Metron
 
 v2.2.0 Changes (MOKKARI INTEGRATION):
 - REFACTOR: Metron queries now use official Mokkari library
@@ -70,13 +76,14 @@ v1.16.0 Changes (Assessment SEJ-ASSESS-001 Solutions):
 
 All Fandom sources are publisher-filtered - won't query wrong wikis for content.
 
-v2.0 Algorithm (Parallel Optimized):
+v2.2.1 Algorithm (Phase 1.5 Conditional):
 1. Fetch batch of 100 comics
 2. Process 5 comics CONCURRENTLY (semaphore-limited)
 3. For each comic:
-   a. Phase 1: Query Metron, ComicVine, relevant Fandom, MyComicShop, CBR in PARALLEL
+   a. Phase 1: Query ComicVine, relevant Fandom, MyComicShop, CBR in PARALLEL
    b. Merge results, update comic dict
-   c. Phase 2: Query PriceCharting (benefits from UPC found in Phase 1)
+   c. Phase 1.5: IF description still missing, query Metron (conditional)
+   d. Phase 2: Query PriceCharting (benefits from UPC found in Phase 1)
 4. Batch write updates every 50 comics
 5. Checkpoint every 50 comics
 
@@ -948,6 +955,16 @@ async def query_metron(
         else:
             # Search by series + issue
             if comic.get("series_name") and comic.get("number"):
+                # v2.2.1: Check series cache first (REC-009)
+                series_cache = get_series_cache()
+                cached_metron_series = series_cache.get(
+                    comic.get("series_name"),
+                    "metron",
+                    comic.get("publisher_name")
+                )
+                if cached_metron_series:
+                    logger.debug(f"[metron] Cache HIT: {comic.get('series_name')} series_id={cached_metron_series}")
+
                 search_result = await adapter.search_issues(
                     series_name=comic["series_name"],
                     number=str(comic["number"]),
@@ -963,6 +980,17 @@ async def query_metron(
                         # Store metron_id for future lookups
                         if best.get("id"):
                             updates["metron_id"] = best["id"]
+                            
+                            # v2.2.1: Store series in cache (REC-009)
+                            if best.get("series", {}).get("id"):
+                                series_cache = get_series_cache()
+                                series_cache.set(
+                                    comic.get("series_name"),
+                                    "metron",
+                                    best["series"]["id"],
+                                    comic.get("publisher_name")
+                                )
+                                logger.debug(f"[metron] Cache SET: {comic.get('series_name')} series_id={best['series']['id']}")
 
                             # Fetch full details
                             data = await adapter.fetch_by_id(str(best["id"]), endpoint="issue")
@@ -1009,6 +1037,8 @@ async def query_comicvine(
 
     api_key = os.environ.get("COMIC_VINE_API_KEY") or os.environ.get("COMICVINE_API_KEY")
     if not api_key:
+        # v2.2.1: Log warning when API key missing (REC-001 audit)
+        logger.warning("[comicvine] COMIC_VINE_API_KEY not set - skipping ComicVine queries")
         return updates
 
     try:
@@ -1060,6 +1090,17 @@ async def query_comicvine(
             else:
                 # Search using agnostic fuzzy matching (v1.19.3)
                 if comic.get("series_name") and comic.get("number"):
+                    # v2.2.1: Check series cache first (REC-009)
+                    series_cache = get_series_cache()
+                    cached_cv_id = series_cache.get(
+                        comic.get("series_name"),
+                        "comicvine",
+                        comic.get("publisher_name")
+                    )
+                    if cached_cv_id:
+                        logger.debug(f"[comicvine] Cache HIT: {comic.get('series_name')} -> CV series")
+                        # Use cached series ID to narrow search
+                        # (Cache stores series, we still need to find exact issue)
                     # Use the standard fuzzy match query builder
                     match_data = build_fuzzy_match_query(comic)
                     query = match_data.query
@@ -1093,9 +1134,18 @@ async def query_comicvine(
 
                     if response.status_code == 200:
                         results = response.json().get("results", [])
+                        # v2.2.1: Enhanced logging for ComicVine audit (REC-001)
+                        logger.debug(
+                            f"[comicvine] Search returned {len(results)} results for "
+                            f"'{comic.get('series_name')} #{comic.get('number')}'"
+                        )
                         best = _find_best_match(comic, results, cv_format=True)
 
                         if best and best.get("id"):
+                            logger.info(
+                                f"[comicvine] MATCH: '{comic.get('series_name')} #{comic.get('number')}' "
+                                f"-> CV ID {best['id']}"
+                            )
                             updates["comicvine_id"] = best["id"]
 
                             # Fetch full details
@@ -1120,6 +1170,12 @@ async def query_comicvine(
 
                                 if "image" in missing_fields and data.get("image", {}).get("original_url"):
                                     updates["image"] = data["image"]["original_url"]
+                        else:
+                            # v2.2.1: Log when no match found
+                            logger.debug(
+                                f"[comicvine] NO MATCH: '{comic.get('series_name')} #{comic.get('number')}' "
+                                f"- {len(results)} candidates checked"
+                            )
 
     except Exception as e:
         error_str = str(e).lower()
@@ -1774,8 +1830,9 @@ def _find_best_match(
             best_score = score
             best = candidate
 
-    # Require minimum score (series + number match)
-    if best_score >= 5:
+    # Require minimum score
+    # v2.2.1: Lowered threshold from 5 to 3 per REC-002 (was too strict)
+    if best_score >= 3:
         return best
 
     return None
@@ -1956,6 +2013,7 @@ async def run_sequential_exhaustive_enrichment_job(
     #   4. MyComicShop (bibliographic data)
     #   5. Metron (LAST - rate-limit sensitive, supplemental only)
     # Phase 1 sources: Can run in parallel (don't depend on each other's results)
+    # v2.2.1: Removed metron from Phase 1 - now in Phase 1.5 (conditional)
     PHASE1_SOURCES = [
         ("comicvine", query_comicvine),       # 1st - Primary authoritative source
         ("comicbookrealm", query_comicbookrealm),  # 2nd - Strong secondary source
@@ -1967,7 +2025,13 @@ async def run_sequential_exhaustive_enrichment_job(
         ("darkhorse_fandom", query_darkhorse_fandom),
         ("dynamite_fandom", query_dynamite_fandom),
         ("mycomicshop", query_mycomicshop),
-        ("metron", query_metron),             # LAST - Rate-limit sensitive, supplemental
+        # metron removed - see PHASE1_5_SOURCES
+    ]
+
+    # v2.2.1: Phase 1.5 - Metron queried ONLY if description missing after Phase 1
+    # This prevents 429 storms by reducing Metron requests to only essential cases
+    PHASE1_5_SOURCES = [
+        ("metron", query_metron),             # Conditional - only if description missing
     ]
 
     # Phase 2 sources: Run after Phase 1 (benefit from UPC found in Phase 1)
@@ -1975,7 +2039,7 @@ async def run_sequential_exhaustive_enrichment_job(
         ("pricecharting", query_pricecharting),
     ]
 
-    ALL_SOURCES = PHASE1_SOURCES + PHASE2_SOURCES
+    ALL_SOURCES = PHASE1_SOURCES + PHASE1_5_SOURCES + PHASE2_SOURCES
 
     stats = {
         "processed": 0,
@@ -2174,6 +2238,39 @@ async def run_sequential_exhaustive_enrichment_job(
                                 source_counts[source_name] = source_counts.get(source_name, 0) + 1
 
                     # Re-evaluate missing fields after Phase 1
+                    missing = identify_missing_fields(comic)
+
+                # =========================================================
+                # PHASE 1.5: Query Metron ONLY if description still missing
+                # v2.2.1: Conditional execution to prevent 429 storms
+                # =========================================================
+                if "description" in missing:
+                    logger.debug(f"[enrichment] Phase 1.5: Description missing, querying Metron")
+                    for source_name, query_func in PHASE1_5_SOURCES:
+                        if not circuit_breaker.is_available(source_name):
+                            continue
+                        try:
+                            QUERY_TIMEOUT = 15.0
+                            updates = await asyncio.wait_for(
+                                query_func(comic, missing, rate_mgr),
+                                timeout=QUERY_TIMEOUT
+                            )
+                            if updates:
+                                circuit_breaker.record_success(source_name)
+                                for field, value in updates.items():
+                                    if field in missing or field.endswith("_id"):
+                                        comic[field] = value
+                                        all_updates[field] = value
+                                        source_counts[source_name] = source_counts.get(source_name, 0) + 1
+                        except asyncio.TimeoutError:
+                            logger.warning(f"[enrichment] {source_name} timed out - skipping")
+                        except RateLimitExceeded as e:
+                            logger.info(f"[enrichment] {source_name} rate limited - skipping")
+                        except Exception as e:
+                            circuit_breaker.record_failure(source_name)
+                            error_count += 1
+
+                    # Re-evaluate missing fields after Phase 1.5
                     missing = identify_missing_fields(comic)
 
                 # =========================================================

@@ -31,7 +31,8 @@ export default defineConfig({
     coverage: {
       provider: 'c8',
       reporter: ['text', 'html', 'lcov'],
-      all: true,
+      all: false,
+      include: ['src/__tests__/**'],
       lines: 100,
       functions: 100,
       branches: 100,

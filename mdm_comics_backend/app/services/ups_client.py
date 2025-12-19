@@ -161,6 +161,10 @@ class UPSRate:
     raw_response: Dict = field(default_factory=dict)
 
 
+# Compatibility alias used in tests/fixtures
+UPSRateResult = UPSRate
+
+
 @dataclass
 class UPSShipmentResult:
     """Result of creating a shipment."""
@@ -169,7 +173,7 @@ class UPSShipmentResult:
     label_data: str  # Base64 encoded
     label_format: str
     total_charges: float
-    currency: str
+    currency: str = "USD"
     raw_response: Dict = field(default_factory=dict)
 
 

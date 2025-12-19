@@ -121,6 +121,13 @@ class StorageService:
         with StorageService._validation_lock:
             if StorageService._bucket_validated:
                 return
+
+            # Allow tests/dev to skip live bucket validation
+            if os.getenv("SKIP_STORAGE_VALIDATION", "").lower() in ("1", "true", "yes"):
+                logger.info("Skipping S3 bucket validation because SKIP_STORAGE_VALIDATION is set")
+                StorageService._bucket_validated = True
+                return
+
             self._validate_configuration()
             StorageService._bucket_validated = True
 
