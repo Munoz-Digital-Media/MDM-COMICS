@@ -4,8 +4,8 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Search, Filter, Plus, Minus, Edit2, Trash2, RotateCcw,
-  ChevronLeft, ChevronRight, Loader2, AlertTriangle, X,
+  Search, Filter, Plus, Minus, Trash2, RotateCcw,
+  ChevronLeft, ChevronRight, Loader2, X,
   Package, History, Eye, Pencil
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
@@ -462,13 +462,6 @@ export default function ProductList() {
                               title="Edit Product"
                             >
                               <Pencil className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleStockAdjust(product)}
-                              className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400"
-                              title="Adjust Stock"
-                            >
-                              <Edit2 className="w-4 h-4" />
                             </button>
                             <button
                               onClick={() => handleStockHistory(product)}
