@@ -249,6 +249,8 @@ export default function ProductEditModal({ product, onClose, onSave }) {
       setDragOverIndex(null);
       return;
     }
+    // Save current state in case we need to revert
+    const previousImages = [...form.images];
     const newOrder = form.images.map((_, i) => i);
     const [removed] = newOrder.splice(draggedIndex, 1);
     newOrder.splice(dragOverIndex, 0, removed);
@@ -258,7 +260,8 @@ export default function ProductEditModal({ product, onClose, onSave }) {
       await adminAPI.reorderGalleryImages(product.id, newOrder);
     } catch (err) {
       setError('Failed to reorder gallery: ' + err.message);
-      setForm({ ...form, images: product.images || [] });
+      // Revert to previous state (not original product.images which may be stale)
+      setForm({ ...form, images: previousImages });
     }
     setDraggedIndex(null);
     setDragOverIndex(null);

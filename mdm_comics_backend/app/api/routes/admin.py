@@ -785,7 +785,7 @@ async def add_gallery_image(
         logger.error(f"Failed to upload gallery image: {e}")
         raise HTTPException(status_code=500, detail="Failed to upload image")
 
-    images = product.images or []
+    images = list(product.images or [])  # Create new list for SQLAlchemy change detection
     images.append(upload_result.url)
     product.images = images
     product.updated_at = datetime.now(timezone.utc)
@@ -811,7 +811,7 @@ async def remove_gallery_image(
     if product.deleted_at:
         raise HTTPException(status_code=400, detail="Cannot update deleted product")
 
-    images = product.images or []
+    images = list(product.images or [])  # Create new list for SQLAlchemy change detection
     if index < 0 or index >= len(images):
         raise HTTPException(status_code=400, detail=f"Invalid index. Gallery has {len(images)} images.")
 
@@ -891,7 +891,7 @@ async def demote_primary_to_gallery(
         raise HTTPException(status_code=400, detail="No primary image to demote")
 
     demoted_url = product.image_url
-    images = product.images or []
+    images = list(product.images or [])  # Create new list for SQLAlchemy change detection
     images.insert(0, demoted_url)  # Add to beginning of gallery
 
     product.images = images
@@ -927,7 +927,7 @@ async def promote_gallery_to_primary(
     if product.deleted_at:
         raise HTTPException(status_code=400, detail="Cannot update deleted product")
 
-    images = product.images or []
+    images = list(product.images or [])  # Create new list for SQLAlchemy change detection
     if index < 0 or index >= len(images):
         raise HTTPException(status_code=400, detail=f"Invalid index. Gallery has {len(images)} images.")
 
