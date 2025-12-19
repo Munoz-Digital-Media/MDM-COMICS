@@ -192,6 +192,7 @@ export default function ProductCreator() {
   const selectComic = async (comic) => {
     setSelectedComic(comic);
     setDetailsLoading(true);
+    setIsBCWProduct(false);
     try {
       const details = await comicsAPI.getIssue(comic.id);
       const seriesName = details.series?.name || comic.series?.name || '';
@@ -228,6 +229,7 @@ export default function ProductCreator() {
 
   // Select a Funko to create product
   const selectFunko = (funko) => {
+    setIsBCWProduct(false);
     const descParts = [];
     if (funko.license) descParts.push(`License: ${funko.license}`);
     if (funko.product_type) descParts.push(`Type: ${funko.product_type}`);
@@ -256,8 +258,12 @@ export default function ProductCreator() {
     setShowCreateForm(true);
   };
 
+  // Track if current product is from BCW (for using correct API)
+  const [isBCWProduct, setIsBCWProduct] = useState(false);
+
   // Select a BCW product to create
   const selectBCWProduct = (bcwProduct) => {
+    setIsBCWProduct(true);
     setProductForm({
       sku: bcwProduct.mdm_sku,
       name: bcwProduct.product_name,
@@ -289,28 +295,37 @@ export default function ProductCreator() {
 
     setSaving(true);
     try {
-      const fullName = productForm.variant
-        ? `${productForm.name} (${productForm.variant})`
-        : productForm.name;
+      const price = parseFloat(productForm.price);
 
-      const data = {
-        ...productForm,
-        name: fullName,
-        price: parseFloat(productForm.price),
-        original_price: productForm.original_price ? parseFloat(productForm.original_price) : null,
-        stock: parseInt(productForm.stock) || 0,
-        year: productForm.year ? parseInt(productForm.year) : null,
-        images: productForm.image_url ? [productForm.image_url] : [],
-        // Clean up empty string fields
-        upc: productForm.upc || null,
-        issue_number: productForm.issue_number || null,
-        publisher: productForm.publisher || null,
-        subcategory: productForm.subcategory || null,
-      };
-      delete data.variant;
+      // BCW products use dedicated activate endpoint (handles create/update)
+      if (isBCWProduct) {
+        await adminAPI.activateBCWProduct(productForm.sku, price);
+        setMessage({ type: 'success', text: 'BCW product activated in catalog!' });
+      } else {
+        // Regular product creation for comics/funkos
+        const fullName = productForm.variant
+          ? `${productForm.name} (${productForm.variant})`
+          : productForm.name;
 
-      await adminAPI.createProduct(null, data);
-      setMessage({ type: 'success', text: 'Product created successfully!' });
+        const data = {
+          ...productForm,
+          name: fullName,
+          price: price,
+          original_price: productForm.original_price ? parseFloat(productForm.original_price) : null,
+          stock: parseInt(productForm.stock) || 0,
+          year: productForm.year ? parseInt(productForm.year) : null,
+          images: productForm.image_url ? [productForm.image_url] : [],
+          // Clean up empty string fields
+          upc: productForm.upc || null,
+          issue_number: productForm.issue_number || null,
+          publisher: productForm.publisher || null,
+          subcategory: productForm.subcategory || null,
+        };
+        delete data.variant;
+
+        await adminAPI.createProduct(null, data);
+        setMessage({ type: 'success', text: 'Product created successfully!' });
+      }
 
       // Reset form
       setProductForm({
@@ -320,6 +335,7 @@ export default function ProductCreator() {
         variant: '',
       });
       setSelectedComic(null);
+      setIsBCWProduct(false);
       setShowCreateForm(false);
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed: ' + err.message });
