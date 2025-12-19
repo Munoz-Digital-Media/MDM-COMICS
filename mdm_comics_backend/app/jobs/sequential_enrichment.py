@@ -1,5 +1,12 @@
 """
-Sequential Exhaustive Enrichment Job v2.2.1
+Sequential Exhaustive Enrichment Job v2.3.0
+
+v2.3.0 Changes (UPC-FIRST STRATEGY):
+- NEW: UPC/ISBN lookup BEFORE fuzzy matching (exact match priority)
+- Metron now tries UPC lookup first, falls back to fuzzy match
+- PriceCharting already used UPC (unchanged)
+- Tracks "_queried_with_upc" flag for re-query logic
+- Sources that don't support UPC lookup still use fuzzy match
 
 v2.2.1 Changes (PHASE 1.5 + FUZZY MATCH FIX):
 - NEW: Phase 1.5 Conditional Execution - Metron only queried if description missing
@@ -953,8 +960,40 @@ async def query_metron(
                 rate_mgr.get_limiter(source).record_success()
                 extract_fields(data)
         else:
-            # Search by series + issue
-            if comic.get("series_name") and comic.get("number"):
+            # v2.3.0: UPC/ISBN FIRST strategy - exact match before fuzzy
+            upc = comic.get("upc")
+            isbn = comic.get("isbn")
+            found_by_upc = False
+            
+            # PRIORITY 1: Try UPC lookup (most reliable - exact match)
+            if upc:
+                upc_clean = "".join(c for c in str(upc) if c.isdigit())
+                if len(upc_clean) >= 10:
+                    logger.debug(f"[metron] Trying UPC lookup: {upc_clean}")
+                    search_result = await adapter.search_issues(upc=upc_clean)
+                    
+                    if search_result.success and search_result.records:
+                        rate_mgr.get_limiter(source).record_success()
+                        # UPC is unique - take first result
+                        best = search_result.records[0]
+                        found_by_upc = True
+                        logger.info(f"[metron] UPC MATCH: {upc_clean} -> metron_id={best.get('id')}")
+                        
+                        if best.get("id"):
+                            updates["metron_id"] = best["id"]
+                            updates["_queried_with_upc"] = True  # Track that we used UPC
+                            
+                            # Fetch full details
+                            data = await adapter.fetch_by_id(str(best["id"]), endpoint="issue")
+                            if data:
+                                rate_mgr.get_limiter(source).record_success()
+                                extract_fields(data)
+                    elif search_result.success:
+                        rate_mgr.get_limiter(source).record_success()
+                        logger.debug(f"[metron] UPC {upc_clean} not found, will try fuzzy match")
+            
+            # PRIORITY 2: Fuzzy match by series + issue (fallback)
+            if not found_by_upc and comic.get("series_name") and comic.get("number"):
                 # v2.2.1: Check series cache first (REC-009)
                 series_cache = get_series_cache()
                 cached_metron_series = series_cache.get(
@@ -1216,9 +1255,11 @@ async def query_pricecharting(
             # If we don't have PC ID, try to find it
             if not pc_id and "pricecharting_id" in missing_fields:
                 # Try UPC first (most accurate)
+                # v2.3.0: Track when UPC is used for query
                 if comic.get("upc"):
                     upc = "".join(c for c in str(comic["upc"]) if c.isdigit())
                     if len(upc) >= 10:
+                        updates["_queried_with_upc"] = True  # Track UPC usage
                         response = await client.get(
                             "https://www.pricecharting.com/api/products",
                             params={"t": api_token, "upc": upc}
