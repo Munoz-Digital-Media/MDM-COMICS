@@ -51,6 +51,17 @@ class ProductUpdate(BaseModel):
     images: Optional[List[str]] = None
     tags: Optional[List[str]] = None
     featured: Optional[bool] = None
+
+    # Barcode fields
+    upc: Optional[str] = None
+    isbn: Optional[str] = None
+
+    # Comic-specific
+    issue_number: Optional[str] = None
+    publisher: Optional[str] = None
+    year: Optional[int] = None
+
+    # Grading
     cgc_grade: Optional[float] = None
     estimated_grade: Optional[float] = None
     is_graded: Optional[bool] = None

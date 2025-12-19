@@ -20,7 +20,6 @@ export default function ProductEditModal({ product, onClose, onSave }) {
     featured: false,
     upc: '',
     isbn: '',
-    bin_id: '',
     issue_number: '',
     publisher: '',
     year: '',
@@ -45,7 +44,6 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         featured: product.featured || false,
         upc: product.upc || '',
         isbn: product.isbn || '',
-        bin_id: product.bin_id || '',
         issue_number: product.issue_number || '',
         publisher: product.publisher || '',
         year: product.year?.toString() || '',
@@ -75,6 +73,11 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         image_url: form.image_url || null,
         tags: form.tags,
         featured: form.featured,
+        upc: form.upc || null,
+        isbn: form.isbn || null,
+        issue_number: form.issue_number || null,
+        publisher: form.publisher || null,
+        year: form.year ? parseInt(form.year) : null,
       };
 
       await adminAPI.updateProduct(null, product.id, updateData);
@@ -110,7 +113,7 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-auto p-6">
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
               <p className="text-sm text-red-400">{error}</p>
@@ -118,17 +121,31 @@ export default function ProductEditModal({ product, onClose, onSave }) {
           )}
 
           <div className="grid md:grid-cols-2 gap-6">
-            {/* Left Column */}
+            {/* Left Column - Form Fields */}
             <div className="space-y-4">
-              {/* SKU (read-only) */}
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">SKU</label>
-                <input
-                  type="text"
-                  value={product?.sku || ''}
-                  disabled
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-500 cursor-not-allowed"
-                />
+              {/* SKU & Category */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">SKU</label>
+                  <input
+                    type="text"
+                    value={product?.sku || ''}
+                    disabled
+                    className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-500 cursor-not-allowed font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">Category</label>
+                  <select
+                    value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
+                  >
+                    <option value="comics">Comics</option>
+                    <option value="funko">Funko</option>
+                    <option value="supplies">Supplies</option>
+                  </select>
+                </div>
               </div>
 
               {/* Name */}
@@ -154,34 +171,8 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                 />
               </div>
 
-              {/* Category & Subcategory */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm text-zinc-400 mb-1">Category</label>
-                  <select
-                    value={form.category}
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
-                  >
-                    <option value="comics">Comics</option>
-                    <option value="funko">Funko</option>
-                    <option value="supplies">Supplies</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-zinc-400 mb-1">Subcategory</label>
-                  <input
-                    type="text"
-                    value={form.subcategory}
-                    onChange={(e) => setForm({ ...form, subcategory: e.target.value })}
-                    placeholder="e.g., Marvel, DC"
-                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-600 focus:border-orange-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Pricing */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* Pricing & Stock */}
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-sm text-zinc-400 mb-1">Price *</label>
                   <input
@@ -205,23 +196,74 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                     className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">Stock</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.stock}
+                    onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
+                  />
+                </div>
               </div>
 
-              {/* Stock */}
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">Stock</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={form.stock}
-                  onChange={(e) => setForm({ ...form, stock: e.target.value })}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
-                />
+              {/* Publisher, Issue #, Year */}
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">Publisher</label>
+                  <input
+                    type="text"
+                    value={form.publisher}
+                    onChange={(e) => setForm({ ...form, publisher: e.target.value })}
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">Issue #</label>
+                  <input
+                    type="text"
+                    value={form.issue_number}
+                    onChange={(e) => setForm({ ...form, issue_number: e.target.value })}
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">Year</label>
+                  <input
+                    type="number"
+                    min="1900"
+                    max="2099"
+                    value={form.year}
+                    onChange={(e) => setForm({ ...form, year: e.target.value })}
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
+                  />
+                </div>
               </div>
-            </div>
 
-            {/* Right Column */}
-            <div className="space-y-4">
+              {/* UPC & Subcategory */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">UPC Barcode</label>
+                  <input
+                    type="text"
+                    value={form.upc}
+                    onChange={(e) => setForm({ ...form, upc: e.target.value.replace(/[^0-9]/g, '') })}
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white font-mono focus:border-orange-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-400 mb-1">Subcategory</label>
+                  <input
+                    type="text"
+                    value={form.subcategory}
+                    onChange={(e) => setForm({ ...form, subcategory: e.target.value })}
+                    placeholder="e.g., Marvel, DC, BCW"
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-600 focus:border-orange-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
               {/* Image URL */}
               <div>
                 <label className="block text-sm text-zinc-400 mb-1">Image URL</label>
@@ -234,23 +276,53 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                 />
               </div>
 
-              {/* Image Preview */}
-              <div className="aspect-square bg-zinc-800 rounded-lg overflow-hidden flex items-center justify-center">
-                {form.image_url ? (
-                  <img
-                    src={form.image_url}
-                    alt="Preview"
-                    className="w-full h-full object-contain"
-                    onError={(e) => { e.target.style.display = 'none'; }}
-                  />
-                ) : (
-                  <ImageIcon className="w-16 h-16 text-zinc-700" />
-                )}
+              {/* Featured */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.featured}
+                  onChange={(e) => setForm({ ...form, featured: e.target.checked })}
+                  className="w-4 h-4 rounded"
+                />
+                <span className="text-zinc-300">Featured Product</span>
+              </label>
+            </div>
+
+            {/* Right Column - Preview */}
+            <div className="bg-zinc-800 rounded-xl p-4">
+              <h4 className="font-medium text-zinc-400 mb-3">Preview</h4>
+              <div className="bg-zinc-900 rounded-lg overflow-hidden">
+                <div className="h-48 bg-zinc-700 flex items-center justify-center">
+                  {form.image_url ? (
+                    <img
+                      src={form.image_url}
+                      alt="Preview"
+                      className="w-full h-full object-contain"
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                  ) : (
+                    <ImageIcon className="w-16 h-16 text-zinc-600" />
+                  )}
+                </div>
+                <div className="p-4">
+                  <p className="text-xs text-orange-500 mb-1">{form.subcategory || form.publisher || form.category}</p>
+                  <h4 className="font-bold text-white mb-2">{form.name || 'Product Name'}</h4>
+                  <p className="text-sm text-zinc-500 mb-3 line-clamp-2">{form.description || 'Description...'}</p>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xl font-bold text-white">${form.price || '0.00'}</span>
+                      {form.original_price && (
+                        <span className="ml-2 text-sm text-zinc-500 line-through">${form.original_price}</span>
+                      )}
+                    </div>
+                    <span className="text-sm text-zinc-400">Stock: {form.stock}</span>
+                  </div>
+                </div>
               </div>
 
               {/* Tags */}
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">Tags</label>
+              <div className="mt-4">
+                <label className="block text-sm text-zinc-400 mb-2">Tags</label>
                 <div className="flex gap-2 mb-2 flex-wrap">
                   {form.tags.map(tag => (
                     <span
@@ -275,7 +347,7 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addTag())}
                     placeholder="Add tag..."
-                    className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-600 focus:border-orange-500 focus:outline-none"
+                    className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white placeholder-zinc-600 focus:border-orange-500 focus:outline-none"
                   />
                   <button
                     type="button"
@@ -286,20 +358,9 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                   </button>
                 </div>
               </div>
-
-              {/* Featured */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.featured}
-                  onChange={(e) => setForm({ ...form, featured: e.target.checked })}
-                  className="w-4 h-4 rounded"
-                />
-                <span className="text-zinc-300">Featured Product</span>
-              </label>
             </div>
           </div>
-        </form>
+        </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 p-4 border-t border-zinc-800">
