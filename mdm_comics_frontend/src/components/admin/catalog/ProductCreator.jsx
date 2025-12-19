@@ -298,9 +298,14 @@ export default function ProductCreator() {
         name: fullName,
         price: parseFloat(productForm.price),
         original_price: productForm.original_price ? parseFloat(productForm.original_price) : null,
-        stock: parseInt(productForm.stock) || 1,
+        stock: parseInt(productForm.stock) || 0,
         year: productForm.year ? parseInt(productForm.year) : null,
         images: productForm.image_url ? [productForm.image_url] : [],
+        // Clean up empty string fields
+        upc: productForm.upc || null,
+        issue_number: productForm.issue_number || null,
+        publisher: productForm.publisher || null,
+        subcategory: productForm.subcategory || null,
       };
       delete data.variant;
 

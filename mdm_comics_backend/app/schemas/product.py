@@ -22,14 +22,18 @@ class ProductCreate(ProductBase):
     images: List[str] = []
     tags: List[str] = []
     featured: bool = False
-    
+
+    # Barcode fields
+    upc: Optional[str] = None
+    isbn: Optional[str] = None
+
     # Comic-specific
     issue_number: Optional[str] = None
     publisher: Optional[str] = None
     year: Optional[int] = None
     artist: Optional[str] = None
     writer: Optional[str] = None
-    
+
     # Grading
     cgc_grade: Optional[float] = None
     is_graded: bool = False
