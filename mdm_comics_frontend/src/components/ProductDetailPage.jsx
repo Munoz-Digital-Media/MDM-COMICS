@@ -15,8 +15,9 @@ import {
 import RefundPolicyBadge from './RefundPolicyBadge';
 
 // Format decimal dimension to fraction string (e.g., 3.375 -> "3 ⅜")
+// Returns null for 0, null, or undefined values (treat 0 as no data)
 const formatDimension = (value) => {
-  if (!value && value !== 0) return null;
+  if (!value || parseFloat(value) === 0) return null;
   const num = parseFloat(value);
   const whole = Math.floor(num);
   const frac = num - whole;
@@ -43,14 +44,17 @@ const formatDimension = (value) => {
   return `${whole} ${fracStr}"`;
 };
 
-// Format W x H x L dimensions
+// Format W x H x L dimensions - only shows dimensions with valid data
+// Returns null if all dimensions are empty/zero
 const formatDimensions = (w, h, l) => {
-  const width = formatDimension(w);
-  const height = formatDimension(h);
-  const length = formatDimension(l);
+  const dims = [
+    formatDimension(w),
+    formatDimension(h),
+    formatDimension(l)
+  ].filter(Boolean);
 
-  if (!width && !height && !length) return null;
-  return `${width || '—'} × ${height || '—'} × ${length || '—'}`;
+  if (dims.length === 0) return null;
+  return dims.join(' × ');
 };
 
 // Image zoom modal component
@@ -442,22 +446,24 @@ export default function ProductDetailPage({
                 </div>
               )}
               {/* Dimensions */}
-              {(product.interior_width || product.interior_height || product.interior_length) && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">Interior Dimensions</span>
-                  <span className="text-zinc-300">
-                    {formatDimensions(product.interior_width, product.interior_height, product.interior_length)}
-                  </span>
-                </div>
-              )}
-              {(product.exterior_width || product.exterior_height || product.exterior_length) && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">Exterior Dimensions</span>
-                  <span className="text-zinc-300">
-                    {formatDimensions(product.exterior_width, product.exterior_height, product.exterior_length)}
-                  </span>
-                </div>
-              )}
+              {(() => {
+                const dims = formatDimensions(product.interior_width, product.interior_height, product.interior_length);
+                return dims ? (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-zinc-500">Interior Dimensions</span>
+                    <span className="text-zinc-300">{dims}</span>
+                  </div>
+                ) : null;
+              })()}
+              {(() => {
+                const dims = formatDimensions(product.exterior_width, product.exterior_height, product.exterior_length);
+                return dims ? (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-zinc-500">Exterior Dimensions</span>
+                    <span className="text-zinc-300">{dims}</span>
+                  </div>
+                ) : null;
+              })()}
               {product.weight && (
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-500">Weight</span>
