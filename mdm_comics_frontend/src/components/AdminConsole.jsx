@@ -441,7 +441,7 @@ export default function AdminConsole({ onClose, token }) {
                 {searchResults.map((comic) => (
                   <div key={comic.id} className="bg-zinc-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-orange-500 group relative">
                     <div className="h-40 bg-zinc-700 relative">
-                      {comic.image && <img src={comic.image} alt="" className="w-full h-full object-cover" />}
+                      {comic.image && <img src={comic.image} alt="" className="w-full h-full object-contain" />}
                       <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <button
                           onClick={() => selectComic(comic)}
@@ -758,7 +758,7 @@ export default function AdminConsole({ onClose, token }) {
                   {products.map((product) => (
                     <div key={product.id} className="flex items-center gap-4 bg-zinc-800 rounded-lg p-3">
                       <div className="w-16 h-20 bg-zinc-700 rounded overflow-hidden flex-shrink-0">
-                        {product.image_url && <img src={product.image_url} alt="" className="w-full h-full object-cover" />}
+                        {product.image_url && <img src={product.image_url} alt="" className="w-full h-full object-contain" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-white truncate">{product.name}</p>

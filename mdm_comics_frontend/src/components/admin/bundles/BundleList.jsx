@@ -382,7 +382,7 @@ export default function BundleList() {
                           <img
                             src={bundle.image_url}
                             alt={bundle.name}
-                            className="w-10 h-10 rounded object-cover"
+                            className="w-10 h-10 rounded object-contain"
                           />
                         ) : (
                           <div className="w-10 h-10 bg-zinc-800 rounded flex items-center justify-center">

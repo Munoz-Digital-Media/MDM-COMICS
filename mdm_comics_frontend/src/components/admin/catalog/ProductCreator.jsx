@@ -594,7 +594,7 @@ export default function ProductCreator() {
                   className="bg-zinc-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-orange-500 transition-all group"
                 >
                   <div className="aspect-[2/3] bg-zinc-700 relative">
-                    {comic.image && <img src={comic.image} alt="" className="w-full h-full object-cover" />}
+                    {comic.image && <img src={comic.image} alt="" className="w-full h-full object-contain" />}
                     <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <span className="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm font-medium flex items-center gap-1">
                         <Plus className="w-4 h-4" />

@@ -53,7 +53,7 @@ function QueueItem({ item, onProcess, onSkip, selected, onSelect }) {
               <img
                 src={item.matched_product.image || 'https://placehold.co/40x40/27272a/f59e0b?text=?'}
                 alt=""
-                className="w-10 h-10 rounded object-cover"
+                className="w-10 h-10 rounded object-contain"
               />
               <div>
                 <p className="text-sm text-white truncate">{item.matched_product.name}</p>

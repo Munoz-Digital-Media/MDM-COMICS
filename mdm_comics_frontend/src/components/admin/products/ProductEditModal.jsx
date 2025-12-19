@@ -681,7 +681,7 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                   {form.images.map((url, index) => (
                     <div key={index} draggable onDragStart={() => handleDragStart(index)} onDragOver={(e) => handleDragOver(e, index)} onDragEnd={handleDragEnd}
                       className={`relative group aspect-square bg-zinc-900 rounded overflow-hidden cursor-grab ${draggedIndex === index ? 'opacity-50' : ''} ${dragOverIndex === index ? 'ring-2 ring-orange-500' : ''}`}>
-                      <img src={url} alt={`Gallery ${index + 1}`} className="w-full h-full object-cover" onError={(e) => { e.target.src = ''; }} />
+                      <img src={url} alt={`Gallery ${index + 1}`} className="w-full h-full object-contain" onError={(e) => { e.target.src = ''; }} />
                       <div className="absolute top-1 left-1 p-1 bg-black/50 rounded opacity-0 group-hover:opacity-100 transition-opacity"><GripVertical className="w-3 h-3 text-white" /></div>
                       <button type="button" onClick={() => handlePromoteGallery(index)} className="absolute bottom-1 left-1 p-1 bg-orange-500/80 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-orange-500" title="Set as primary"><Star className="w-3 h-3 text-white" /></button>
                       <button type="button" onClick={() => handleRemoveGallery(index)} className="absolute top-1 right-1 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500" title="Remove"><X className="w-3 h-3 text-white" /></button>
