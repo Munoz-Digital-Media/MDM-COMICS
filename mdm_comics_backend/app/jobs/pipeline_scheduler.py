@@ -2423,7 +2423,7 @@ async def run_marvel_fandom_job(batch_size: int = 20, max_records: int = 0):
                     # Update checkpoint
                     await update_checkpoint(
                         db, job_name,
-                        state_data={"last_id": last_id},
+                        last_processed_id=last_id,
                         processed_delta=batch_size,
                         updated_delta=stats["enriched"],
                         errors_delta=stats["failed"],
