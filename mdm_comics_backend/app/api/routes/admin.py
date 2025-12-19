@@ -3400,3 +3400,165 @@ async def trigger_bcw_image_sync(
         "error_count": len(result.errors),
         "duration_ms": result.duration_ms,
     }
+
+
+# =============================================================================
+# PIPELINE METRICS (v1.24.0)
+# =============================================================================
+
+@router.get("/pipeline/metrics")
+async def get_pipeline_metrics(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get pipeline metrics dashboard data.
+
+    Returns:
+    - Current batch status for all pipelines
+    - Performance stats (P50, P75, P90, P95)
+    - Stall detection thresholds
+    - Recent batches and API call metrics
+    """
+    from app.jobs.stall_detector import get_stall_detection_status
+
+    try:
+        # Get stall detection status (includes thresholds and running batches)
+        stall_status = await get_stall_detection_status()
+
+        # Get recent completed batches (last 24 hours)
+        recent_batches_result = await db.execute(text("""
+            SELECT
+                batch_id,
+                pipeline_type,
+                status,
+                batch_started_at,
+                batch_completed_at,
+                batch_duration_ms,
+                records_in_batch,
+                records_processed,
+                records_enriched,
+                records_failed,
+                error_category
+            FROM pipeline_batch_metrics
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY created_at DESC
+            LIMIT 50
+        """))
+
+        recent_batches = []
+        for row in recent_batches_result.fetchall():
+            recent_batches.append({
+                "batch_id": row.batch_id,
+                "pipeline_type": row.pipeline_type,
+                "status": row.status,
+                "started_at": row.batch_started_at.isoformat() if row.batch_started_at else None,
+                "completed_at": row.batch_completed_at.isoformat() if row.batch_completed_at else None,
+                "duration_ms": row.batch_duration_ms,
+                "records_in_batch": row.records_in_batch,
+                "records_processed": row.records_processed,
+                "records_enriched": row.records_enriched,
+                "records_failed": row.records_failed,
+                "error_category": row.error_category
+            })
+
+        # Get API performance summary (last 24 hours)
+        api_perf_result = await db.execute(text("""
+            SELECT
+                api_source,
+                COUNT(*) as total_calls,
+                COUNT(*) FILTER (WHERE success = true) as successful_calls,
+                ROUND(AVG(response_time_ms)) as avg_response_ms,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY response_time_ms))::INTEGER as p95_response_ms,
+                COUNT(*) FILTER (WHERE response_time_ms > 1000) as slow_calls
+            FROM api_call_metrics
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY api_source
+            ORDER BY total_calls DESC
+        """))
+
+        api_performance = []
+        for row in api_perf_result.fetchall():
+            success_rate = (row.successful_calls / row.total_calls * 100) if row.total_calls > 0 else 0
+            api_performance.append({
+                "api_source": row.api_source,
+                "total_calls": row.total_calls,
+                "successful_calls": row.successful_calls,
+                "success_rate": round(success_rate, 1),
+                "avg_response_ms": row.avg_response_ms,
+                "p95_response_ms": row.p95_response_ms,
+                "slow_calls": row.slow_calls
+            })
+
+        # Get batch stats by status (last 24 hours)
+        batch_stats_result = await db.execute(text("""
+            SELECT
+                status,
+                COUNT(*) as count,
+                ROUND(AVG(batch_duration_ms)) as avg_duration_ms
+            FROM pipeline_batch_metrics
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY status
+        """))
+
+        batch_stats = {}
+        for row in batch_stats_result.fetchall():
+            batch_stats[row.status] = {
+                "count": row.count,
+                "avg_duration_ms": row.avg_duration_ms
+            }
+
+        # Get pipeline summary (last 24 hours)
+        pipeline_summary_result = await db.execute(text("""
+            SELECT
+                pipeline_type,
+                COUNT(*) as batch_count,
+                SUM(records_processed) as total_processed,
+                SUM(records_enriched) as total_enriched,
+                SUM(records_failed) as total_failed,
+                ROUND(AVG(batch_duration_ms)) as avg_duration_ms
+            FROM pipeline_batch_metrics
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+              AND status = 'completed'
+            GROUP BY pipeline_type
+            ORDER BY batch_count DESC
+        """))
+
+        pipeline_summary = []
+        for row in pipeline_summary_result.fetchall():
+            pipeline_summary.append({
+                "pipeline_type": row.pipeline_type,
+                "batch_count": row.batch_count,
+                "total_processed": row.total_processed or 0,
+                "total_enriched": row.total_enriched or 0,
+                "total_failed": row.total_failed or 0,
+                "avg_duration_ms": row.avg_duration_ms
+            })
+
+        return {
+            "status": "ok",
+            "thresholds": stall_status.get("thresholds_by_pipeline", {}),
+            "running_batches": stall_status.get("running_batches", []),
+            "recent_stalls": stall_status.get("recent_stalls", []),
+            "recent_self_heals": stall_status.get("recent_self_heals", []),
+            "recent_batches": recent_batches,
+            "api_performance": api_performance,
+            "batch_stats": batch_stats,
+            "pipeline_summary": pipeline_summary
+        }
+
+    except Exception as e:
+        logger.error(f"[Pipeline Metrics] Failed to get metrics: {e}")
+        # Return empty data structure on error rather than failing
+        return {
+            "status": "error",
+            "error": str(e),
+            "thresholds": {},
+            "running_batches": [],
+            "recent_stalls": [],
+            "recent_self_heals": [],
+            "recent_batches": [],
+            "api_performance": [],
+            "batch_stats": {},
+            "pipeline_summary": []
+        }

@@ -520,6 +520,11 @@ export const adminAPI = {
     return fetchAPI('/admin/pipeline/stats');
   },
 
+  // Get pipeline metrics dashboard data (v1.24.0)
+  getPipelineMetrics: async () => {
+    return fetchAPI('/admin/pipeline/metrics');
+  },
+
   // Get UPC backfill status
   getUPCBackfillStatus: async () => {
     return fetchAPI('/admin/pipeline/upc-backfill/status');
