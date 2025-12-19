@@ -313,8 +313,17 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                 </div>
               </div>
 
-              {/* Dimensions - for supplies */}
-              {form.category === 'supplies' && (
+              {/* Dimensions - for supplies and supply-related categories */}
+              {(form.category === 'supplies' ||
+                form.category?.toLowerCase().includes('bag') ||
+                form.category?.toLowerCase().includes('board') ||
+                form.category?.toLowerCase().includes('bin') ||
+                form.category?.toLowerCase().includes('divider') ||
+                form.category?.toLowerCase().includes('case') ||
+                form.category?.toLowerCase().includes('box') ||
+                form.category?.toLowerCase().includes('sleeve') ||
+                form.category?.toLowerCase().includes('toploader') ||
+                form.category?.toLowerCase().includes('partition')) && (
                 <div className="space-y-3 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
                   <p className="text-sm font-medium text-zinc-300">Dimensions (inches)</p>
 
