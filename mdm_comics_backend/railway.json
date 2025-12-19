@@ -2,11 +2,11 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "api.Dockerfile",
+    "dockerfilePath": "mdm_comics_backend/api.Dockerfile",
     "watchPatterns": [
-      "app/**",
-      "requirements.txt",
-      "api.Dockerfile"
+      "mdm_comics_backend/app/**",
+      "mdm_comics_backend/requirements.txt",
+      "mdm_comics_backend/api.Dockerfile"
     ]
   },
   "deploy": {
