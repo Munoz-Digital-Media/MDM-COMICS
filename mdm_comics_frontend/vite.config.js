@@ -30,7 +30,13 @@ export default defineConfig({
     setupFiles: './src/test/setupTests.js',
     coverage: {
       provider: 'c8',
-      reporter: ['text', 'html']
+      reporter: ['text', 'html', 'lcov'],
+      all: true,
+      lines: 100,
+      functions: 100,
+      branches: 100,
+      statements: 100,
+      reportsDirectory: './coverage'
     }
   }
 })

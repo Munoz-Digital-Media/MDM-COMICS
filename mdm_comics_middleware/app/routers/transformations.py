@@ -1,7 +1,7 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 router = APIRouter(prefix="/middleware", tags=["middleware-service"])
 
@@ -26,7 +26,7 @@ class NormalizeAddressResponse(BaseModel):
 class HeaderPropagationRequest(BaseModel):
     user_id: str
     email: EmailStr
-    roles: List[str] = []
+    roles: List[str] = Field(default_factory=list)
 
 
 class HeaderPropagationResponse(BaseModel):
