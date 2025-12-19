@@ -1,5 +1,5 @@
 """
-Pipeline Job Scheduler v1.10.0
+Pipeline Job Scheduler v1.24.0
 
 Automated data acquisition jobs that ACTUALLY RUN.
 
@@ -15,6 +15,8 @@ Jobs:
 9. Cover Hash Backfill - Generate perceptual hashes for image search (v1.9.4)
 10. Image Acquisition - Download covers to S3, generate thumbnails+hashes (v1.9.5)
 11. Multi-Source Enrichment - Rotate between Metron/ComicVine with failover (v1.10.0)
+12. Stall Detection - Adaptive stall detection with data-driven thresholds (v1.24.0)
+13. Metrics Retention - 90-day retention cleanup for pipeline metrics (v1.24.0)
 
 All jobs use checkpoints for crash recovery and log to DLQ on failure.
 
@@ -28,6 +30,12 @@ Automatic Offset Sync (v1.9.2):
 - GCD import job ALWAYS syncs offset to actual DB count on exit
 - Ensures correct resume position whether job completes, fails, or is killed
 - Prevents re-processing of already-imported records after interruption
+
+Pipeline Instrumentation (v1.24.0):
+- Tracks batch metrics with millisecond precision
+- Records API call performance per source
+- Uses adaptive stall thresholds from P95 percentiles
+- 90-day retention per governance requirements
 """
 import asyncio
 import json
@@ -79,6 +87,10 @@ from app.jobs.pricecharting_jobs import (
     run_funko_price_sync_job,
     run_comic_price_sync_job,
 )
+
+# v1.24.0: Pipeline Instrumentation (Stall Detection & Metrics)
+from app.jobs.stall_detector import run_stall_detection_job
+from app.jobs.metrics_retention import run_metrics_retention_job
 
 logger = logging.getLogger(__name__)
 
@@ -4790,6 +4802,11 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("comic_pricecharting_match", run_comic_pricecharting_match_job, interval_minutes=60, initial_delay_minutes=15)),
             asyncio.create_task(self._run_job_loop("funko_price_sync", run_funko_price_sync_job, interval_minutes=60, initial_delay_minutes=30)),
             asyncio.create_task(self._run_job_loop("comic_price_sync", run_comic_price_sync_job, interval_minutes=1440, initial_delay_minutes=45)),
+            # v1.24.0: Pipeline Instrumentation (Stall Detection & Metrics Retention)
+            # Stall detection runs every 2 minutes for responsive stall recovery
+            asyncio.create_task(self._run_job_loop("stall_detection", run_stall_detection_job, interval_minutes=2)),
+            # Metrics retention runs daily at 3 AM (1440 min = 24h, delay ensures staggered start)
+            asyncio.create_task(self._run_job_loop("metrics_retention", run_metrics_retention_job, interval_minutes=1440, initial_delay_minutes=180)),
         ]
 
         print("[SCHEDULER] Scheduled jobs:")
@@ -4817,6 +4834,8 @@ class PipelineScheduler:
         print("[SCHEDULER]   - comic_pricecharting_match: every 60 minutes, delay=15min (match Comics to PC IDs)")
         print("[SCHEDULER]   - funko_price_sync: every 60 minutes, delay=30min (sync Funko prices from PC)")
         print("[SCHEDULER]   - comic_price_sync: every 24 hours, delay=45min (sync Comic prices from PC)")
+        print("[SCHEDULER]   - stall_detection: every 2 minutes (adaptive stall detection & self-healing)")
+        print("[SCHEDULER]   - metrics_retention: every 24 hours, delay=3h (90-day retention cleanup)")
         print("[SCHEDULER] Jobs will start after 5 second delay...")
 
     async def stop(self):
@@ -4895,6 +4914,9 @@ class PipelineScheduler:
             "comic_pricecharting_match": run_comic_pricecharting_match_job,
             "funko_price_sync": run_funko_price_sync_job,
             "comic_price_sync": run_comic_price_sync_job,
+            # v1.24.0: Pipeline Instrumentation (Stall Detection & Metrics Retention)
+            "stall_detection": run_stall_detection_job,
+            "metrics_retention": run_metrics_retention_job,
         }
 
         if job_name not in jobs:

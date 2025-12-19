@@ -64,6 +64,14 @@ from app.core.job_circuit_breaker import (
 )
 from app.core.search_cache import pricecharting_search_cache
 from app.services.match_scoring import find_best_match, MATCH_THRESHOLD
+from app.services.pipeline_metrics import (
+    pipeline_metrics,
+    PipelineType,
+    BatchResult,
+    ApiCallResult,
+    ApiSource,
+    generate_batch_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -383,7 +391,8 @@ async def run_funko_pricecharting_match_job(
         batch_size = PC_BATCH_SIZE
 
     job_name = "funko_pricecharting_match"
-    batch_id = str(uuid4())
+    batch_id = generate_batch_id("funko_pc_match")
+    metrics_batch_id = None  # Will be set after we know records_in_batch
 
     logger.info(f"[{job_name}] Starting Funko PriceCharting matching (batch: {batch_id}, batch_size: {batch_size})")
 
@@ -405,6 +414,18 @@ async def run_funko_pricecharting_match_job(
             "circuit_opens": 0,
         }
 
+        # Start pipeline metrics tracking
+        try:
+            await pipeline_metrics.start_batch(
+                batch_id=batch_id,
+                pipeline_type=PipelineType.FUNKO_PRICECHARTING_MATCH.value,
+                records_in_batch=batch_size,  # Estimated, will update on completion
+                db=db
+            )
+            metrics_batch_id = batch_id
+        except Exception as e:
+            logger.warning(f"[{job_name}] Failed to start metrics tracking: {e}")
+
         try:
             pc_token = os.getenv("PRICECHARTING_API_TOKEN")
             if not pc_token:
@@ -414,6 +435,8 @@ async def run_funko_pricecharting_match_job(
                     is_running=False,
                     last_error="Missing PRICECHARTING_API_TOKEN"
                 )
+                if metrics_batch_id:
+                    await pipeline_metrics.fail_batch(batch_id, "config_error", db)
                 return {"status": "error", "message": "Missing API token"}
 
             state_data = checkpoint.get("state_data", {})
@@ -457,6 +480,13 @@ async def run_funko_pricecharting_match_job(
                         break
 
                     logger.info(f"[{job_name}] Processing {len(funkos)} Funkos")
+
+                    # Heartbeat for stall detection
+                    if metrics_batch_id:
+                        try:
+                            await pipeline_metrics.heartbeat(batch_id, db)
+                        except Exception:
+                            pass  # Non-critical
 
                     for funko in funkos:
                         funko_id = funko.id
@@ -559,6 +589,22 @@ async def run_funko_pricecharting_match_job(
                 is_running=False,
             )
 
+            # Complete metrics tracking
+            if metrics_batch_id:
+                try:
+                    await pipeline_metrics.complete_batch(
+                        batch_id,
+                        BatchResult(
+                            records_processed=stats["processed"],
+                            records_enriched=stats["matched"],
+                            records_skipped=0,
+                            records_failed=stats["errors"]
+                        ),
+                        db
+                    )
+                except Exception as e:
+                    logger.warning(f"[{job_name}] Failed to complete metrics: {e}")
+
             logger.info(f"[{job_name}] Complete: {stats}")
             return {"status": "success", **stats}
 
@@ -571,6 +617,12 @@ async def run_funko_pricecharting_match_job(
                 is_running=False,
                 last_error=str(e),
             )
+            # Fail metrics tracking
+            if metrics_batch_id:
+                try:
+                    await pipeline_metrics.fail_batch(batch_id, "unhandled_exception", db)
+                except Exception:
+                    pass
             return {"status": "error", "message": str(e), **stats}
 
 
@@ -599,7 +651,8 @@ async def run_comic_pricecharting_match_job(
         batch_size = PC_BATCH_SIZE
 
     job_name = "comic_pricecharting_match"
-    batch_id = str(uuid4())
+    batch_id = generate_batch_id("comic_pc_match")
+    metrics_batch_id = None
 
     logger.info(f"[{job_name}] Starting Comic PriceCharting matching (batch: {batch_id}, batch_size: {batch_size})")
 
@@ -620,6 +673,18 @@ async def run_comic_pricecharting_match_job(
             "circuit_opens": 0,
         }
 
+        # Start pipeline metrics tracking
+        try:
+            await pipeline_metrics.start_batch(
+                batch_id=batch_id,
+                pipeline_type=PipelineType.COMIC_PRICECHARTING_MATCH.value,
+                records_in_batch=batch_size,
+                db=db
+            )
+            metrics_batch_id = batch_id
+        except Exception as e:
+            logger.warning(f"[{job_name}] Failed to start metrics tracking: {e}")
+
         try:
             pc_token = os.getenv("PRICECHARTING_API_TOKEN")
             if not pc_token:
@@ -629,6 +694,8 @@ async def run_comic_pricecharting_match_job(
                     is_running=False,
                     last_error="Missing PRICECHARTING_API_TOKEN"
                 )
+                if metrics_batch_id:
+                    await pipeline_metrics.fail_batch(batch_id, "config_error", db)
                 return {"status": "error", "message": "Missing API token"}
 
             state_data = checkpoint.get("state_data", {})
@@ -677,6 +744,13 @@ async def run_comic_pricecharting_match_job(
                         break
 
                     logger.info(f"[{job_name}] Processing {len(comics)} Comics")
+
+                    # Heartbeat for stall detection
+                    if metrics_batch_id:
+                        try:
+                            await pipeline_metrics.heartbeat(batch_id, db)
+                        except Exception:
+                            pass  # Non-critical
 
                     for comic in comics:
                         comic_id = comic.id
@@ -817,6 +891,22 @@ async def run_comic_pricecharting_match_job(
                 is_running=False,
             )
 
+            # Complete metrics tracking
+            if metrics_batch_id:
+                try:
+                    await pipeline_metrics.complete_batch(
+                        batch_id,
+                        BatchResult(
+                            records_processed=stats["processed"],
+                            records_enriched=stats["matched"],
+                            records_skipped=0,
+                            records_failed=stats["errors"]
+                        ),
+                        db
+                    )
+                except Exception as e:
+                    logger.warning(f"[{job_name}] Failed to complete metrics: {e}")
+
             logger.info(f"[{job_name}] Complete: {stats}")
             return {"status": "success", **stats}
 
@@ -829,6 +919,12 @@ async def run_comic_pricecharting_match_job(
                 is_running=False,
                 last_error=str(e),
             )
+            # Fail metrics tracking
+            if metrics_batch_id:
+                try:
+                    await pipeline_metrics.fail_batch(batch_id, "unhandled_exception", db)
+                except Exception:
+                    pass
             return {"status": "error", "message": str(e), **stats}
 
 
@@ -857,7 +953,8 @@ async def run_funko_price_sync_job(
         batch_size = PC_BATCH_SIZE
 
     job_name = "funko_price_sync"
-    batch_id = str(uuid4())
+    batch_id = generate_batch_id("funko_pc_sync")
+    metrics_batch_id = None
 
     logger.info(f"[{job_name}] Starting Funko price sync (batch: {batch_id}, batch_size: {batch_size})")
 
@@ -878,6 +975,18 @@ async def run_funko_price_sync_job(
             "circuit_opens": 0,
         }
 
+        # Start pipeline metrics tracking
+        try:
+            await pipeline_metrics.start_batch(
+                batch_id=batch_id,
+                pipeline_type=PipelineType.FUNKO_PRICE_SYNC.value,
+                records_in_batch=batch_size,
+                db=db
+            )
+            metrics_batch_id = batch_id
+        except Exception as e:
+            logger.warning(f"[{job_name}] Failed to start metrics tracking: {e}")
+
         try:
             pc_token = os.getenv("PRICECHARTING_API_TOKEN")
             if not pc_token:
@@ -887,6 +996,8 @@ async def run_funko_price_sync_job(
                     is_running=False,
                     last_error="Missing PRICECHARTING_API_TOKEN"
                 )
+                if metrics_batch_id:
+                    await pipeline_metrics.fail_batch(batch_id, "config_error", db)
                 return {"status": "error", "message": "Missing API token"}
 
             state_data = checkpoint.get("state_data", {})
@@ -933,6 +1044,13 @@ async def run_funko_price_sync_job(
                         break
 
                     logger.info(f"[{job_name}] Processing {len(funkos)} Funkos")
+
+                    # Heartbeat for stall detection
+                    if metrics_batch_id:
+                        try:
+                            await pipeline_metrics.heartbeat(batch_id, db)
+                        except Exception:
+                            pass  # Non-critical
 
                     for funko in funkos:
                         funko_id = funko.id
@@ -1070,6 +1188,22 @@ async def run_funko_price_sync_job(
                 is_running=False,
             )
 
+            # Complete metrics tracking
+            if metrics_batch_id:
+                try:
+                    await pipeline_metrics.complete_batch(
+                        batch_id,
+                        BatchResult(
+                            records_processed=stats["processed"],
+                            records_enriched=stats["updated"],
+                            records_skipped=0,
+                            records_failed=stats["errors"]
+                        ),
+                        db
+                    )
+                except Exception as e:
+                    logger.warning(f"[{job_name}] Failed to complete metrics: {e}")
+
             logger.info(f"[{job_name}] Complete: {stats}")
             return {"status": "success", **stats}
 
@@ -1082,6 +1216,12 @@ async def run_funko_price_sync_job(
                 is_running=False,
                 last_error=str(e),
             )
+            # Fail metrics tracking
+            if metrics_batch_id:
+                try:
+                    await pipeline_metrics.fail_batch(batch_id, "unhandled_exception", db)
+                except Exception:
+                    pass
             return {"status": "error", "message": str(e), **stats}
 
 
@@ -1110,7 +1250,8 @@ async def run_comic_price_sync_job(
         batch_size = PC_BATCH_SIZE
 
     job_name = "comic_price_sync"
-    batch_id = str(uuid4())
+    batch_id = generate_batch_id("comic_pc_sync")
+    metrics_batch_id = None
 
     logger.info(f"[{job_name}] Starting Comic price sync (batch: {batch_id}, batch_size: {batch_size})")
 
@@ -1131,6 +1272,18 @@ async def run_comic_price_sync_job(
             "circuit_opens": 0,
         }
 
+        # Start pipeline metrics tracking
+        try:
+            await pipeline_metrics.start_batch(
+                batch_id=batch_id,
+                pipeline_type=PipelineType.COMIC_PRICE_SYNC.value,
+                records_in_batch=batch_size,
+                db=db
+            )
+            metrics_batch_id = batch_id
+        except Exception as e:
+            logger.warning(f"[{job_name}] Failed to start metrics tracking: {e}")
+
         try:
             pc_token = os.getenv("PRICECHARTING_API_TOKEN")
             if not pc_token:
@@ -1140,6 +1293,8 @@ async def run_comic_price_sync_job(
                     is_running=False,
                     last_error="Missing PRICECHARTING_API_TOKEN"
                 )
+                if metrics_batch_id:
+                    await pipeline_metrics.fail_batch(batch_id, "config_error", db)
                 return {"status": "error", "message": "Missing API token"}
 
             state_data = checkpoint.get("state_data", {})
@@ -1185,6 +1340,13 @@ async def run_comic_price_sync_job(
                         break
 
                     logger.info(f"[{job_name}] Processing {len(comics)} Comics")
+
+                    # Heartbeat for stall detection
+                    if metrics_batch_id:
+                        try:
+                            await pipeline_metrics.heartbeat(batch_id, db)
+                        except Exception:
+                            pass  # Non-critical
 
                     for comic in comics:
                         comic_id = comic.id
@@ -1294,6 +1456,22 @@ async def run_comic_price_sync_job(
                 is_running=False,
             )
 
+            # Complete metrics tracking
+            if metrics_batch_id:
+                try:
+                    await pipeline_metrics.complete_batch(
+                        batch_id,
+                        BatchResult(
+                            records_processed=stats["processed"],
+                            records_enriched=stats["updated"],
+                            records_skipped=0,
+                            records_failed=stats["errors"]
+                        ),
+                        db
+                    )
+                except Exception as e:
+                    logger.warning(f"[{job_name}] Failed to complete metrics: {e}")
+
             logger.info(f"[{job_name}] Complete: {stats}")
             return {"status": "success", **stats}
 
@@ -1306,4 +1484,10 @@ async def run_comic_price_sync_job(
                 is_running=False,
                 last_error=str(e),
             )
+            # Fail metrics tracking
+            if metrics_batch_id:
+                try:
+                    await pipeline_metrics.fail_batch(batch_id, "unhandled_exception", db)
+                except Exception:
+                    pass
             return {"status": "error", "message": str(e), **stats}
