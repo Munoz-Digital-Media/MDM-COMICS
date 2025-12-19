@@ -299,15 +299,15 @@ import './styles/animations.css';
       supplies: products.filter(p => p.category === "supplies"),
     }), [products]);
 
-    // Helper to get category products with optional sorting
+    // Helper to get FEATURED category products only for homepage sections
     const getCategoryProducts = useCallback((category, count = 5) => {
       const categoryProducts = category === "bagged-boarded"
         ? categorizedProducts.comics
         : categorizedProducts[category] || [];
 
-      // Sort by featured first, then return requested count
-      return [...categoryProducts]
-        .sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0))
+      // Only return featured products for homepage display
+      return categoryProducts
+        .filter(p => p.featured === true)
         .slice(0, count);
     }, [categorizedProducts]);
 

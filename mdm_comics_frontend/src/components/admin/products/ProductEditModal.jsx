@@ -3,8 +3,10 @@
  * Admin Console v1.4.0
  */
 import React, { useState, useEffect } from 'react';
-import { X, Save, Loader2, Image as ImageIcon } from 'lucide-react';
+import { X, Save, Loader2, Image as ImageIcon, AlertTriangle } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
+
+const FEATURED_LIMIT = 5; // Max featured products per category section on homepage
 
 export default function ProductEditModal({ product, onClose, onSave }) {
   const [form, setForm] = useState({
@@ -27,6 +29,8 @@ export default function ProductEditModal({ product, onClose, onSave }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [tagInput, setTagInput] = useState('');
+  const [featuredCount, setFeaturedCount] = useState(0);
+  const [featuredLimitReached, setFeaturedLimitReached] = useState(false);
 
   // Initialize form with product data
   useEffect(() => {
@@ -50,6 +54,32 @@ export default function ProductEditModal({ product, onClose, onSave }) {
       });
     }
   }, [product]);
+
+  // Fetch featured product count to enforce limit
+  useEffect(() => {
+    const fetchFeaturedCount = async () => {
+      try {
+        const data = await adminAPI.getAdminProducts({ limit: 100, offset: 0 });
+        const featured = (data.items || []).filter(p => p.featured === true);
+        setFeaturedCount(featured.length);
+        // Check if limit reached (excluding current product if already featured)
+        const currentIsFeatured = product?.featured || false;
+        const effectiveCount = currentIsFeatured ? featured.length - 1 : featured.length;
+        setFeaturedLimitReached(effectiveCount >= FEATURED_LIMIT);
+      } catch (err) {
+        console.error('Failed to fetch featured count:', err);
+      }
+    };
+    fetchFeaturedCount();
+  }, [product]);
+
+  const handleFeaturedChange = (checked) => {
+    if (checked && featuredLimitReached && !product?.featured) {
+      // Don't allow checking if limit reached and this product isn't already featured
+      return;
+    }
+    setForm({ ...form, featured: checked });
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -277,15 +307,24 @@ export default function ProductEditModal({ product, onClose, onSave }) {
               </div>
 
               {/* Featured */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.featured}
-                  onChange={(e) => setForm({ ...form, featured: e.target.checked })}
-                  className="w-4 h-4 rounded"
-                />
-                <span className="text-zinc-300">Featured Product</span>
-              </label>
+              <div className="space-y-2">
+                <label className={`flex items-center gap-2 ${featuredLimitReached && !product?.featured ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                  <input
+                    type="checkbox"
+                    checked={form.featured}
+                    onChange={(e) => handleFeaturedChange(e.target.checked)}
+                    disabled={featuredLimitReached && !product?.featured && !form.featured}
+                    className="w-4 h-4 rounded"
+                  />
+                  <span className="text-zinc-300">Featured Product</span>
+                </label>
+                {featuredLimitReached && !product?.featured && (
+                  <div className="flex items-center gap-2 text-amber-400 text-xs">
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>{featuredCount} Featured Products already defined. Please deselect 1 or more to add something new.</span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Right Column - Preview */}
