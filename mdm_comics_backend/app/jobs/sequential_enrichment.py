@@ -2300,13 +2300,13 @@ async def run_sequential_exhaustive_enrichment_job(
                     return None  # Continue running if column doesn't exist
 
                 if signal in ('pause', 'stop'):
-                    # Checkpoint immediately
+                    # Checkpoint immediately - v2.3.2: ADD to totals, don't overwrite
                     await db.execute(text("""
                         UPDATE pipeline_checkpoints
                         SET state_data = jsonb_build_object('last_id', CAST(:last_id AS integer)),
-                            total_processed = :processed,
-                            total_updated = :updated,
-                            total_errors = :errors,
+                            total_processed = COALESCE(total_processed, 0) + :processed,
+                            total_updated = COALESCE(total_updated, 0) + :updated,
+                            total_errors = COALESCE(total_errors, 0) + :errors,
                             is_running = false,
                             last_run_completed = NOW(),
                             updated_at = NOW()

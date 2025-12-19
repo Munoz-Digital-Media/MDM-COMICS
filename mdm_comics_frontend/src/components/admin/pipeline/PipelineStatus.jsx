@@ -166,7 +166,13 @@ export default function PipelineStatus({ compact = false }) {
   const handleTriggerMSE = async () => {
     setActionLoading(true);
     try {
-      await adminAPI.triggerSequentialEnrichment({ batch_size: 100, max_records: 0 });
+      // v1.20.1: Use startJob for resume (preserves stats), triggerSequentialEnrichment for fresh start
+      const shouldResume = mseControlSignal === 'pause' || mseControlSignal === 'stop';
+      if (shouldResume) {
+        await adminAPI.startJob('sequential_enrichment');
+      } else {
+        await adminAPI.triggerSequentialEnrichment({ batch_size: 100, max_records: 0 });
+      }
       await fetchStatus();
     } catch (err) {
       setError(err.message);
