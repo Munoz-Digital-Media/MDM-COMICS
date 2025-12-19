@@ -93,15 +93,37 @@ export default function ProductDetailPage({
   const [showZoom, setShowZoom] = useState(false);
   const [addedFeedback, setAddedFeedback] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const feedbackTimeoutRef = React.useRef(null);
 
   // Build array of all product images
   const allImages = React.useMemo(() => {
     const primary = product.image || product.image_url;
     const gallery = product.images || [];
+
+    // DEBUG: Log image data to identify issues
+    if (import.meta.env.DEV) {
+      console.log('[ProductDetailPage] Image data:', {
+        productId: product.id,
+        image: product.image,
+        image_url: product.image_url,
+        images: product.images,
+        imagesLength: gallery.length
+      });
+    }
+
     if (!primary) return [];
-    // Primary first, then gallery images
+    // Primary first, then gallery images (deduplicated)
     return [primary, ...gallery.filter(img => img !== primary)];
-  }, [product.image, product.image_url, product.images]);
+  }, [product.id, product.image, product.image_url, product.images]);
+
+  // Cleanup feedback timeout on unmount
+  React.useEffect(() => {
+    return () => {
+      if (feedbackTimeoutRef.current) {
+        clearTimeout(feedbackTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleQuantityChange = useCallback((delta) => {
     setQuantity(prev => {
@@ -120,9 +142,12 @@ export default function ProductDetailPage({
       onAddToCart(product);
     }
 
-    // Show feedback
+    // Show feedback with proper cleanup
     setAddedFeedback(true);
-    setTimeout(() => setAddedFeedback(false), 2000);
+    if (feedbackTimeoutRef.current) {
+      clearTimeout(feedbackTimeoutRef.current);
+    }
+    feedbackTimeoutRef.current = setTimeout(() => setAddedFeedback(false), 2000);
 
     // Reset quantity
     setQuantity(1);
@@ -235,23 +260,27 @@ export default function ProductDetailPage({
 
             {/* Image Thumbnails Gallery */}
             {allImages.length > 1 && (
-              <div className="mt-4 flex gap-2 overflow-x-auto pb-2">
+              <div className="mt-4 flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-zinc-700">
                 {allImages.map((img, index) => (
                   <button
-                    key={index}
+                    key={img}
                     onClick={() => handleImageSelect(index)}
                     className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
                       selectedImageIndex === index
                         ? 'border-orange-500 ring-2 ring-orange-500/30'
                         : 'border-zinc-700 hover:border-zinc-500'
                     }`}
-                    aria-label={`View image ${index + 1}`}
+                    aria-label={`View image ${index + 1} of ${allImages.length}`}
                   >
                     <img
                       src={img}
                       alt={`${product.name} - view ${index + 1}`}
                       className="w-full h-full object-cover"
                       loading="lazy"
+                      onError={(e) => {
+                        e.target.onerror = null;
+                        e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64"%3E%3Crect fill="%2327272a" width="64" height="64"/%3E%3Ctext fill="%2371717a" x="50%25" y="50%25" text-anchor="middle" dy=".3em" font-size="10"%3E?%3C/text%3E%3C/svg%3E';
+                      }}
                     />
                   </button>
                 ))}

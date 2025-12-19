@@ -89,6 +89,16 @@ export function useProducts() {
       const productsList = Array.isArray(data) ? data : (data.products || []);
       const transformed = productsList.map(transformProduct);
 
+      // DEBUG: Log a sample product to verify images are included
+      if (import.meta.env.DEV && transformed.length > 0) {
+        const sampleWithImages = transformed.find(p => p.images && p.images.length > 0);
+        console.log('[useProducts] Sample product with images:', sampleWithImages ? {
+          id: sampleWithImages.id,
+          name: sampleWithImages.name,
+          imagesCount: sampleWithImages.images.length
+        } : 'No products with images found');
+      }
+
       setProducts(transformed);
       setError(null);
     } catch (err) {
