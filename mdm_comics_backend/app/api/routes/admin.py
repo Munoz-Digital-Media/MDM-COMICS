@@ -456,6 +456,7 @@ async def list_products(
                 "isbn": p.isbn,
                 "bin_id": p.bin_id,
                 "image_url": p.image_url,
+                "images": p.images or [],
                 "tags": p.tags or [],
                 "featured": p.featured or False,
                 "publisher": p.publisher,
