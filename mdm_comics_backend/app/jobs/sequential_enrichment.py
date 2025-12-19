@@ -118,6 +118,12 @@ from app.core.database import AsyncSessionLocal
 from app.core.utils import utcnow
 from app.core.http_client import RateLimitExceeded
 
+# v2.3.0: Track enrichment attempts for re-query logic
+try:
+    from app.models.source_quota import EnrichmentAttempt
+except ImportError:
+    EnrichmentAttempt = None
+
 logger = logging.getLogger(__name__)
 
 # Type variable for retry decorator
@@ -2011,6 +2017,105 @@ def get_series_cache() -> SeriesCache:
     if _series_cache is None:
         _series_cache = SeriesCache()
     return _series_cache
+
+
+# =============================================================================
+# v2.3.0: ENRICHMENT ATTEMPT TRACKING
+# =============================================================================
+
+async def record_enrichment_attempt(
+    db: AsyncSession,
+    comic_id: int,
+    source_name: str,
+    success: bool,
+    used_upc: bool = False,
+    used_isbn: bool = False,
+    fields_returned: Optional[List[str]] = None,
+    error_message: Optional[str] = None,
+) -> None:
+    """
+    Record an enrichment attempt for tracking and re-query logic.
+    
+    v2.3.0: Tracks whether UPC/ISBN was used for the query.
+    This enables re-querying sources when we later acquire identifiers.
+    """
+    if EnrichmentAttempt is None:
+        return  # Model not available
+    
+    try:
+        attempt = EnrichmentAttempt(
+            entity_type="comic_issue",
+            entity_id=comic_id,
+            source_name=source_name,
+            success=success,
+            error_message=error_message[:500] if error_message else None,
+            data_fields_returned={
+                "fields": fields_returned or [],
+                "query_method": {
+                    "used_upc": used_upc,
+                    "used_isbn": used_isbn,
+                    "used_fuzzy": not (used_upc or used_isbn),
+                }
+            }
+        )
+        db.add(attempt)
+        # Don't commit here - let the batch write handle it
+    except Exception as e:
+        logger.debug(f"[tracking] Failed to record attempt: {e}")
+
+
+async def needs_requery_with_identifier(
+    db: AsyncSession,
+    comic_id: int,
+    source_name: str,
+    has_upc: bool,
+    has_isbn: bool,
+) -> bool:
+    """
+    Check if we should re-query a source because we now have UPC/ISBN
+    but previously queried with fuzzy match only.
+    
+    Returns True if:
+    1. We have UPC/ISBN now
+    2. Previous successful attempt used fuzzy match (not UPC/ISBN)
+    """
+    if not (has_upc or has_isbn):
+        return False  # No identifier to use
+    
+    if EnrichmentAttempt is None:
+        return False  # Model not available
+    
+    try:
+        # Check last successful attempt for this comic+source
+        result = await db.execute(text("""
+            SELECT data_fields_returned
+            FROM enrichment_attempts
+            WHERE entity_type = 'comic_issue'
+              AND entity_id = :comic_id
+              AND source_name = :source
+              AND success = true
+            ORDER BY attempt_at DESC
+            LIMIT 1
+        """), {"comic_id": comic_id, "source": source_name})
+        
+        row = result.fetchone()
+        if not row or not row[0]:
+            return True  # No prior attempt, should query
+        
+        query_method = row[0].get("query_method", {})
+        used_upc = query_method.get("used_upc", False)
+        used_isbn = query_method.get("used_isbn", False)
+        
+        # Re-query if we have identifier now but didn't use it before
+        if has_upc and not used_upc:
+            return True
+        if has_isbn and not used_isbn:
+            return True
+        
+        return False
+    except Exception as e:
+        logger.debug(f"[tracking] Error checking requery need: {e}")
+        return False  # Don't re-query on error
 
 
 # =============================================================================
