@@ -33,12 +33,24 @@ function transformProduct(product) {
     price: parseFloat(product.price) || 0,
     originalPrice: product.original_price ? parseFloat(product.original_price) : null,
     image: product.image_url || product.image || `https://placehold.co/400x500/27272a/f59e0b?text=$` + `{encodeURIComponent(product.name?.charAt(0) || '?')}`,
+    image_url: product.image_url,
+    images: product.images || [],
     description: product.description || '',
     stock: product.stock ?? 0,
     featured: product.featured ?? false,
     rating: product.rating ?? 4.0,
     tags: product.tags || [],
-    sku: product.sku
+    sku: product.sku,
+    upc: product.upc,
+    // Dimensions
+    interior_width: product.interior_width,
+    interior_height: product.interior_height,
+    interior_length: product.interior_length,
+    exterior_width: product.exterior_width,
+    exterior_height: product.exterior_height,
+    exterior_length: product.exterior_length,
+    weight: product.weight,
+    material: product.material
   };
 }
 
