@@ -111,6 +111,7 @@ from typing import Optional, Dict, Any, List, Set, Callable, TypeVar
 from uuid import uuid4
 
 import httpx
+from dateutil import parser as dateutil_parser
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -128,6 +129,48 @@ logger = logging.getLogger(__name__)
 
 # Type variable for retry decorator
 T = TypeVar('T')
+
+
+# =============================================================================
+# v2.3.1: DATE PARSING HELPER
+# =============================================================================
+def parse_date_value(value):
+    """
+    Parse date strings to proper date objects.
+
+    Handles formats like:
+    - "February 11, 1975"
+    - "1975-02-11"
+    - "02/11/1975"
+    - Already date/datetime objects
+
+    Returns None if parsing fails.
+    """
+    from datetime import datetime, date as date_type
+    
+    if value is None:
+        return None
+
+    # Already a date or datetime object
+    if isinstance(value, (datetime, date_type)):
+        if isinstance(value, datetime):
+            return value.date()
+        return value
+
+    # Not a string - return as-is
+    if not isinstance(value, str):
+        return value
+
+    # Empty string
+    if not value.strip():
+        return None
+
+    try:
+        parsed = dateutil_parser.parse(value.strip())
+        return parsed.date()
+    except (ValueError, TypeError, OverflowError) as e:
+        logger.debug(f"[enrichment] Could not parse date '{value}': {e}")
+        return None
 
 # =============================================================================
 # E-H02 FIX: CONSISTENT HTTP TIMEOUT
@@ -2513,6 +2556,11 @@ async def run_sequential_exhaustive_enrichment_job(
                                 if field not in ALLOWED_UPDATE_FIELDS:
                                     skipped_fields.add(field)
                                     continue
+                                # v2.3.1: Parse date fields to proper date objects
+                                if field in ("cover_date", "store_date"):
+                                    value = parse_date_value(value)
+                                    if value is None:
+                                        continue  # Skip if date couldn't be parsed
                                 set_clauses.append(f"{field} = :{field}")
                                 params[field] = value
 
