@@ -19,6 +19,7 @@ const ScannerApp = lazy(() => import("./components/admin/ingestion/ScannerApp"))
 import AboutContact from "./components/AboutContact";
 import MyOrders from "./components/MyOrders";
 import RefundPolicy from "./components/RefundPolicy";
+import AccountDashboard from "./components/AccountDashboard";
 
 // FE-PERF-003: CSS animations moved to separate file for caching
 import './styles/animations.css';
@@ -28,8 +29,8 @@ import './styles/animations.css';
   // FE-STATE-002: buildDate now injected at build time via vite.config.js
   // ============================================================================
   const BUILD_INFO = {
-    version: "1.5.0",
-    buildNumber: 15,
+    version: "1.6.0",
+    buildNumber: 16,
     buildDate: typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : new Date().toISOString(),
     environment: typeof __BUILD_ENV__ !== 'undefined' ? __BUILD_ENV__ : "development"
   };
@@ -77,6 +78,7 @@ import './styles/animations.css';
     const [isAboutContactOpen, setIsAboutContactOpen] = useState(false);
     const [isMyOrdersOpen, setIsMyOrdersOpen] = useState(false);
     const [isRefundPolicyOpen, setIsRefundPolicyOpen] = useState(false);
+    const [isAccountOpen, setIsAccountOpen] = useState(false);
     const [authMode, setAuthMode] = useState("login");
     const [authLoading, setAuthLoading] = useState(true);
 
@@ -434,6 +436,13 @@ import './styles/animations.css';
                         </p>
                         <p className="text-xs text-zinc-500">{user.email}</p>
                       </div>
+                      <button
+                        onClick={() => setIsAccountOpen(true)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+                      >
+                        <User className="w-4 h-4" />
+                        My Account
+                      </button>
                       <button
                         onClick={() => setIsMyOrdersOpen(true)}
                         className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
@@ -1040,6 +1049,15 @@ import './styles/animations.css';
         {/* Refund Policy Modal - BCW Refund Module v1.0.0 */}
         {isRefundPolicyOpen && (
           <RefundPolicy onClose={() => setIsRefundPolicyOpen(false)} />
+        )}
+
+        {/* Account Dashboard - v1.6.0 */}
+        {isAccountOpen && (
+          <AccountDashboard
+            user={user}
+            onClose={() => setIsAccountOpen(false)}
+            onLogout={handleLogout}
+          />
         )}
 
         {/* Footer */}
