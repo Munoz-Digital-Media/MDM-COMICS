@@ -41,6 +41,7 @@ Per constitution_cyberSec.json Section 5:
 Per constitution_devops_doctrine.json:
 > "circuit_breakers": true
 """
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -122,8 +123,16 @@ async def cached_pricecharting_search(
         )
 
         if response.status_code == 200:
-            data = response.json()
-            return data.get("products", [])
+            try:
+                data = response.json()
+                return data.get("products", [])
+            except json.JSONDecodeError as e:
+                # PC-ANALYSIS-2025-12-18: Handle malformed JSON responses
+                logger.warning(
+                    f"[pricecharting_search] JSON decode error for query '{q}': {e}. "
+                    f"Response text (first 200 chars): {response.text[:200]}"
+                )
+                return []
         elif response.status_code >= 500:
             circuit_breaker._on_failure(
                 Exception(f"API returned {response.status_code}")
@@ -805,7 +814,15 @@ async def run_funko_price_sync_job(
                                 response = await circuit_breaker.execute(do_price_fetch)
 
                                 if response.status_code == 200:
-                                    data = response.json()
+                                    try:
+                                        data = response.json()
+                                    except json.JSONDecodeError as e:
+                                        # PC-ANALYSIS-2025-12-18: Handle malformed JSON responses
+                                        logger.warning(
+                                            f"[{job_name}] JSON decode error for Funko {funko_id}: {e}"
+                                        )
+                                        stats["errors"] += 1
+                                        continue
 
                                     # Extract prices (in cents, convert to dollars)
                                     loose_price = data.get("loose-price")
@@ -1012,7 +1029,15 @@ async def run_comic_price_sync_job(
                                 response = await circuit_breaker.execute(do_price_fetch)
 
                                 if response.status_code == 200:
-                                    data = response.json()
+                                    try:
+                                        data = response.json()
+                                    except json.JSONDecodeError as e:
+                                        # PC-ANALYSIS-2025-12-18: Handle malformed JSON responses
+                                        logger.warning(
+                                            f"[{job_name}] JSON decode error for Comic {comic_id}: {e}"
+                                        )
+                                        stats["errors"] += 1
+                                        continue
 
                                     # For comics, use CIB price as guide value
                                     cib_price = data.get("cib-price")

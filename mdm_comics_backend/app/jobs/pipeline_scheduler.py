@@ -89,7 +89,8 @@ logger = logging.getLogger(__name__)
 
 # Stale checkpoint timeout in hours - if a job claims to be "running" for longer
 # than this, we assume it crashed and clear the flag
-STALE_CHECKPOINT_TIMEOUT_HOURS = 4
+# PC-ANALYSIS-2025-12-18: Reduced from 4 to 1 hour to minimize lockout window after crashes
+STALE_CHECKPOINT_TIMEOUT_HOURS = 1
 
 # Self-healing configuration
 SELF_HEAL_CHECK_INTERVAL_MINUTES = 10  # How often to check for stalled jobs
@@ -695,15 +696,22 @@ async def run_funko_price_check_job():
 
 
 # =============================================================================
-# FULL PRICE SYNC JOB (Daily - All Funkos + Comics)
+# FULL PRICE SYNC JOB (DEPRECATED - PC-ANALYSIS-2025-12-18)
 # =============================================================================
+# WARNING: This job is deprecated. Use the independent jobs instead:
+#   - run_funko_price_sync_job() for Funkos
+#   - run_comic_price_sync_job() for Comics
+# The independent jobs provide:
+#   - Per-job circuit breaker isolation
+#   - Incremental sync (only stale records)
+#   - Better error handling and recovery
 
 async def run_full_price_sync_job():
     """
-    Full daily price sync for ALL Funkos and Comics.
+    DEPRECATED: Use run_funko_price_sync_job() and run_comic_price_sync_job() instead.
 
-    This job runs once daily and processes the ENTIRE database,
-    syncing prices from PriceCharting for every entity with a pricecharting_id.
+    This job is deprecated as of PC-ANALYSIS-2025-12-18.
+    It has been removed from the scheduler and will log a warning if called directly.
 
     Key features:
     - No record limit - processes ALL records
@@ -711,6 +719,13 @@ async def run_full_price_sync_job():
     - Commits in batches for progress visibility
     - Tracks error details for debugging
     """
+    # PC-ANALYSIS-2025-12-18: Log deprecation warning
+    logger.warning(
+        "[DEPRECATED] run_full_price_sync_job() is deprecated. "
+        "Use run_funko_price_sync_job() and run_comic_price_sync_job() instead. "
+        "See PC-ANALYSIS-2025-12-18 for details."
+    )
+
     from decimal import Decimal
 
     job_name = "full_price_sync"
@@ -991,17 +1006,23 @@ async def run_full_price_sync_job():
 
 
 # =============================================================================
-# PRICECHARTING MATCHING JOB (v1.10.3 - Discover & link pricecharting_id)
+# PRICECHARTING MATCHING JOB (DEPRECATED - PC-ANALYSIS-2025-12-18)
 # =============================================================================
+# WARNING: This job is deprecated. Use the independent jobs instead:
+#   - run_funko_pricecharting_match_job() for Funkos
+#   - run_comic_pricecharting_match_job() for Comics
+# The independent jobs provide:
+#   - Per-job circuit breaker isolation
+#   - Multi-factor match scoring
+#   - Search cache integration
+#   - Better error handling and recovery
 
 async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int = 0):
     """
-    Find and link PriceCharting IDs for BOTH Funkos AND Comics.
+    DEPRECATED: Use run_funko_pricecharting_match_job() and run_comic_pricecharting_match_job() instead.
 
-    This job searches PriceCharting by UPC/title to discover matching
-    products and populates the pricecharting_id field. Once set, the
-    full_price_sync job can fetch current prices, and changes are logged
-    to price_changelog for ML training.
+    This job is deprecated as of PC-ANALYSIS-2025-12-18.
+    It has been removed from the scheduler and will log a warning if called directly.
 
     Process:
     PHASE 1 - Funkos:
@@ -1022,6 +1043,13 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
         - constitution_cyberSec.json: Rate-limited API access, circuit breaker
         - constitution_db.json: Batch commits, checkpoint management
     """
+    # PC-ANALYSIS-2025-12-18: Log deprecation warning
+    logger.warning(
+        "[DEPRECATED] run_pricecharting_matching_job() is deprecated. "
+        "Use run_funko_pricecharting_match_job() and run_comic_pricecharting_match_job() instead. "
+        "See PC-ANALYSIS-2025-12-18 for details."
+    )
+
     job_name = "pricecharting_matching"
     batch_id = str(uuid4())
 
@@ -4729,10 +4757,9 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("cross_reference", run_cross_reference_job, interval_minutes=60)),
             # v1.9.0: Self-healing job - detects and restarts stalled jobs automatically
             asyncio.create_task(self._run_job_loop("self_healing", run_self_healing_job, interval_minutes=SELF_HEAL_CHECK_INTERVAL_MINUTES)),
-            # v1.9.3: Full price sync - processes ENTIRE DB daily for PriceCharting prices
-            asyncio.create_task(self._run_job_loop("full_price_sync", run_full_price_sync_job, interval_minutes=1440)),
-            # v1.10.3: PriceCharting matching - discovers pricecharting_id for Funkos + Comics
-            asyncio.create_task(self._run_job_loop("pricecharting_matching", run_pricecharting_matching_job, interval_minutes=60)),
+            # v1.9.3: DEPRECATED - Use independent jobs instead (v1.23.0+)
+            # PC-ANALYSIS-2025-12-18: Removed run_full_price_sync_job (replaced by funko_price_sync + comic_price_sync)
+            # PC-ANALYSIS-2025-12-18: Removed run_pricecharting_matching_job (replaced by funko_pricecharting_match + comic_pricecharting_match)
             # v1.10.3: Comprehensive enrichment - ALL sources, ALL fields, PARALLEL
             asyncio.create_task(self._run_job_loop("comprehensive_enrichment", run_comprehensive_enrichment_job, interval_minutes=30)),
             # v1.10.4: GCD Import - runs every 60 min until complete (~170k remaining)
@@ -4772,8 +4799,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - daily_snapshot: every 24 hours (AI/ML data)")
         print("[SCHEDULER]   - cross_reference: every 60 minutes (GCD-Primary linking)")
         print(f"[SCHEDULER]   - self_healing: every {SELF_HEAL_CHECK_INTERVAL_MINUTES} minutes (auto-restart stalled jobs)")
-        print("[SCHEDULER]   - full_price_sync: every 24 hours (ALL Funkos + Comics)")
-        print("[SCHEDULER]   - pricecharting_matching: every 60 minutes (Discover PC IDs)")
+        # PC-ANALYSIS-2025-12-18: Removed deprecated jobs (replaced by independent v1.23.0 jobs)
         print("[SCHEDULER]   - comprehensive_enrichment: every 30 minutes (ALL sources, parallel)")
         print("[SCHEDULER]   - gcd_import: every 60 minutes (finish remaining ~170k records)")
         print("[SCHEDULER]   - cover_enrichment: every 60 minutes (Phase 3: covers + creators from ComicVine)")
@@ -4852,12 +4878,13 @@ class PipelineScheduler:
             "gcd_import": run_gcd_import_job,  # v1.8.0
             "cross_reference": run_cross_reference_job,  # v1.8.0 - GCD-Primary
             "self_healing": run_self_healing_job,  # v1.9.0 - Auto-restart stalled jobs
-            "full_price_sync": run_full_price_sync_job,  # v1.9.3 - Full daily price sync
+            # PC-ANALYSIS-2025-12-18: Removed deprecated jobs (use independent v1.23.0 jobs)
+            # "full_price_sync": DEPRECATED -> use funko_price_sync + comic_price_sync
+            # "pricecharting_matching": DEPRECATED -> use funko_pricecharting_match + comic_pricecharting_match
             "cover_hash_backfill": run_cover_hash_backfill_job,  # v1.9.4 - Generate cover hashes for image search
             "image_acquisition": run_image_acquisition_job,  # v1.9.5 - Download covers to S3
             "multi_source_enrichment": run_multi_source_enrichment_job,  # v1.10.0 - Multi-source with rotator
             "cover_date_backfill": run_cover_date_backfill_job,  # v1.10.3 - Backfill cover_date from GCD
-            "pricecharting_matching": run_pricecharting_matching_job,  # v1.10.3 - Discover pricecharting_id
             "comprehensive_enrichment": run_comprehensive_enrichment_job,  # v1.10.3 - All sources, all fields, parallel
             "cover_enrichment": run_cover_enrichment_job,  # v1.10.5 - Phase 3: covers + creators from ComicVine
             "marvel_fandom": run_marvel_fandom_job,  # v1.10.8 - Story-level credits from Marvel Database
