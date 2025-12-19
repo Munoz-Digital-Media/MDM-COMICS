@@ -6,10 +6,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Filter, Plus, Minus, Edit2, Trash2, RotateCcw,
   ChevronLeft, ChevronRight, Loader2, AlertTriangle, X,
-  Package, History, Eye
+  Package, History, Eye, Pencil
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 import ProductPreviewModal from './ProductPreviewModal';
+import ProductEditModal from './ProductEditModal';
 
 function StockAdjustmentModal({ product, onClose, onSave }) {
   const [quantity, setQuantity] = useState(0);
@@ -232,6 +233,7 @@ export default function ProductList() {
   const [showStockModal, setShowStockModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
 
   const limit = 25;
 
@@ -304,6 +306,11 @@ export default function ProductList() {
   const handlePreview = (product) => {
     setSelectedProduct(product);
     setShowPreviewModal(true);
+  };
+
+  const handleEdit = (product) => {
+    setSelectedProduct(product);
+    setShowEditModal(true);
   };
 
   const totalPages = Math.ceil(total / limit);
@@ -450,6 +457,13 @@ export default function ProductList() {
                               <Eye className="w-4 h-4" />
                             </button>
                             <button
+                              onClick={() => handleEdit(product)}
+                              className="p-1.5 hover:bg-blue-500/20 rounded text-blue-400"
+                              title="Edit Product"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button
                               onClick={() => handleStockAdjust(product)}
                               className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400"
                               title="Adjust Stock"
@@ -530,6 +544,14 @@ export default function ProductList() {
         <ProductPreviewModal
           product={selectedProduct}
           onClose={() => { setShowPreviewModal(false); setSelectedProduct(null); }}
+        />
+      )}
+
+      {showEditModal && selectedProduct && (
+        <ProductEditModal
+          product={selectedProduct}
+          onClose={() => { setShowEditModal(false); setSelectedProduct(null); }}
+          onSave={() => { setShowEditModal(false); setSelectedProduct(null); fetchProducts(); }}
         />
       )}
     </div>
