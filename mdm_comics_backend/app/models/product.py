@@ -73,6 +73,14 @@ class Product(Base):
     rating = Column(Float, default=0.0)
     review_count = Column(Integer, default=0)
 
+    # Physical dimensions (for supplies like bins, cases) - in inches
+    interior_width = Column(Float)
+    interior_height = Column(Float)
+    interior_length = Column(Float)
+    exterior_width = Column(Float)
+    exterior_height = Column(Float)
+    exterior_length = Column(Float)
+
     # Timestamps - NASTY-008: Fixed to timezone-aware
     created_at = Column(
         DateTime(timezone=True),

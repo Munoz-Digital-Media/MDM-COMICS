@@ -25,6 +25,13 @@ export default function ProductEditModal({ product, onClose, onSave }) {
     issue_number: '',
     publisher: '',
     year: '',
+    // Dimensions for supplies
+    interior_width: '',
+    interior_height: '',
+    interior_length: '',
+    exterior_width: '',
+    exterior_height: '',
+    exterior_length: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -51,6 +58,12 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         issue_number: product.issue_number || '',
         publisher: product.publisher || '',
         year: product.year?.toString() || '',
+        interior_width: product.interior_width?.toString() || '',
+        interior_height: product.interior_height?.toString() || '',
+        interior_length: product.interior_length?.toString() || '',
+        exterior_width: product.exterior_width?.toString() || '',
+        exterior_height: product.exterior_height?.toString() || '',
+        exterior_length: product.exterior_length?.toString() || '',
       });
     }
   }, [product]);
@@ -108,6 +121,12 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         issue_number: form.issue_number || null,
         publisher: form.publisher || null,
         year: form.year ? parseInt(form.year) : null,
+        interior_width: form.interior_width ? parseFloat(form.interior_width) : null,
+        interior_height: form.interior_height ? parseFloat(form.interior_height) : null,
+        interior_length: form.interior_length ? parseFloat(form.interior_length) : null,
+        exterior_width: form.exterior_width ? parseFloat(form.exterior_width) : null,
+        exterior_height: form.exterior_height ? parseFloat(form.exterior_height) : null,
+        exterior_length: form.exterior_length ? parseFloat(form.exterior_length) : null,
       };
 
       await adminAPI.updateProduct(null, product.id, updateData);
@@ -293,6 +312,81 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                   />
                 </div>
               </div>
+
+              {/* Dimensions - for supplies */}
+              {form.category === 'supplies' && (
+                <div className="space-y-3 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+                  <p className="text-sm font-medium text-zinc-300">Dimensions (inches)</p>
+
+                  {/* Interior Dimensions */}
+                  <div>
+                    <label className="block text-xs text-zinc-500 mb-1">Interior (W x H x L)</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        value={form.interior_width}
+                        onChange={(e) => setForm({ ...form, interior_width: e.target.value })}
+                        placeholder="W"
+                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
+                      />
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        value={form.interior_height}
+                        onChange={(e) => setForm({ ...form, interior_height: e.target.value })}
+                        placeholder="H"
+                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
+                      />
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        value={form.interior_length}
+                        onChange={(e) => setForm({ ...form, interior_length: e.target.value })}
+                        placeholder="L"
+                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Exterior Dimensions */}
+                  <div>
+                    <label className="block text-xs text-zinc-500 mb-1">Exterior (W x H x L)</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        value={form.exterior_width}
+                        onChange={(e) => setForm({ ...form, exterior_width: e.target.value })}
+                        placeholder="W"
+                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
+                      />
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        value={form.exterior_height}
+                        onChange={(e) => setForm({ ...form, exterior_height: e.target.value })}
+                        placeholder="H"
+                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
+                      />
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        value={form.exterior_length}
+                        onChange={(e) => setForm({ ...form, exterior_length: e.target.value })}
+                        placeholder="L"
+                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Image URL */}
               <div>

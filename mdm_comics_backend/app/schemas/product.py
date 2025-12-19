@@ -61,6 +61,14 @@ class ProductUpdate(BaseModel):
     publisher: Optional[str] = None
     year: Optional[int] = None
 
+    # Physical dimensions (for supplies) - in inches
+    interior_width: Optional[float] = None
+    interior_height: Optional[float] = None
+    interior_length: Optional[float] = None
+    exterior_width: Optional[float] = None
+    exterior_height: Optional[float] = None
+    exterior_length: Optional[float] = None
+
     # Grading
     cgc_grade: Optional[float] = None
     estimated_grade: Optional[float] = None
