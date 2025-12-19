@@ -92,6 +92,16 @@ export default function ProductDetailPage({
   const [imageError, setImageError] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [addedFeedback, setAddedFeedback] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+
+  // Build array of all product images
+  const allImages = React.useMemo(() => {
+    const primary = product.image || product.image_url;
+    const gallery = product.images || [];
+    if (!primary) return [];
+    // Primary first, then gallery images
+    return [primary, ...gallery.filter(img => img !== primary)];
+  }, [product.image, product.image_url, product.images]);
 
   const handleQuantityChange = useCallback((delta) => {
     setQuantity(prev => {
@@ -131,7 +141,18 @@ export default function ProductDetailPage({
         : 'Product'
   )}`;
 
-  const imageUrl = imageError ? placeholderImage : (product.image || product.image_url || placeholderImage);
+  // Use selected image from gallery, or fallback to placeholder
+  const currentImage = allImages[selectedImageIndex] || allImages[0];
+  const imageUrl = imageError ? placeholderImage : (currentImage || placeholderImage);
+
+  // Reset image loaded state when changing images
+  const handleImageSelect = useCallback((index) => {
+    if (index !== selectedImageIndex) {
+      setSelectedImageIndex(index);
+      setImageLoaded(false);
+      setImageError(false);
+    }
+  }, [selectedImageIndex]);
 
   // Stock status
   const inStock = product.stock > 0;
@@ -211,6 +232,31 @@ export default function ProductDetailPage({
                 )}
               </div>
             </div>
+
+            {/* Image Thumbnails Gallery */}
+            {allImages.length > 1 && (
+              <div className="mt-4 flex gap-2 overflow-x-auto pb-2">
+                {allImages.map((img, index) => (
+                  <button
+                    key={index}
+                    onClick={() => handleImageSelect(index)}
+                    className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
+                      selectedImageIndex === index
+                        ? 'border-orange-500 ring-2 ring-orange-500/30'
+                        : 'border-zinc-700 hover:border-zinc-500'
+                    }`}
+                    aria-label={`View image ${index + 1}`}
+                  >
+                    <img
+                      src={img}
+                      alt={`${product.name} - view ${index + 1}`}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Details Section */}
