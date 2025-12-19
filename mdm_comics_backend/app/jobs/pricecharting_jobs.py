@@ -69,6 +69,94 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# CONFIGURATION (Phase 2 - PC-ANALYSIS-2025-12-18)
+# =============================================================================
+# All values configurable via environment variables for runtime tuning
+
+# Batch size for database queries (default: 100)
+PC_BATCH_SIZE = int(os.getenv("PRICECHARTING_BATCH_SIZE", "100"))
+
+# Staleness threshold in hours - records older than this will be re-synced (default: 24)
+PC_STALENESS_HOURS = int(os.getenv("PRICECHARTING_STALENESS_HOURS", "24"))
+
+# API quota tracking (daily limit estimate)
+PC_DAILY_QUOTA_LIMIT = int(os.getenv("PRICECHARTING_DAILY_QUOTA", "10000"))
+
+# Price change threshold for alerts (percentage, default: 20%)
+PC_PRICE_ALERT_THRESHOLD = float(os.getenv("PRICECHARTING_PRICE_ALERT_PCT", "20.0"))
+
+logger.info(
+    f"[pricecharting_jobs] Config loaded: batch_size={PC_BATCH_SIZE}, "
+    f"staleness_hours={PC_STALENESS_HOURS}, daily_quota={PC_DAILY_QUOTA_LIMIT}"
+)
+
+
+# =============================================================================
+# API QUOTA TELEMETRY (Phase 2 - PC-ANALYSIS-2025-12-18)
+# =============================================================================
+
+class APIQuotaTracker:
+    """
+    Simple in-memory API quota tracker with daily reset.
+
+    Logs warnings when approaching quota limits.
+    """
+    def __init__(self, daily_limit: int):
+        self.daily_limit = daily_limit
+        self.calls_today = 0
+        self.reset_date = datetime.now(timezone.utc).date()
+        self._lock = None  # Will be lazily initialized
+
+    def _check_reset(self):
+        """Reset counter if it's a new day."""
+        today = datetime.now(timezone.utc).date()
+        if today > self.reset_date:
+            logger.info(f"[API_QUOTA] New day - resetting counter (was {self.calls_today})")
+            self.calls_today = 0
+            self.reset_date = today
+
+    def record_call(self, job_name: str = "unknown"):
+        """Record an API call and log quota status."""
+        self._check_reset()
+        self.calls_today += 1
+
+        # Calculate usage percentage
+        usage_pct = (self.calls_today / self.daily_limit) * 100
+
+        # Log warnings at thresholds
+        if self.calls_today == int(self.daily_limit * 0.75):
+            logger.warning(
+                f"[API_QUOTA] 75% of daily quota used ({self.calls_today}/{self.daily_limit})"
+            )
+        elif self.calls_today == int(self.daily_limit * 0.90):
+            logger.warning(
+                f"[API_QUOTA] 90% of daily quota used ({self.calls_today}/{self.daily_limit}) - "
+                f"Consider reducing batch sizes"
+            )
+        elif self.calls_today >= self.daily_limit:
+            logger.error(
+                f"[API_QUOTA] Daily quota EXCEEDED ({self.calls_today}/{self.daily_limit}) - "
+                f"Job: {job_name}"
+            )
+
+        return self.calls_today
+
+    def get_stats(self) -> dict:
+        """Get current quota statistics."""
+        self._check_reset()
+        return {
+            "calls_today": self.calls_today,
+            "daily_limit": self.daily_limit,
+            "usage_pct": round((self.calls_today / self.daily_limit) * 100, 1),
+            "remaining": max(0, self.daily_limit - self.calls_today),
+        }
+
+
+# Global quota tracker instance
+pc_quota_tracker = APIQuotaTracker(PC_DAILY_QUOTA_LIMIT)
+
+
+# =============================================================================
 # CACHED SEARCH HELPER (v1.1.0 - PC-OPT-2024-001 Phase 1)
 # =============================================================================
 
@@ -121,6 +209,9 @@ async def cached_pricecharting_search(
                 params=params
             )
         )
+
+        # Phase 2: Track API quota usage
+        pc_quota_tracker.record_call("search")
 
         if response.status_code == 200:
             try:
@@ -272,7 +363,7 @@ async def update_independent_checkpoint(
 # =============================================================================
 
 async def run_funko_pricecharting_match_job(
-    batch_size: int = 100,
+    batch_size: int = None,  # Uses PC_BATCH_SIZE if not specified
     max_records: int = 0
 ) -> dict:
     """
@@ -287,10 +378,14 @@ async def run_funko_pricecharting_match_job(
     Returns:
         Job result statistics
     """
+    # Phase 2: Use configurable defaults
+    if batch_size is None:
+        batch_size = PC_BATCH_SIZE
+
     job_name = "funko_pricecharting_match"
     batch_id = str(uuid4())
 
-    logger.info(f"[{job_name}] Starting Funko PriceCharting matching (batch: {batch_id})")
+    logger.info(f"[{job_name}] Starting Funko PriceCharting matching (batch: {batch_id}, batch_size: {batch_size})")
 
     async with AsyncSessionLocal() as db:
         claimed, checkpoint = await try_claim_independent_job(db, job_name, batch_id)
@@ -397,12 +492,28 @@ async def run_funko_pricecharting_match_job(
 
                                     if match_result and match_result.matched:
                                         pc_id = match_result.pricecharting_id
-                                        logger.info(
-                                            f"[{job_name}] Matched Funko {funko_id}: "
-                                            f"'{funko.title}' -> PC:{pc_id} "
-                                            f"(score={match_result.score}, "
-                                            f"confidence={match_result.confidence})"
-                                        )
+
+                                        # Phase 3: Track match quality metrics
+                                        if "match_scores" not in stats:
+                                            stats["match_scores"] = []
+                                            stats["low_confidence_matches"] = 0
+                                        stats["match_scores"].append(match_result.score)
+
+                                        # Flag low-confidence matches for potential review
+                                        if match_result.confidence == "low":
+                                            stats["low_confidence_matches"] += 1
+                                            logger.warning(
+                                                f"[{job_name}] LOW CONFIDENCE match: Funko {funko_id} "
+                                                f"'{funko.title}' -> PC:{pc_id} (score={match_result.score:.2f}) "
+                                                f"- may need manual review"
+                                            )
+                                        else:
+                                            logger.info(
+                                                f"[{job_name}] Matched Funko {funko_id}: "
+                                                f"'{funko.title}' -> PC:{pc_id} "
+                                                f"(score={match_result.score:.2f}, "
+                                                f"confidence={match_result.confidence})"
+                                            )
 
                                 except CircuitOpenError:
                                     logger.warning(f"[{job_name}] Circuit opened during processing")
@@ -468,7 +579,7 @@ async def run_funko_pricecharting_match_job(
 # =============================================================================
 
 async def run_comic_pricecharting_match_job(
-    batch_size: int = 100,
+    batch_size: int = None,  # Uses PC_BATCH_SIZE if not specified
     max_records: int = 0
 ) -> dict:
     """
@@ -483,10 +594,14 @@ async def run_comic_pricecharting_match_job(
     Returns:
         Job result statistics
     """
+    # Phase 2: Use configurable defaults
+    if batch_size is None:
+        batch_size = PC_BATCH_SIZE
+
     job_name = "comic_pricecharting_match"
     batch_id = str(uuid4())
 
-    logger.info(f"[{job_name}] Starting Comic PriceCharting matching (batch: {batch_id})")
+    logger.info(f"[{job_name}] Starting Comic PriceCharting matching (batch: {batch_id}, batch_size: {batch_size})")
 
     async with AsyncSessionLocal() as db:
         claimed, checkpoint = await try_claim_independent_job(db, job_name, batch_id)
@@ -638,12 +753,28 @@ async def run_comic_pricecharting_match_job(
 
                                     if match_result and match_result.matched:
                                         pc_id = match_result.pricecharting_id
-                                        logger.info(
-                                            f"[{job_name}] Matched Comic {comic_id}: "
-                                            f"'{comic.series_name} #{comic.number}' -> PC:{pc_id} "
-                                            f"(score={match_result.score}, "
-                                            f"confidence={match_result.confidence})"
-                                        )
+
+                                        # Phase 3: Track match quality metrics
+                                        if "match_scores" not in stats:
+                                            stats["match_scores"] = []
+                                            stats["low_confidence_matches"] = 0
+                                        stats["match_scores"].append(match_result.score)
+
+                                        # Flag low-confidence matches for potential review
+                                        if match_result.confidence == "low":
+                                            stats["low_confidence_matches"] += 1
+                                            logger.warning(
+                                                f"[{job_name}] LOW CONFIDENCE match: Comic {comic_id} "
+                                                f"'{comic.series_name} #{comic.number}' -> PC:{pc_id} "
+                                                f"(score={match_result.score:.2f}) - may need manual review"
+                                            )
+                                        else:
+                                            logger.info(
+                                                f"[{job_name}] Matched Comic {comic_id}: "
+                                                f"'{comic.series_name} #{comic.number}' -> PC:{pc_id} "
+                                                f"(score={match_result.score:.2f}, "
+                                                f"confidence={match_result.confidence})"
+                                            )
 
                                 except CircuitOpenError:
                                     stats["circuit_opens"] += 1
@@ -706,7 +837,7 @@ async def run_comic_pricecharting_match_job(
 # =============================================================================
 
 async def run_funko_price_sync_job(
-    batch_size: int = 100,
+    batch_size: int = None,  # Uses PC_BATCH_SIZE if not specified
     max_records: int = 0
 ) -> dict:
     """
@@ -721,10 +852,14 @@ async def run_funko_price_sync_job(
     Returns:
         Job result statistics
     """
+    # Phase 2: Use configurable defaults
+    if batch_size is None:
+        batch_size = PC_BATCH_SIZE
+
     job_name = "funko_price_sync"
     batch_id = str(uuid4())
 
-    logger.info(f"[{job_name}] Starting Funko price sync (batch: {batch_id})")
+    logger.info(f"[{job_name}] Starting Funko price sync (batch: {batch_id}, batch_size: {batch_size})")
 
     async with AsyncSessionLocal() as db:
         claimed, checkpoint = await try_claim_independent_job(db, job_name, batch_id)
@@ -777,17 +912,18 @@ async def run_funko_price_sync_job(
                         break
 
                     # Fetch Funkos with pricecharting_id that need price update
-                    # v1.1.0: Incremental sync - only fetch stale records (>24h since last sync)
+                    # v1.1.0: Incremental sync - only fetch stale records
+                    # Phase 2: Use configurable staleness threshold (PC_STALENESS_HOURS)
                     result = await db.execute(text("""
                         SELECT id, pricecharting_id, price_loose, price_cib, price_new
                         FROM funkos
                         WHERE pricecharting_id IS NOT NULL
                           AND id > :last_id
                           AND (pricecharting_synced_at IS NULL
-                               OR pricecharting_synced_at < NOW() - INTERVAL '24 hours')
+                               OR pricecharting_synced_at < NOW() - make_interval(hours => :staleness_hours))
                         ORDER BY id
                         LIMIT :limit
-                    """), {"last_id": last_id, "limit": batch_size})
+                    """), {"last_id": last_id, "limit": batch_size, "staleness_hours": PC_STALENESS_HOURS})
 
                     funkos = result.fetchall()
 
@@ -813,6 +949,9 @@ async def run_funko_price_sync_job(
                             try:
                                 response = await circuit_breaker.execute(do_price_fetch)
 
+                                # Phase 2: Track API quota usage
+                                pc_quota_tracker.record_call(job_name)
+
                                 if response.status_code == 200:
                                     try:
                                         data = response.json()
@@ -833,17 +972,46 @@ async def run_funko_price_sync_job(
                                     updates = []
                                     params = {"id": funko_id}
 
+                                    # Phase 3: Track significant price changes
+                                    if "significant_changes" not in stats:
+                                        stats["significant_changes"] = 0
+
+                                    def check_price_change(field_name, old_val, new_cents):
+                                        """Check for significant price change and log alert."""
+                                        if not new_cents:
+                                            return None
+                                        new_dollars = float(new_cents) / 100
+                                        old_dollars = float(old_val) if old_val else 0
+
+                                        if old_dollars > 0:
+                                            pct_change = ((new_dollars - old_dollars) / old_dollars) * 100
+                                            if abs(pct_change) >= PC_PRICE_ALERT_THRESHOLD:
+                                                stats["significant_changes"] += 1
+                                                direction = "UP" if pct_change > 0 else "DOWN"
+                                                logger.warning(
+                                                    f"[PRICE_ALERT] Funko {funko_id} {field_name}: "
+                                                    f"${old_dollars:.2f} -> ${new_dollars:.2f} "
+                                                    f"({direction} {abs(pct_change):.1f}%)"
+                                                )
+                                        return new_dollars
+
                                     if loose_price:
-                                        updates.append("price_loose = :loose")
-                                        params["loose"] = float(loose_price) / 100
+                                        new_loose = check_price_change("loose", funko.price_loose, loose_price)
+                                        if new_loose:
+                                            updates.append("price_loose = :loose")
+                                            params["loose"] = new_loose
 
                                     if cib_price:
-                                        updates.append("price_cib = :cib")
-                                        params["cib"] = float(cib_price) / 100
+                                        new_cib = check_price_change("cib", funko.price_cib, cib_price)
+                                        if new_cib:
+                                            updates.append("price_cib = :cib")
+                                            params["cib"] = new_cib
 
                                     if new_price:
-                                        updates.append("price_new = :new")
-                                        params["new"] = float(new_price) / 100
+                                        new_new = check_price_change("new", funko.price_new, new_price)
+                                        if new_new:
+                                            updates.append("price_new = :new")
+                                            params["new"] = new_new
 
                                     if updates:
                                         # v1.1.0: Track sync timestamp for incremental sync
@@ -922,7 +1090,7 @@ async def run_funko_price_sync_job(
 # =============================================================================
 
 async def run_comic_price_sync_job(
-    batch_size: int = 100,
+    batch_size: int = None,  # Uses PC_BATCH_SIZE if not specified
     max_records: int = 0
 ) -> dict:
     """
@@ -937,10 +1105,14 @@ async def run_comic_price_sync_job(
     Returns:
         Job result statistics
     """
+    # Phase 2: Use configurable defaults
+    if batch_size is None:
+        batch_size = PC_BATCH_SIZE
+
     job_name = "comic_price_sync"
     batch_id = str(uuid4())
 
-    logger.info(f"[{job_name}] Starting Comic price sync (batch: {batch_id})")
+    logger.info(f"[{job_name}] Starting Comic price sync (batch: {batch_id}, batch_size: {batch_size})")
 
     async with AsyncSessionLocal() as db:
         claimed, checkpoint = await try_claim_independent_job(db, job_name, batch_id)
@@ -992,17 +1164,18 @@ async def run_comic_price_sync_job(
                         stats["circuit_opens"] += 1
                         break
 
-                    # v1.1.0: Incremental sync - only fetch stale records (>24h since last sync)
+                    # v1.1.0: Incremental sync - only fetch stale records
+                    # Phase 2: Use configurable staleness threshold (PC_STALENESS_HOURS)
                     result = await db.execute(text("""
                         SELECT id, pricecharting_id, price_guide_value
                         FROM comic_issues
                         WHERE pricecharting_id IS NOT NULL
                           AND id > :last_id
                           AND (pricecharting_synced_at IS NULL
-                               OR pricecharting_synced_at < NOW() - INTERVAL '24 hours')
+                               OR pricecharting_synced_at < NOW() - make_interval(hours => :staleness_hours))
                         ORDER BY id
                         LIMIT :limit
-                    """), {"last_id": last_id, "limit": batch_size})
+                    """), {"last_id": last_id, "limit": batch_size, "staleness_hours": PC_STALENESS_HOURS})
 
                     comics = result.fetchall()
 
@@ -1028,6 +1201,9 @@ async def run_comic_price_sync_job(
                             try:
                                 response = await circuit_breaker.execute(do_price_fetch)
 
+                                # Phase 2: Track API quota usage
+                                pc_quota_tracker.record_call(job_name)
+
                                 if response.status_code == 200:
                                     try:
                                         data = response.json()
@@ -1044,6 +1220,23 @@ async def run_comic_price_sync_job(
 
                                     if cib_price:
                                         price_dollars = float(cib_price) / 100
+                                        old_price = float(comic.price_guide_value) if comic.price_guide_value else 0
+
+                                        # Phase 3: Track significant price changes
+                                        if "significant_changes" not in stats:
+                                            stats["significant_changes"] = 0
+
+                                        if old_price > 0:
+                                            pct_change = ((price_dollars - old_price) / old_price) * 100
+                                            if abs(pct_change) >= PC_PRICE_ALERT_THRESHOLD:
+                                                stats["significant_changes"] += 1
+                                                direction = "UP" if pct_change > 0 else "DOWN"
+                                                logger.warning(
+                                                    f"[PRICE_ALERT] Comic {comic_id} guide_value: "
+                                                    f"${old_price:.2f} -> ${price_dollars:.2f} "
+                                                    f"({direction} {abs(pct_change):.1f}%)"
+                                                )
+
                                         # v1.1.0: Track sync timestamp for incremental sync
                                         await db.execute(text("""
                                             UPDATE comic_issues
