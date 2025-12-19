@@ -467,6 +467,8 @@ async def list_products(
                 "exterior_width": p.exterior_width,
                 "exterior_height": p.exterior_height,
                 "exterior_length": p.exterior_length,
+                "weight": p.weight,
+                "material": p.material,
                 "is_low_stock": (p.stock or 0) <= (p.low_stock_threshold or 5),
                 "is_deleted": p.deleted_at is not None,
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,

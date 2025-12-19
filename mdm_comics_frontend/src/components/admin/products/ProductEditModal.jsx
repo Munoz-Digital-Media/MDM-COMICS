@@ -100,6 +100,9 @@ export default function ProductEditModal({ product, onClose, onSave }) {
     exterior_width: '',
     exterior_height: '',
     exterior_length: '',
+    // Physical properties
+    weight: '',
+    material: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -132,6 +135,8 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         exterior_width: product.exterior_width?.toString() || '',
         exterior_height: product.exterior_height?.toString() || '',
         exterior_length: product.exterior_length?.toString() || '',
+        weight: product.weight || '',
+        material: product.material || '',
       });
     }
   }, [product]);
@@ -195,6 +200,8 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         exterior_width: form.exterior_width ? parseFloat(form.exterior_width) : null,
         exterior_height: form.exterior_height ? parseFloat(form.exterior_height) : null,
         exterior_length: form.exterior_length ? parseFloat(form.exterior_length) : null,
+        weight: form.weight || null,
+        material: form.material || null,
       };
 
       await adminAPI.updateProduct(null, product.id, updateData);
@@ -439,6 +446,30 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                         value={form.exterior_length}
                         onChange={(v) => setForm({ ...form, exterior_length: v })}
                         placeholder="L"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Weight & Material */}
+                  <div className="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-700">
+                    <div>
+                      <label className="block text-xs text-zinc-500 mb-1">Weight</label>
+                      <input
+                        type="text"
+                        value={form.weight}
+                        onChange={(e) => setForm({ ...form, weight: e.target.value })}
+                        placeholder="e.g., 2.5 lbs"
+                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-zinc-500 mb-1">Material</label>
+                      <input
+                        type="text"
+                        value={form.material}
+                        onChange={(e) => setForm({ ...form, material: e.target.value })}
+                        placeholder="e.g., Polypropylene"
+                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
                       />
                     </div>
                   </div>

@@ -69,6 +69,10 @@ class ProductUpdate(BaseModel):
     exterior_height: Optional[float] = None
     exterior_length: Optional[float] = None
 
+    # Physical properties
+    weight: Optional[str] = None
+    material: Optional[str] = None
+
     # Grading
     cgc_grade: Optional[float] = None
     estimated_grade: Optional[float] = None
@@ -86,10 +90,26 @@ class ProductResponse(ProductBase):
     rating: float = 0.0
     review_count: int = 0
 
+    # Barcode fields
+    upc: Optional[str] = None
+    isbn: Optional[str] = None
+
     # Comic-specific
     issue_number: Optional[str] = None
     publisher: Optional[str] = None
     year: Optional[int] = None
+
+    # Physical dimensions (for supplies) - in inches
+    interior_width: Optional[float] = None
+    interior_height: Optional[float] = None
+    interior_length: Optional[float] = None
+    exterior_width: Optional[float] = None
+    exterior_height: Optional[float] = None
+    exterior_length: Optional[float] = None
+
+    # Physical properties
+    weight: Optional[str] = None
+    material: Optional[str] = None
 
     # Grading
     cgc_grade: Optional[float] = None

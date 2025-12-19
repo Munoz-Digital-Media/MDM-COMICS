@@ -81,6 +81,10 @@ class Product(Base):
     exterior_height = Column(Float)
     exterior_length = Column(Float)
 
+    # Physical properties
+    weight = Column(String(50))  # e.g., "2.5 lbs", "100g"
+    material = Column(String(100))  # e.g., "Acid-free cardboard", "Polypropylene"
+
     # Timestamps - NASTY-008: Fixed to timezone-aware
     created_at = Column(
         DateTime(timezone=True),

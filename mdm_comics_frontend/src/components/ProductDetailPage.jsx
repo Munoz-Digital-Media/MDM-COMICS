@@ -10,9 +10,48 @@
 import React, { useState, useCallback } from 'react';
 import {
   ArrowLeft, Star, Plus, Minus, ShoppingCart,
-  Package, Truck, Shield, ZoomIn, X, AlertCircle
+  Package, Truck, Shield, ZoomIn, X, AlertCircle, Ruler
 } from 'lucide-react';
 import RefundPolicyBadge from './RefundPolicyBadge';
+
+// Format decimal dimension to fraction string (e.g., 3.375 -> "3 ⅜")
+const formatDimension = (value) => {
+  if (!value && value !== 0) return null;
+  const num = parseFloat(value);
+  const whole = Math.floor(num);
+  const frac = num - whole;
+
+  const fractionMap = {
+    0: '',
+    0.125: '⅛',
+    0.25: '¼',
+    0.375: '⅜',
+    0.5: '½',
+    0.625: '⅝',
+    0.75: '¾',
+    0.875: '⅞',
+  };
+
+  // Find closest fraction
+  const closest = Object.keys(fractionMap).reduce((prev, curr) =>
+    Math.abs(parseFloat(curr) - frac) < Math.abs(parseFloat(prev) - frac) ? curr : prev
+  );
+
+  const fracStr = fractionMap[closest];
+  if (whole === 0 && fracStr) return fracStr + '"';
+  if (!fracStr) return whole + '"';
+  return `${whole} ${fracStr}"`;
+};
+
+// Format W x H x L dimensions
+const formatDimensions = (w, h, l) => {
+  const width = formatDimension(w);
+  const height = formatDimension(h);
+  const length = formatDimension(l);
+
+  if (!width && !height && !length) return null;
+  return `${width || '—'} × ${height || '—'} × ${length || '—'}`;
+};
 
 // Image zoom modal component
 function ImageZoomModal({ src, alt, onClose }) {
@@ -240,7 +279,7 @@ export default function ProductDetailPage({
             </div>
 
             {/* Description */}
-            <p className="text-zinc-400 leading-relaxed mb-8">
+            <p className="text-zinc-400 leading-relaxed mb-8 whitespace-pre-line">
               {product.description || 'No description available.'}
             </p>
 
@@ -306,58 +345,90 @@ export default function ProductDetailPage({
               </button>
             </div>
 
-            {/* Trust Badges */}
-            <div className="grid grid-cols-3 gap-4 mt-8 pt-8 border-t border-zinc-800">
-              <div className="flex flex-col items-center text-center">
-                <div className="w-10 h-10 bg-zinc-900 rounded-full flex items-center justify-center mb-2">
-                  <Truck className="w-5 h-5 text-orange-500" />
+            {/* Product Details - Order: Category, UPC, SKU, Dimensions, Weight, Material */}
+            <div className="mt-8 pt-8 border-t border-zinc-800 space-y-2">
+              <h3 className="text-sm font-semibold text-zinc-300 mb-3">Product Details</h3>
+              {product.category && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">Category</span>
+                  <span className="text-zinc-300 capitalize">{product.category}</span>
                 </div>
-                <span className="text-xs text-zinc-400">Free Shipping $50+</span>
-              </div>
-              <div className="flex flex-col items-center text-center">
-                <div className="w-10 h-10 bg-zinc-900 rounded-full flex items-center justify-center mb-2">
-                  <Package className="w-5 h-5 text-orange-500" />
+              )}
+              {product.upc && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">UPC</span>
+                  <span className="text-zinc-300 font-mono">{product.upc}</span>
                 </div>
-                <span className="text-xs text-zinc-400">Secure Packaging</span>
-              </div>
-              <div className="flex flex-col items-center text-center">
-                <div className="w-10 h-10 bg-zinc-900 rounded-full flex items-center justify-center mb-2">
-                  <Shield className="w-5 h-5 text-orange-500" />
+              )}
+              {product.sku && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">SKU</span>
+                  <span className="text-zinc-300 font-mono">{product.sku}</span>
                 </div>
-                <span className="text-xs text-zinc-400">Buyer Protection</span>
-              </div>
+              )}
+              {/* Dimensions */}
+              {(product.interior_width || product.interior_height || product.interior_length) && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">Interior Dimensions</span>
+                  <span className="text-zinc-300">
+                    {formatDimensions(product.interior_width, product.interior_height, product.interior_length)}
+                  </span>
+                </div>
+              )}
+              {(product.exterior_width || product.exterior_height || product.exterior_length) && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">Exterior Dimensions</span>
+                  <span className="text-zinc-300">
+                    {formatDimensions(product.exterior_width, product.exterior_height, product.exterior_length)}
+                  </span>
+                </div>
+              )}
+              {product.weight && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">Weight</span>
+                  <span className="text-zinc-300">{product.weight}</span>
+                </div>
+              )}
+              {product.material && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">Material</span>
+                  <span className="text-zinc-300">{product.material}</span>
+                </div>
+              )}
             </div>
+          </div>
+        </div>
 
-            {/* Refund Policy */}
-            <div className="mt-6 pt-6 border-t border-zinc-800">
-              <h3 className="text-sm font-semibold text-zinc-300 mb-3">Return Policy</h3>
-              <RefundPolicyBadge product={product} showDetails />
-            </div>
+        {/* Return Policy - Full Width, Below Product Details, Above Shipping */}
+        <div className="mt-12 pt-8 border-t border-zinc-800">
+          <h3 className="text-sm font-semibold text-zinc-300 mb-3">Return Policy</h3>
+          <RefundPolicyBadge product={product} showDetails />
+        </div>
 
-            {/* Product Details */}
-            {(product.sku || product.category || product.tags) && (
-              <div className="mt-8 pt-8 border-t border-zinc-800 space-y-2">
-                <h3 className="text-sm font-semibold text-zinc-300 mb-3">Product Details</h3>
-                {product.sku && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-zinc-500">SKU</span>
-                    <span className="text-zinc-300 font-mono">{product.sku}</span>
-                  </div>
-                )}
-                {product.category && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-zinc-500">Category</span>
-                    <span className="text-zinc-300 capitalize">{product.category}</span>
-                  </div>
-                )}
-                {product.tags && product.tags.length > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-zinc-500">Tags</span>
-                    <span className="text-zinc-300">{product.tags.join(', ')}</span>
-                  </div>
-                )}
+        {/* Shipping Banner - Full Width Moat */}
+        <div className="mt-12 py-8 bg-zinc-900/50 border-y border-zinc-800">
+          <div className="grid grid-cols-3 gap-6">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-3">
+                <Truck className="w-6 h-6 text-orange-500" />
               </div>
-            )}
+              <span className="text-sm font-medium text-zinc-300">Free Shipping</span>
+              <span className="text-xs text-zinc-500">Orders $50+</span>
+            </div>
+            <div className="flex flex-col items-center text-center">
+              <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-3">
+                <Package className="w-6 h-6 text-orange-500" />
+              </div>
+              <span className="text-sm font-medium text-zinc-300">Secure Packaging</span>
+              <span className="text-xs text-zinc-500">Protected Shipping</span>
+            </div>
+            <div className="flex flex-col items-center text-center">
+              <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-3">
+                <Shield className="w-6 h-6 text-orange-500" />
+              </div>
+              <span className="text-sm font-medium text-zinc-300">Buyer Protection</span>
+              <span className="text-xs text-zinc-500">Satisfaction Guaranteed</span>
+            </div>
           </div>
         </div>
       </div>
