@@ -8,6 +8,74 @@ import { adminAPI } from '../../../services/adminApi';
 
 const FEATURED_LIMIT = 5; // Max featured products per category section on homepage
 
+// Fraction options for dimension inputs (in eighths)
+const FRACTIONS = [
+  { value: 0, label: '0', display: '' },
+  { value: 0.125, label: '⅛', display: '⅛' },
+  { value: 0.25, label: '¼', display: '¼' },
+  { value: 0.375, label: '⅜', display: '⅜' },
+  { value: 0.5, label: '½', display: '½' },
+  { value: 0.625, label: '⅝', display: '⅝' },
+  { value: 0.75, label: '¾', display: '¾' },
+  { value: 0.875, label: '⅞', display: '⅞' },
+];
+
+// Convert decimal to whole + fraction parts
+const decimalToFraction = (decimal) => {
+  if (!decimal && decimal !== 0) return { whole: '', fraction: 0 };
+  const num = parseFloat(decimal);
+  const whole = Math.floor(num);
+  const frac = num - whole;
+  // Find closest fraction
+  const closest = FRACTIONS.reduce((prev, curr) =>
+    Math.abs(curr.value - frac) < Math.abs(prev.value - frac) ? curr : prev
+  );
+  return { whole: whole || '', fraction: closest.value };
+};
+
+// Convert whole + fraction to decimal
+const fractionToDecimal = (whole, fraction) => {
+  const w = parseInt(whole) || 0;
+  const f = parseFloat(fraction) || 0;
+  return w + f || '';
+};
+
+// Fractional dimension input component
+const FractionInput = ({ value, onChange, placeholder }) => {
+  const { whole, fraction } = decimalToFraction(value);
+
+  const handleWholeChange = (e) => {
+    const newWhole = e.target.value.replace(/[^0-9]/g, '');
+    onChange(fractionToDecimal(newWhole, fraction));
+  };
+
+  const handleFractionChange = (e) => {
+    onChange(fractionToDecimal(whole, e.target.value));
+  };
+
+  return (
+    <div className="flex gap-1">
+      <input
+        type="text"
+        inputMode="numeric"
+        value={whole}
+        onChange={handleWholeChange}
+        placeholder={placeholder}
+        className="w-12 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm text-center focus:border-orange-500 focus:outline-none"
+      />
+      <select
+        value={fraction}
+        onChange={handleFractionChange}
+        className="w-14 px-1 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
+      >
+        {FRACTIONS.map(f => (
+          <option key={f.value} value={f.value}>{f.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+};
+
 export default function ProductEditModal({ product, onClose, onSave }) {
   const [form, setForm] = useState({
     name: '',
@@ -329,68 +397,48 @@ export default function ProductEditModal({ product, onClose, onSave }) {
 
                   {/* Interior Dimensions */}
                   <div>
-                    <label className="block text-xs text-zinc-500 mb-1">Interior (W x H x L)</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <input
-                        type="number"
-                        step="0.25"
-                        min="0"
+                    <label className="block text-xs text-zinc-500 mb-1">Interior (W × H × L)</label>
+                    <div className="flex items-center gap-2">
+                      <FractionInput
                         value={form.interior_width}
-                        onChange={(e) => setForm({ ...form, interior_width: e.target.value })}
+                        onChange={(v) => setForm({ ...form, interior_width: v })}
                         placeholder="W"
-                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
                       />
-                      <input
-                        type="number"
-                        step="0.25"
-                        min="0"
+                      <span className="text-zinc-500">×</span>
+                      <FractionInput
                         value={form.interior_height}
-                        onChange={(e) => setForm({ ...form, interior_height: e.target.value })}
+                        onChange={(v) => setForm({ ...form, interior_height: v })}
                         placeholder="H"
-                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
                       />
-                      <input
-                        type="number"
-                        step="0.25"
-                        min="0"
+                      <span className="text-zinc-500">×</span>
+                      <FractionInput
                         value={form.interior_length}
-                        onChange={(e) => setForm({ ...form, interior_length: e.target.value })}
+                        onChange={(v) => setForm({ ...form, interior_length: v })}
                         placeholder="L"
-                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
                       />
                     </div>
                   </div>
 
                   {/* Exterior Dimensions */}
                   <div>
-                    <label className="block text-xs text-zinc-500 mb-1">Exterior (W x H x L)</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <input
-                        type="number"
-                        step="0.25"
-                        min="0"
+                    <label className="block text-xs text-zinc-500 mb-1">Exterior (W × H × L)</label>
+                    <div className="flex items-center gap-2">
+                      <FractionInput
                         value={form.exterior_width}
-                        onChange={(e) => setForm({ ...form, exterior_width: e.target.value })}
+                        onChange={(v) => setForm({ ...form, exterior_width: v })}
                         placeholder="W"
-                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
                       />
-                      <input
-                        type="number"
-                        step="0.25"
-                        min="0"
+                      <span className="text-zinc-500">×</span>
+                      <FractionInput
                         value={form.exterior_height}
-                        onChange={(e) => setForm({ ...form, exterior_height: e.target.value })}
+                        onChange={(v) => setForm({ ...form, exterior_height: v })}
                         placeholder="H"
-                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
                       />
-                      <input
-                        type="number"
-                        step="0.25"
-                        min="0"
+                      <span className="text-zinc-500">×</span>
+                      <FractionInput
                         value={form.exterior_length}
-                        onChange={(e) => setForm({ ...form, exterior_length: e.target.value })}
+                        onChange={(v) => setForm({ ...form, exterior_length: v })}
                         placeholder="L"
-                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-white text-sm focus:border-orange-500 focus:outline-none"
                       />
                     </div>
                   </div>
