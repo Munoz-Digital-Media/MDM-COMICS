@@ -290,6 +290,18 @@ export const adminAPI = {
     });
   },
 
+  demotePrimaryImage: async (productId) => {
+    return fetchAPI('/admin/products/' + productId + '/image/demote', {
+      method: 'POST',
+    });
+  },
+
+  promoteGalleryImage: async (productId, index) => {
+    return fetchAPI('/admin/products/' + productId + '/gallery/' + index + '/promote', {
+      method: 'POST',
+    });
+  },
+
   // --- Barcode Queue ---
   submitBarcodes: async (barcodes) => {
     return fetchAPI('/admin/barcode-queue/', {

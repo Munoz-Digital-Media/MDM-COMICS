@@ -870,6 +870,92 @@ async def reorder_gallery_images(
     return {"status": "reordered", "product_id": product_id, "gallery_count": len(new_images)}
 
 
+@router.post("/products/{product_id}/image/demote")
+async def demote_primary_to_gallery(
+    product_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Demote the primary image to the gallery.
+    Moves image_url to the beginning of the images array, clears image_url.
+    """
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot update deleted product")
+    if not product.image_url:
+        raise HTTPException(status_code=400, detail="No primary image to demote")
+
+    demoted_url = product.image_url
+    images = product.images or []
+    images.insert(0, demoted_url)  # Add to beginning of gallery
+
+    product.images = images
+    product.image_url = None
+    product.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"Product {product_id} primary image demoted to gallery by user {current_user.id}")
+    return {
+        "status": "demoted",
+        "product_id": product_id,
+        "demoted_url": demoted_url,
+        "gallery_count": len(images)
+    }
+
+
+@router.post("/products/{product_id}/gallery/{index}/promote")
+async def promote_gallery_to_primary(
+    product_id: int,
+    index: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Promote a gallery image to primary.
+    If there is an existing primary image, it gets demoted to the gallery at the promoted image position.
+    """
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.deleted_at:
+        raise HTTPException(status_code=400, detail="Cannot update deleted product")
+
+    images = product.images or []
+    if index < 0 or index >= len(images):
+        raise HTTPException(status_code=400, detail=f"Invalid index. Gallery has {len(images)} images.")
+
+    promoted_url = images[index]
+    old_primary = product.image_url
+
+    # Remove from gallery
+    images.pop(index)
+
+    # If there was a primary image, put it in the gallery at the same position
+    if old_primary:
+        images.insert(index, old_primary)
+
+    product.image_url = promoted_url
+    product.images = images
+    product.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"Product {product_id} gallery image {index} promoted to primary by user {current_user.id}")
+    return {
+        "status": "promoted",
+        "product_id": product_id,
+        "promoted_url": promoted_url,
+        "previous_primary": old_primary,
+        "gallery_count": len(images)
+    }
+
+
 @router.post("/products/bulk/clear-images")
 async def bulk_clear_images(
     request: BulkClearImagesRequest,

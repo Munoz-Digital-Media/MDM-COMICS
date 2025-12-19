@@ -3,7 +3,7 @@
  * Admin Console v1.5.0 - Added image upload/remove/gallery management
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Loader2, Image as ImageIcon, AlertTriangle, Upload, Trash2, GripVertical, Plus } from 'lucide-react';
+import { X, Save, Loader2, Image as ImageIcon, AlertTriangle, Upload, Trash2, GripVertical, Plus, ArrowDown, Star } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 
 const FEATURED_LIMIT = 5; // Max featured products per category section on homepage
@@ -264,6 +264,39 @@ export default function ProductEditModal({ product, onClose, onSave }) {
     setDragOverIndex(null);
   };
 
+  // Demote primary image to gallery
+  const handleDemotePrimary = async () => {
+    if (!form.image_url) return;
+    if (!window.confirm('Move primary image to gallery?')) return;
+    setUploadingPrimary(true);
+    setError(null);
+    try {
+      const result = await adminAPI.demotePrimaryImage(product.id);
+      setForm({ ...form, image_url: '', images: [result.demoted_url, ...form.images] });
+    } catch (err) {
+      setError('Failed to demote image: ' + err.message);
+    } finally {
+      setUploadingPrimary(false);
+    }
+  };
+
+  // Promote gallery image to primary
+  const handlePromoteGallery = async (index) => {
+    if (!window.confirm('Set this image as the primary image?')) return;
+    setError(null);
+    try {
+      const result = await adminAPI.promoteGalleryImage(product.id, index);
+      // Swap: gallery image becomes primary, old primary goes to gallery at same position
+      const newImages = [...form.images];
+      newImages.splice(index, 1);
+      if (result.previous_primary) {
+        newImages.splice(index, 0, result.previous_primary);
+      }
+      setForm({ ...form, image_url: result.promoted_url, images: newImages });
+    } catch (err) {
+      setError('Failed to promote image: ' + err.message);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -622,9 +655,14 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                         {uploadingPrimary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload
                       </button>
                       {form.image_url && (
-                        <button type="button" onClick={handleRemovePrimary} disabled={uploadingPrimary} className="flex items-center justify-center gap-2 px-3 py-2 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 disabled:opacity-50 text-sm">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <>
+                          <button type="button" onClick={handleDemotePrimary} disabled={uploadingPrimary} className="flex items-center justify-center gap-2 px-3 py-2 bg-zinc-600 text-zinc-300 rounded hover:bg-zinc-500 disabled:opacity-50 text-sm" title="Move to gallery">
+                            <ArrowDown className="w-4 h-4" />
+                          </button>
+                          <button type="button" onClick={handleRemovePrimary} disabled={uploadingPrimary} className="flex items-center justify-center gap-2 px-3 py-2 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 disabled:opacity-50 text-sm" title="Remove image">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -642,7 +680,8 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                       className={`relative group aspect-square bg-zinc-900 rounded overflow-hidden cursor-grab ${draggedIndex === index ? 'opacity-50' : ''} ${dragOverIndex === index ? 'ring-2 ring-orange-500' : ''}`}>
                       <img src={url} alt={`Gallery ${index + 1}`} className="w-full h-full object-cover" onError={(e) => { e.target.src = ''; }} />
                       <div className="absolute top-1 left-1 p-1 bg-black/50 rounded opacity-0 group-hover:opacity-100 transition-opacity"><GripVertical className="w-3 h-3 text-white" /></div>
-                      <button type="button" onClick={() => handleRemoveGallery(index)} className="absolute top-1 right-1 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"><X className="w-3 h-3 text-white" /></button>
+                      <button type="button" onClick={() => handlePromoteGallery(index)} className="absolute bottom-1 left-1 p-1 bg-orange-500/80 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-orange-500" title="Set as primary"><Star className="w-3 h-3 text-white" /></button>
+                      <button type="button" onClick={() => handleRemoveGallery(index)} className="absolute top-1 right-1 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500" title="Remove"><X className="w-3 h-3 text-white" /></button>
                     </div>
                   ))}
                   <input ref={galleryFileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={handleGalleryUpload} className="hidden" />
