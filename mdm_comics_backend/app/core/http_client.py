@@ -167,6 +167,7 @@ class ResilientHTTPClient:
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
             headers=self.default_headers,
+            follow_redirects=True,  # v2.2.1: Fix 301 redirect handling
         )
         return self
         
@@ -181,6 +182,7 @@ class ResilientHTTPClient:
             self._client = httpx.AsyncClient(
                 timeout=self.timeout,
                 headers=self.default_headers,
+                follow_redirects=True,  # v2.2.1: Fix 301 redirect handling
             )
         return self
 
