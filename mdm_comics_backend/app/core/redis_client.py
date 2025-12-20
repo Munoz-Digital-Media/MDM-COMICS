@@ -142,3 +142,55 @@ async def set_pricecharting_cached(pc_id: int, data: dict, ttl_seconds: int = PC
     except Exception as e:
         logger.debug(f"Redis cache set failed for PC {pc_id}: {e}")
         return False
+
+
+# ----- Homepage Cache -----
+
+HOMEPAGE_SECTIONS_KEY = "homepage:sections"
+FEATURED_BUNDLES_KEY = "homepage:featured_bundles"
+HOMEPAGE_CACHE_TTL = 300  # 5 minutes
+
+
+async def get_homepage_sections_cached() -> Optional[dict]:
+    """Get cached homepage sections."""
+    import json
+    client = await get_redis()
+    if not client:
+        return None
+    try:
+        data = await client.get(HOMEPAGE_SECTIONS_KEY)
+        if data:
+            return json.loads(data)
+    except Exception as e:
+        logger.debug(f"Redis cache miss for homepage sections: {e}")
+    return None
+
+
+async def set_homepage_sections_cached(data: dict) -> bool:
+    """Cache homepage sections."""
+    import json
+    client = await get_redis()
+    if not client:
+        return False
+    try:
+        await client.setex(HOMEPAGE_SECTIONS_KEY, HOMEPAGE_CACHE_TTL, json.dumps(data))
+        return True
+    except Exception as e:
+        logger.debug(f"Redis cache set failed for homepage sections: {e}")
+        return False
+
+
+async def invalidate_homepage_cache() -> bool:
+    """Invalidate homepage configuration cache."""
+    client = await get_redis()
+    if not client:
+        return False
+    try:
+        await client.delete(HOMEPAGE_SECTIONS_KEY)
+        # Also clear featured bundles as section order/visibility might affect them?
+        # Maybe not strictly necessary but safer if logic intertwines
+        await client.delete(FEATURED_BUNDLES_KEY)
+        return True
+    except Exception as e:
+        logger.debug(f"Redis cache delete failed for homepage sections: {e}")
+        return False

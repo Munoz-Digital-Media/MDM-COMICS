@@ -501,6 +501,9 @@ app.include_router(admin_refunds.router, prefix="/api", tags=["Admin - Refunds"]
 app.include_router(admin_orders.router, prefix="/api", tags=["Admin - Orders"])
 # BCW Catalog Search & Create v1.0.0
 app.include_router(bcw_catalog.router, prefix="/api", tags=["Admin - BCW Catalog"])
+# Homepage Section Management
+from app.api.routes import homepage
+app.include_router(homepage.router, prefix="/api", tags=["Homepage"])
 # Outreach System v1.5.0
 if OUTREACH_ROUTES_AVAILABLE:
     app.include_router(newsletter.router, prefix="/api", tags=["Newsletter"])
