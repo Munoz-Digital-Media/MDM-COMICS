@@ -223,6 +223,9 @@ class BCWBrowserClient:
             reset_timeout_ms=CIRCUIT_BREAKER_RESET_MS,
         )
 
+        # Dynamic selector overrides from database (hot-patchable)
+        self._dynamic_selectors: Dict[str, str] = {}
+
         # Ensure screenshots directory exists
         SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -234,6 +237,49 @@ class BCWBrowserClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.close()
+
+    async def load_dynamic_selectors(self, db_selectors: Dict[str, str]):
+        """
+        Load dynamic selector overrides from database.
+
+        These override the code-defined selectors in selectors.py.
+
+        Args:
+            db_selectors: Dict of "category.key" -> selector string
+        """
+        self._dynamic_selectors = db_selectors or {}
+        if self._dynamic_selectors:
+            logger.info(f"Loaded {len(self._dynamic_selectors)} dynamic selector overrides")
+
+    def _get_effective_selector(self, category: str, key: str) -> Optional[SelectorConfig]:
+        """
+        Get effective selector, checking dynamic overrides first.
+
+        Priority:
+        1. Dynamic override from database (self._dynamic_selectors)
+        2. Code-defined selector from selectors.py
+
+        Returns:
+            SelectorConfig with effective selector(s)
+        """
+        selector_key = f"{category}.{key}"
+
+        # Check for dynamic override
+        if selector_key in self._dynamic_selectors:
+            override_selector = self._dynamic_selectors[selector_key]
+            logger.debug(f"Using dynamic selector override for {selector_key}: {override_selector}")
+            # Create SelectorConfig with override as primary, fallback to code selector
+            code_config = get_selector(category, key)
+            fallbacks = code_config.all_selectors() if code_config else []
+            return SelectorConfig(
+                primary=override_selector,
+                fallbacks=fallbacks,
+                description=f"Dynamic override for {selector_key}",
+            )
+
+        # Fall back to code-defined selector
+        return get_selector(category, key)
+
 
     async def init(self):
         """Initialize the browser."""
@@ -378,7 +424,7 @@ class BCWBrowserClient:
         if not self._page:
             raise BCWError("Browser not initialized", code="BCW_NOT_INITIALIZED")
 
-        selector_config = get_selector(category, key)
+        selector_config = self._get_effective_selector(category, key)
         if not selector_config:
             raise BCWSelectorError(
                 message=f"Unknown selector: {category}.{key}",

@@ -24,6 +24,151 @@ from app.models.bcw import BCWOrder, BCWOrderState, BCWConfig
 logger = logging.getLogger(__name__)
 
 
+
+# =============================================================================
+# RETURN SUBMISSION JOB
+# =============================================================================
+
+async def run_bcw_return_submission_job():
+    """
+    Process pending BCW return/RMA submissions.
+
+    Finds refund requests in APPROVED or VENDOR_RETURN_INITIATED state
+    and submits RMAs to BCW.
+
+    Schedule: Every 30 minutes.
+    """
+    job_name = "bcw_return_submission"
+    logger.info(f"[{job_name}] Starting BCW return submission job")
+
+    async with AsyncSessionLocal() as db:
+        if not await check_bcw_enabled(db):
+            return
+
+        # Find refund requests pending RMA submission
+        from app.models.refund import BCWRefundRequest, BCWRefundState
+
+        result = await db.execute(
+            select(BCWRefundRequest)
+            .where(BCWRefundRequest.state.in_([
+                BCWRefundState.APPROVED,
+                BCWRefundState.VENDOR_RETURN_INITIATED,
+            ]))
+            .where(BCWRefundRequest.bcw_rma_number.is_(None))
+            .order_by(BCWRefundRequest.created_at.asc())
+            .limit(5)  # Process 5 at a time
+        )
+        pending_returns = result.scalars().all()
+
+        if not pending_returns:
+            logger.info(f"[{job_name}] No pending returns to process")
+            return
+
+        logger.info(f"[{job_name}] Found {len(pending_returns)} pending returns")
+
+        client = None
+        stats = {"processed": 0, "success": 0, "failed": 0}
+
+        try:
+            client = await get_bcw_client_with_session(db)
+            if not client:
+                logger.error(f"[{job_name}] Could not get BCW client")
+                return
+
+            from app.services.bcw.return_submitter import (
+                BCWReturnSubmitter,
+                ReturnSubmissionRequest,
+                ReturnItem,
+            )
+
+            submitter = BCWReturnSubmitter(client, db)
+
+            for refund_request in pending_returns:
+                stats["processed"] += 1
+
+                try:
+                    # Get the BCW order ID
+                    if not refund_request.bcw_order_id:
+                        logger.warning(
+                            f"[{job_name}] Refund {refund_request.refund_number} "
+                            f"has no BCW order - skipping"
+                        )
+                        continue
+
+                    # Build return items from refund_items
+                    return_items = []
+                    for item in refund_request.refund_items or []:
+                        return_items.append(ReturnItem(
+                            bcw_sku=item.get("bcw_sku", item.get("sku", "")),
+                            quantity=item.get("quantity", 1),
+                            order_item_id=item.get("order_item_id", 0),
+                        ))
+
+                    # Get BCW order number from bcw_orders table
+                    from app.models.bcw import BCWOrder
+                    bcw_order_result = await db.execute(
+                        select(BCWOrder).where(BCWOrder.id == refund_request.bcw_order_id)
+                    )
+                    bcw_order = bcw_order_result.scalar_one_or_none()
+
+                    if not bcw_order or not bcw_order.bcw_order_id:
+                        logger.warning(
+                            f"[{job_name}] Could not find BCW order for refund "
+                            f"{refund_request.refund_number}"
+                        )
+                        continue
+
+                    # Submit RMA
+                    request = ReturnSubmissionRequest(
+                        refund_request_id=refund_request.id,
+                        bcw_order_id=bcw_order.bcw_order_id,
+                        correlation_id=refund_request.correlation_id,
+                        items=return_items,
+                        reason_code=refund_request.reason_code,
+                        reason_description=refund_request.reason_description,
+                    )
+
+                    result = await submitter.submit_return(request)
+
+                    if result.success:
+                        refund_request.bcw_rma_number = result.rma_number
+                        refund_request.state = BCWRefundState.VENDOR_RETURN_INITIATED
+                        stats["success"] += 1
+                        logger.info(
+                            f"[{job_name}] RMA submitted for {refund_request.refund_number}: "
+                            f"{result.rma_number}"
+                        )
+                    else:
+                        stats["failed"] += 1
+                        logger.error(
+                            f"[{job_name}] RMA failed for {refund_request.refund_number}: "
+                            f"{result.error_message}"
+                        )
+
+                except Exception as e:
+                    stats["failed"] += 1
+                    logger.error(
+                        f"[{job_name}] Error processing refund {refund_request.refund_number}: {e}"
+                    )
+
+            logger.info(
+                f"[{job_name}] Return submission complete: "
+                f"{stats['processed']} processed, "
+                f"{stats['success']} success, "
+                f"{stats['failed']} failed"
+            )
+
+            await db.commit()
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
+
+        finally:
+            if client:
+                await client.close()
+
+
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
@@ -44,6 +189,11 @@ async def get_bcw_client_with_session(db: AsyncSession):
 
     client = BCWBrowserClient()
     await client.init()
+
+    # Load dynamic selector overrides from database
+    dynamic_selectors = await session_mgr.get_selectors()
+    if dynamic_selectors:
+        await client.load_dynamic_selectors(dynamic_selectors)
 
     if cookies:
         # Restore existing session
@@ -471,6 +621,151 @@ async def run_bcw_selector_health_job():
             await db.commit()
 
             # TODO: Check consecutive failures and send P1 alert
+
+        finally:
+            if client:
+                await client.close()
+
+
+
+# =============================================================================
+# RETURN SUBMISSION JOB
+# =============================================================================
+
+async def run_bcw_return_submission_job():
+    """
+    Process pending BCW return/RMA submissions.
+
+    Finds refund requests in APPROVED or VENDOR_RETURN_INITIATED state
+    and submits RMAs to BCW.
+
+    Schedule: Every 30 minutes.
+    """
+    job_name = "bcw_return_submission"
+    logger.info(f"[{job_name}] Starting BCW return submission job")
+
+    async with AsyncSessionLocal() as db:
+        if not await check_bcw_enabled(db):
+            return
+
+        # Find refund requests pending RMA submission
+        from app.models.refund import BCWRefundRequest, BCWRefundState
+
+        result = await db.execute(
+            select(BCWRefundRequest)
+            .where(BCWRefundRequest.state.in_([
+                BCWRefundState.APPROVED,
+                BCWRefundState.VENDOR_RETURN_INITIATED,
+            ]))
+            .where(BCWRefundRequest.bcw_rma_number.is_(None))
+            .order_by(BCWRefundRequest.created_at.asc())
+            .limit(5)  # Process 5 at a time
+        )
+        pending_returns = result.scalars().all()
+
+        if not pending_returns:
+            logger.info(f"[{job_name}] No pending returns to process")
+            return
+
+        logger.info(f"[{job_name}] Found {len(pending_returns)} pending returns")
+
+        client = None
+        stats = {"processed": 0, "success": 0, "failed": 0}
+
+        try:
+            client = await get_bcw_client_with_session(db)
+            if not client:
+                logger.error(f"[{job_name}] Could not get BCW client")
+                return
+
+            from app.services.bcw.return_submitter import (
+                BCWReturnSubmitter,
+                ReturnSubmissionRequest,
+                ReturnItem,
+            )
+
+            submitter = BCWReturnSubmitter(client, db)
+
+            for refund_request in pending_returns:
+                stats["processed"] += 1
+
+                try:
+                    # Get the BCW order ID
+                    if not refund_request.bcw_order_id:
+                        logger.warning(
+                            f"[{job_name}] Refund {refund_request.refund_number} "
+                            f"has no BCW order - skipping"
+                        )
+                        continue
+
+                    # Build return items from refund_items
+                    return_items = []
+                    for item in refund_request.refund_items or []:
+                        return_items.append(ReturnItem(
+                            bcw_sku=item.get("bcw_sku", item.get("sku", "")),
+                            quantity=item.get("quantity", 1),
+                            order_item_id=item.get("order_item_id", 0),
+                        ))
+
+                    # Get BCW order number from bcw_orders table
+                    from app.models.bcw import BCWOrder
+                    bcw_order_result = await db.execute(
+                        select(BCWOrder).where(BCWOrder.id == refund_request.bcw_order_id)
+                    )
+                    bcw_order = bcw_order_result.scalar_one_or_none()
+
+                    if not bcw_order or not bcw_order.bcw_order_id:
+                        logger.warning(
+                            f"[{job_name}] Could not find BCW order for refund "
+                            f"{refund_request.refund_number}"
+                        )
+                        continue
+
+                    # Submit RMA
+                    request = ReturnSubmissionRequest(
+                        refund_request_id=refund_request.id,
+                        bcw_order_id=bcw_order.bcw_order_id,
+                        correlation_id=refund_request.correlation_id,
+                        items=return_items,
+                        reason_code=refund_request.reason_code,
+                        reason_description=refund_request.reason_description,
+                    )
+
+                    result = await submitter.submit_return(request)
+
+                    if result.success:
+                        refund_request.bcw_rma_number = result.rma_number
+                        refund_request.state = BCWRefundState.VENDOR_RETURN_INITIATED
+                        stats["success"] += 1
+                        logger.info(
+                            f"[{job_name}] RMA submitted for {refund_request.refund_number}: "
+                            f"{result.rma_number}"
+                        )
+                    else:
+                        stats["failed"] += 1
+                        logger.error(
+                            f"[{job_name}] RMA failed for {refund_request.refund_number}: "
+                            f"{result.error_message}"
+                        )
+
+                except Exception as e:
+                    stats["failed"] += 1
+                    logger.error(
+                        f"[{job_name}] Error processing refund {refund_request.refund_number}: {e}"
+                    )
+
+            logger.info(
+                f"[{job_name}] Return submission complete: "
+                f"{stats['processed']} processed, "
+                f"{stats['success']} success, "
+                f"{stats['failed']} failed"
+            )
+
+            await db.commit()
+
+        except Exception as e:
+            logger.error(f"[{job_name}] Job failed: {e}")
+            traceback.print_exc()
 
         finally:
             if client:

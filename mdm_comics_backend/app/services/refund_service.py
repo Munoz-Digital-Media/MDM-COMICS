@@ -18,10 +18,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Dict, Any, Optional, Tuple
 
+import stripe
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.models import (
     Order,
     OrderItem,
@@ -36,6 +38,16 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Initialize Stripe with API key
+stripe.api_key = settings.STRIPE_SECRET_KEY
+
+
+class StripeRefundError(Exception):
+    """Raised when Stripe refund fails."""
+    def __init__(self, message: str, stripe_error_code: Optional[str] = None):
+        super().__init__(message)
+        self.stripe_error_code = stripe_error_code
 
 
 class RefundBlockedError(Exception):
@@ -486,12 +498,78 @@ class BCWRefundService:
             },
         )
 
+
+    @staticmethod
+    async def _execute_stripe_refund(
+        order: Order,
+        refund_amount: Decimal,
+        refund_number: str,
+    ) -> str:
+        """
+        Execute actual Stripe refund.
+
+        Args:
+            order: Order with payment_intent_id
+            refund_amount: Amount to refund in dollars
+            refund_number: Our refund reference number
+
+        Returns:
+            Stripe refund ID (e.g., 're_xxx')
+
+        Raises:
+            StripeRefundError: If Stripe refund fails
+        """
+        payment_intent_id = getattr(order, 'payment_intent_id', None)
+        if not payment_intent_id:
+            raise StripeRefundError(
+                "Order has no payment_intent_id - cannot process Stripe refund",
+                stripe_error_code="missing_payment_intent"
+            )
+
+        try:
+            # Convert dollars to cents for Stripe
+            amount_cents = int(refund_amount * 100)
+
+            refund = stripe.Refund.create(
+                payment_intent=payment_intent_id,
+                amount=amount_cents,
+                metadata={
+                    "refund_number": refund_number,
+                    "source": "bcw_refund_service",
+                },
+            )
+
+            logger.info(
+                f"Stripe refund created: {refund.id} for ${refund_amount} "
+                f"(payment_intent: {payment_intent_id})"
+            )
+
+            return refund.id
+
+        except stripe.error.InvalidRequestError as e:
+            logger.error(f"Stripe InvalidRequestError: {e}")
+            raise StripeRefundError(
+                f"Invalid refund request: {str(e)}",
+                stripe_error_code=e.code
+            )
+        except stripe.error.CardError as e:
+            logger.error(f"Stripe CardError: {e}")
+            raise StripeRefundError(
+                f"Card error during refund: {str(e)}",
+                stripe_error_code=e.code
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error: {e}")
+            raise StripeRefundError(
+                f"Stripe error: {str(e)}",
+                stripe_error_code=getattr(e, 'code', None)
+            )
+
     @staticmethod
     async def process_customer_refund(
         db: AsyncSession,
         refund_request: BCWRefundRequest,
         admin_id: int,
-        stripe_client: Any = None  # Stripe client for actual refund
     ) -> BCWRefundRequest:
         """
         Process customer refund via Stripe.
@@ -499,8 +577,13 @@ class BCWRefundService:
         CRITICAL: This method REFUSES to execute unless
         refund_request.state == VENDOR_CREDIT_RECEIVED
 
+        Feature Flag: ENABLE_REAL_STRIPE_REFUNDS
+        - False (default): Generates fake refund ID for testing
+        - True: Executes real Stripe refund
+
         Raises:
             RefundBlockedError: If vendor credit not yet received
+            StripeRefundError: If Stripe refund fails (when real refunds enabled)
         """
         if not can_process_customer_refund(refund_request):
             raise RefundBlockedError(
@@ -519,9 +602,53 @@ class BCWRefundService:
             actor_id=admin_id,
         )
 
-        # TODO: Actual Stripe refund integration
-        # For now, simulate successful refund
-        stripe_refund_id = f"re_{uuid.uuid4().hex[:24]}"
+        # Check feature flag for real Stripe refunds
+        enable_real_refunds = getattr(settings, 'ENABLE_REAL_STRIPE_REFUNDS', False)
+
+        if enable_real_refunds and settings.STRIPE_SECRET_KEY:
+            # REAL STRIPE REFUND
+            logger.info(f"Processing REAL Stripe refund for {refund_request.refund_number}")
+
+            # Load order to get payment_intent_id
+            result = await db.execute(
+                select(Order).where(Order.id == refund_request.order_id)
+            )
+            order = result.scalar_one_or_none()
+
+            if not order:
+                raise StripeRefundError(
+                    f"Order {refund_request.order_id} not found",
+                    stripe_error_code="order_not_found"
+                )
+
+            try:
+                stripe_refund_id = await BCWRefundService._execute_stripe_refund(
+                    order=order,
+                    refund_amount=refund_request.refund_amount,
+                    refund_number=refund_request.refund_number,
+                )
+            except StripeRefundError as e:
+                # Log the failure and transition to error state
+                logger.error(f"Stripe refund failed for {refund_request.refund_number}: {e}")
+                await BCWRefundService.transition_state(
+                    db=db,
+                    refund_request=refund_request,
+                    new_state=BCWRefundState.CUSTOMER_REFUND_FAILED,
+                    trigger="stripe_refund_failed",
+                    actor_type="system",
+                    event_data={
+                        "error": str(e),
+                        "stripe_error_code": e.stripe_error_code,
+                    },
+                )
+                raise
+        else:
+            # SIMULATED REFUND (feature flag off or no Stripe key)
+            logger.warning(
+                f"SIMULATED refund for {refund_request.refund_number} "
+                f"(ENABLE_REAL_STRIPE_REFUNDS={enable_real_refunds})"
+            )
+            stripe_refund_id = f"re_SIMULATED_{uuid.uuid4().hex[:16]}"
 
         refund_request.stripe_refund_id = stripe_refund_id
         refund_request.customer_refund_issued_at = datetime.now(timezone.utc)
@@ -536,6 +663,7 @@ class BCWRefundService:
             event_data={
                 "stripe_refund_id": stripe_refund_id,
                 "refund_amount": float(refund_request.refund_amount),
+                "real_refund": enable_real_refunds,
             },
         )
 

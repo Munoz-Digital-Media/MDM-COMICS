@@ -1,0 +1,32 @@
+# CODEOWNERS
+# This file governs who must approve changes to specific files.
+# Syntax: pattern owner1 owner2
+
+# Default: Dev team owns code
+* @dev-team
+
+# --------------------------------------------------------
+# 🛡️ IMMUTABLE GOVERNANCE DOCTRINE 🛡️
+# Only the Owner can modify the Constitution or DevOps rules
+# --------------------------------------------------------
+assets/docs/governance/** @JD
+constitution_*.json       @JD
+
+# --------------------------------------------------------
+# 🚀 INFRASTRUCTURE & DEPLOYMENT 🚀
+# Critical deployment configs are locked.
+# --------------------------------------------------------
+**/railway.json           @JD
+**/Dockerfile*            @JD
+**/docker-compose.yml     @JD
+.github/**                @JD
+.railway/**               @JD
+
+# --------------------------------------------------------
+# 🏗️ APPLICATION STRUCTURE 🏗️
+# Prevent accidental deletion of root services
+# --------------------------------------------------------
+mdm_comics_backend/       @JD
+mdm_comics_frontend/      @JD
+mdm_comics_middleware/    @JD
+mdm_comics_cron_jobs/     @JD

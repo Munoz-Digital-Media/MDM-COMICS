@@ -19,8 +19,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code - preserve directory structure
 COPY mdm_comics_backend/ ./mdm_comics_backend/
 
-# Set working directory to backend
-WORKDIR /app/mdm_comics_backend
+# Set working directory to root to align with Railway config-as-code path
+WORKDIR /app
 
 # Ensure Python can import the project package.
 ENV PYTHONPATH=/app/mdm_comics_backend
@@ -28,4 +28,4 @@ ENV PYTHONPATH=/app/mdm_comics_backend
 ENV PORT=8000
 EXPOSE 8000
 
-CMD ["python", "scripts/startup.py"]
+CMD ["python", "mdm_comics_backend/scripts/startup.py"]

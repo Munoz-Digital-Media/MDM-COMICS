@@ -95,6 +95,10 @@ class BCWConfig(Base):
     last_selector_check_at = Column(DateTime(timezone=True), nullable=True)
     selector_health_status = Column(String(20), default="HEALTHY")  # HEALTHY, DEGRADED, FAILED
 
+    # Dynamic selector overrides (hot-patchable without deployment)
+    # Keys: "category.selector_name", Values: CSS/XPath selectors
+    selectors = Column(JSON, default=dict)
+
     # Configuration flags
     is_active = Column(Boolean, default=True)
     blind_shipping_enabled = Column(Boolean, default=False)

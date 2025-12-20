@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     STRIPE_PUBLISHABLE_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     STRIPE_CURRENCY: str = "usd"
+    ENABLE_REAL_STRIPE_REFUNDS: bool = False  # Feature flag: False=simulated, True=real Stripe refunds
 
     # PriceCharting API
     PRICECHARTING_API_TOKEN: str = ""

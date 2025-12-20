@@ -76,6 +76,19 @@ class BCWSessionManager:
                 code="BCW_CREDENTIAL_DECRYPT_FAILED",
             )
 
+    async def get_selectors(self) -> Dict[str, str]:
+        """
+        Get dynamic selector overrides from database.
+
+        Returns:
+            Dict of 'category.key' -> selector string
+        """
+        config = await self.get_config()
+        if not config or not config.selectors:
+            return {}
+
+        return config.selectors or {}
+
     async def get_valid_session(self) -> Optional[List[Dict]]:
         """
         Get valid session cookies if available.
