@@ -362,7 +362,7 @@ Tokens are set as HttpOnly cookies for web clients, or returned in the response 
 - Passwords must be 8+ chars with uppercase, lowercase, and digit
 - Tokens expire in 30 minutes (access) / 7 days (refresh)
     """,
-    version="1.0.0",
+    version="1.0.1",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_tags=[
