@@ -120,9 +120,31 @@ async function fetchAPI(endpoint, options = {}) {
     });
 
     if (!response.ok) {
-      // LOW-002: Handle 401 by dispatching auth expired event
-      if (response.status === 401) {
-        // Clear stored token on auth failure to prevent stale token loops
+      // IMPL-AUTH-RESILIENCE: Silent refresh on 401
+      if (response.status === 401 && !options._retry) {
+        // Try silent refresh before giving up
+        try {
+          const refreshResponse = await fetch(`${API_BASE}/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+          });
+
+          if (refreshResponse.ok) {
+            const refreshData = await refreshResponse.json();
+            // Update stored token if provided (cross-origin fallback)
+            if (refreshData?.access_token) {
+              setStoredToken(refreshData.access_token);
+            }
+            // Retry original request with _retry flag to prevent infinite loop
+            return fetchAPI(endpoint, { ...options, _retry: true });
+          }
+        } catch (refreshError) {
+          // Refresh failed, fall through to clear and dispatch
+          if (import.meta.env.DEV) console.warn('[API] Silent refresh failed:', refreshError);
+        }
+
+        // Refresh failed - clear tokens and notify
         clearStoredToken();
         window.dispatchEvent(new CustomEvent('auth:expired'));
       }

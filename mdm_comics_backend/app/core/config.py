@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # Auth - NO DEFAULT SECRET KEY (will fail if not set)
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 720  # 12 hours - covers full workday sessions
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # CORS - accepts JSON array or comma-separated string
