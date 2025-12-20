@@ -10,17 +10,20 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for caching
-COPY mdm_comics_backend/requirements.txt .
+COPY mdm_comics_backend/requirements.txt ./mdm_comics_backend/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r mdm_comics_backend/requirements.txt
 
-# Copy application code
-COPY mdm_comics_backend/ .
+# Copy application code - preserve directory structure
+COPY mdm_comics_backend/ ./mdm_comics_backend/
+
+# Set working directory to backend
+WORKDIR /app/mdm_comics_backend
 
 # Ensure Python can import the project package.
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/mdm_comics_backend
 # Railway sets PORT env var
 ENV PORT=8000
 EXPOSE 8000
