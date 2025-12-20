@@ -2,6 +2,11 @@
 Metron Comic Database API Service
 https://metron.cloud/
 
+v2.0.0: REFACTOR - Consolidated to use MetronAdapter (Mokkari)
+        - All Metron traffic now routes through rate-limited MetronAdapter
+        - Fixes split-brain issue causing 429 errors (IMP-20251220-METRON-FIX)
+        - Mokkari handles: 30/min, 10,000/day rate limits with SQLite persistence
+
 v1.6.0: Fixed client lifecycle management (RISK-010 from pipeline spec)
         - Proper async context manager for client lifecycle
         - Registered shutdown hook for cleanup
@@ -10,13 +15,12 @@ v1.6.0: Fixed client lifecycle management (RISK-010 from pipeline spec)
 v1.1.0: Refactored to use ResilientHTTPClient for retry logic,
         exponential backoff, and rate limiting per pipeline spec.
 """
-import atexit
 import logging
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 
 from ..core.config import settings
-from ..core.http_client import get_metron_client, ResilientHTTPClient
+from ..adapters.metron_adapter import MetronAdapter, get_metron_stats
 
 logger = logging.getLogger(__name__)
 
@@ -25,99 +29,42 @@ class MetronService:
     """
     Service for interacting with the Metron comic database API.
 
-    Uses ResilientHTTPClient for:
-    - Automatic retries with exponential backoff
-    - Rate limiting to prevent bans
-    - Circuit breaker for repeated failures
-    - Jitter to prevent thundering herd
+    v2.0.0: REFACTORED to use MetronAdapter (Mokkari library)
+    - All traffic now goes through rate-limited Mokkari client
+    - 30 req/min, 10,000 req/day with SQLite persistence
+    - No more split-brain between raw httpx and Mokkari
+    - Fixes IMP-20251220-METRON-FIX (429 Too Many Requests errors)
 
-    v1.6.0: Proper async context manager support for lifecycle management
+    Previous versions used ResilientHTTPClient which bypassed Mokkari's
+    rate limiting, causing 429 errors and risk of IP ban.
     """
 
     def __init__(self):
         self.base_url = settings.METRON_API_BASE
-        self._username = settings.METRON_USERNAME
-        self._password = settings.METRON_PASSWORD
-        self._client: Optional[ResilientHTTPClient] = None
-        self._client_owned = False  # Track if we own the client
+        self._adapter: Optional[MetronAdapter] = None
 
     async def __aenter__(self):
-        """Async context manager entry - initialize client."""
-        await self._ensure_client()
+        """Async context manager entry - initialize adapter."""
+        self._ensure_adapter()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit - close client."""
-        await self.close()
+        """Async context manager exit - no cleanup needed for Mokkari singleton."""
+        pass
 
-    async def _ensure_client(self):
-        """Ensure client is initialized."""
-        if self._client is None:
-            self._client = get_metron_client()
-            await self._client.__aenter__()
-            self._client_owned = True
-            logger.debug("[METRON] Client initialized")
-
-    @asynccontextmanager
-    async def _get_client(self):
-        """Get or create a resilient HTTP client."""
-        await self._ensure_client()
-        yield self._client
+    def _ensure_adapter(self):
+        """Ensure MetronAdapter is initialized."""
+        if self._adapter is None:
+            self._adapter = MetronAdapter()
+            logger.debug("[METRON] MetronAdapter initialized (using Mokkari)")
 
     async def close(self):
-        """Close the HTTP client if we own it."""
-        if self._client and self._client_owned:
-            try:
-                await self._client.__aexit__(None, None, None)
-                logger.debug("[METRON] Client closed")
-            except Exception as e:
-                logger.warning(f"[METRON] Error closing client: {e}")
-            finally:
-                self._client = None
-                self._client_owned = False
+        """No cleanup needed - Mokkari manages its own lifecycle."""
+        pass
 
-    async def _request(
-        self, 
-        endpoint: str, 
-        params: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """
-        Make authenticated request to Metron API.
-        
-        All retry logic, rate limiting, and error handling is delegated
-        to ResilientHTTPClient. This method just handles Metron-specific
-        auth and response parsing.
-        """
-        async with self._get_client() as client:
-            url = f"{self.base_url}/{endpoint}/"
-            
-            # Metron uses Basic Auth
-            auth_header = {
-                "Authorization": self._build_basic_auth()
-            }
-            
-            logger.debug(f"[METRON] Requesting {endpoint} with params: {params}")
-            
-            response = await client.get(
-                url,
-                params=params,
-                headers=auth_header,
-            )
-            
-            # ResilientHTTPClient already handles retries and raises on fatal errors
-            response.raise_for_status()
-            
-            data = response.json()
-            logger.debug(f"[METRON] Got response with {len(data.get('results', []))} results")
-            
-            return data
-            
-    def _build_basic_auth(self) -> str:
-        """Build Basic Auth header value."""
-        import base64
-        credentials = f"{self._username}:{self._password}"
-        encoded = base64.b64encode(credentials.encode()).decode()
-        return f"Basic {encoded}"
+    def get_stats(self) -> Dict[str, Any]:
+        """Get Metron API request statistics."""
+        return get_metron_stats()
 
     async def search_issues(
         self,
@@ -138,32 +85,33 @@ class MetronService:
             cover_year: Year of cover date
             upc: UPC barcode number
             page: Page number for pagination
-        """
-        params = {"page": page}
-        if series_name:
-            params["series_name"] = series_name
-        if number:
-            params["number"] = number
-        if publisher_name:
-            params["publisher_name"] = publisher_name
-        if cover_year:
-            params["cover_year"] = cover_year
-        if upc:
-            params["upc"] = upc
 
-        return await self._request("issue", params)
+        Returns:
+            Dict with 'results' list and pagination info
+        """
+        self._ensure_adapter()
+        result = await self._adapter.search_issues(
+            series_name=series_name,
+            number=number,
+            publisher_name=publisher_name,
+            cover_year=cover_year,
+            upc=upc,
+            page=page
+        )
+        # Convert FetchResult to legacy dict format
+        return {
+            "results": result.records if result.success else [],
+            "next": None if not result.has_more else f"page={page + 1}",
+            "count": result.total_count or len(result.records),
+        }
 
     async def get_issue(self, issue_id: int) -> Dict[str, Any]:
         """Get detailed information about a specific issue."""
-        async with self._get_client() as client:
-            url = f"{self.base_url}/issue/{issue_id}/"
-            
-            response = await client.get(
-                url,
-                headers={"Authorization": self._build_basic_auth()},
-            )
-            response.raise_for_status()
-            return response.json()
+        self._ensure_adapter()
+        result = await self._adapter.fetch_by_id(str(issue_id), endpoint="issue")
+        if result is None:
+            raise ValueError(f"Issue {issue_id} not found")
+        return result
 
     async def search_series(
         self,
@@ -181,31 +129,39 @@ class MetronService:
             year_began: Year the series started
             page: Page number for pagination
         """
-        params = {"page": page}
+        self._ensure_adapter()
+        filters = {}
         if name:
-            params["name"] = name
+            filters["name"] = name
         if publisher_name:
-            params["publisher_name"] = publisher_name
+            filters["publisher_name"] = publisher_name
         if year_began:
-            params["year_began"] = year_began
+            filters["year_began"] = year_began
 
-        return await self._request("series", params)
+        result = await self._adapter.fetch_page(page=page, endpoint="series", **filters)
+        return {
+            "results": result.records if result.success else [],
+            "next": None if not result.has_more else f"page={page + 1}",
+            "count": result.total_count or len(result.records),
+        }
 
     async def get_series(self, series_id: int) -> Dict[str, Any]:
         """Get detailed information about a specific series."""
-        async with self._get_client() as client:
-            url = f"{self.base_url}/series/{series_id}/"
-            
-            response = await client.get(
-                url,
-                headers={"Authorization": self._build_basic_auth()},
-            )
-            response.raise_for_status()
-            return response.json()
+        self._ensure_adapter()
+        result = await self._adapter.fetch_by_id(str(series_id), endpoint="series")
+        if result is None:
+            raise ValueError(f"Series {series_id} not found")
+        return result
 
     async def get_publishers(self, page: int = 1) -> Dict[str, Any]:
         """Get list of publishers."""
-        return await self._request("publisher", {"page": page})
+        self._ensure_adapter()
+        result = await self._adapter.fetch_page(page=page, endpoint="publisher")
+        return {
+            "results": result.records if result.success else [],
+            "next": None if not result.has_more else f"page={page + 1}",
+            "count": result.total_count or len(result.records),
+        }
 
     async def search_characters(
         self,
@@ -213,10 +169,16 @@ class MetronService:
         page: int = 1
     ) -> Dict[str, Any]:
         """Search for characters."""
-        params = {"page": page}
+        self._ensure_adapter()
+        filters = {}
         if name:
-            params["name"] = name
-        return await self._request("character", params)
+            filters["name"] = name
+        result = await self._adapter.fetch_page(page=page, endpoint="character", **filters)
+        return {
+            "results": result.records if result.success else [],
+            "next": None if not result.has_more else f"page={page + 1}",
+            "count": result.total_count or len(result.records),
+        }
 
     async def search_creators(
         self,
@@ -224,10 +186,16 @@ class MetronService:
         page: int = 1
     ) -> Dict[str, Any]:
         """Search for creators (writers, artists, etc.)."""
-        params = {"page": page}
+        self._ensure_adapter()
+        filters = {}
         if name:
-            params["name"] = name
-        return await self._request("creator", params)
+            filters["name"] = name
+        result = await self._adapter.fetch_page(page=page, endpoint="creator", **filters)
+        return {
+            "results": result.records if result.success else [],
+            "next": None if not result.has_more else f"page={page + 1}",
+            "count": result.total_count or len(result.records),
+        }
 
     async def fetch_all_pages(
         self,
@@ -237,38 +205,38 @@ class MetronService:
     ) -> list:
         """
         Fetch all pages of results from a paginated endpoint.
-        
-        Respects rate limits automatically via ResilientHTTPClient.
-        
+
+        Respects rate limits automatically via MetronAdapter (Mokkari).
+
         Args:
             method: Method name to call (e.g., 'search_issues')
             max_pages: Maximum pages to fetch (safety limit)
             **kwargs: Arguments to pass to the method
-            
+
         Returns:
             List of all results combined
         """
         all_results = []
         page = 1
-        
+
         while page <= max_pages:
             logger.info(f"[METRON] Fetching page {page}...")
-            
+
             # Call the appropriate method
             func = getattr(self, method)
             response = await func(page=page, **kwargs)
-            
+
             results = response.get("results", [])
             all_results.extend(results)
-            
+
             # Check if more pages exist
             next_url = response.get("next")
             if not next_url or not results:
                 logger.info(f"[METRON] Completed after {page} pages, {len(all_results)} total results")
                 break
-                
+
             page += 1
-            
+
         return all_results
 
 

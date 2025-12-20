@@ -629,11 +629,24 @@ def get_metron_client() -> ResilientHTTPClient:
     """
     Get client configured for Metron API.
 
+    .. deprecated:: 2.0.0
+        Use `app.adapters.metron_adapter.MetronAdapter` instead.
+        This function bypasses Mokkari's built-in rate limiting,
+        causing 429 errors. See IMP-20251220-METRON-FIX.
+
     Metron enforces: 30 requests/minute, 10,000 requests/day
     We use 0.4 req/sec (24/min) for safety margin.
 
     Per Mokkari docs: https://github.com/Metron-Project/mokkari
     """
+    import warnings
+    warnings.warn(
+        "get_metron_client() is deprecated. Use MetronAdapter from "
+        "app.adapters.metron_adapter instead for proper rate limiting. "
+        "See IMP-20251220-METRON-FIX.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     return ResilientHTTPClient(
         rate_limit_config=RateLimitConfig(
             requests_per_second=0.4,       # 24 req/min (Metron limit: 30/min)
