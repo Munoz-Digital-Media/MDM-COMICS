@@ -229,8 +229,8 @@ export default function ProductList() {
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
-  const [sortBy, setSortBy] = useState('updated_at');
-  const [sortDir, setSortDir] = useState('desc');
+  const [sortBy, setSortBy] = useState('name');
+  const [sortDir, setSortDir] = useState('asc');
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [showStockModal, setShowStockModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
