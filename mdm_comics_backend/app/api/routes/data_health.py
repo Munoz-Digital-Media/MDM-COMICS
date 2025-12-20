@@ -1030,3 +1030,95 @@ async def run_price_snapshots_migration(
         logger.error(f"Migration failed: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
+
+
+@router.post("/migrations/grading-fields")
+async def run_grading_fields_migration(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Run the grading fields migration for CGC certification support.
+
+    Adds grading_company, certification_number, grade_label columns to products.
+    Safe to run multiple times (uses IF NOT EXISTS / exception handling).
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        logger.info("[MIGRATION] Starting grading fields migration...")
+
+        # Create grading_company enum type
+        await db.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE gradingcompany AS ENUM ('cgc');
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+        """))
+        logger.info("[MIGRATION] Created gradingcompany enum (or already exists)")
+
+        # Create grade_label enum type
+        await db.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE gradelabel AS ENUM ('universal', 'signature', 'qualified', 'restored', 'conserved');
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+        """))
+        logger.info("[MIGRATION] Created gradelabel enum (or already exists)")
+
+        # Add grading_company column if not exists
+        await db.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE products ADD COLUMN grading_company gradingcompany;
+            EXCEPTION
+                WHEN duplicate_column THEN null;
+            END $$;
+        """))
+        logger.info("[MIGRATION] Added grading_company column (or already exists)")
+
+        # Add certification_number column if not exists
+        await db.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE products ADD COLUMN certification_number VARCHAR(50);
+            EXCEPTION
+                WHEN duplicate_column THEN null;
+            END $$;
+        """))
+        logger.info("[MIGRATION] Added certification_number column (or already exists)")
+
+        # Add index on certification_number for lookups
+        await db.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_products_certification_number
+            ON products (certification_number)
+            WHERE certification_number IS NOT NULL;
+        """))
+        logger.info("[MIGRATION] Created index on certification_number (or already exists)")
+
+        # Add grade_label column if not exists
+        await db.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE products ADD COLUMN grade_label gradelabel;
+            EXCEPTION
+                WHEN duplicate_column THEN null;
+            END $$;
+        """))
+        logger.info("[MIGRATION] Added grade_label column (or already exists)")
+
+        await db.commit()
+        logger.info("[MIGRATION] Grading fields migration completed successfully!")
+
+        return {
+            "success": True,
+            "message": "Grading fields migration completed",
+            "columns_added": ["grading_company", "certification_number", "grade_label"],
+            "enums_created": ["gradingcompany", "gradelabel"],
+            "index_created": "ix_products_certification_number"
+        }
+
+    except Exception as e:
+        logger.error(f"[MIGRATION] Grading fields migration failed: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
