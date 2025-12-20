@@ -126,6 +126,27 @@ async def list_bundles(
     )
 
 
+@router.get("/featured", response_model=list[PublicBundleListResponse])
+async def get_featured_bundles(
+    limit: int = Query(5, ge=1, le=10, description="Max bundles to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get featured bundles for homepage display.
+
+    Returns active bundles sorted by display_order.
+    Cached for 5 minutes.
+    """
+    bundles, _ = await BundleService.list_bundles(
+        db,
+        active_only=True,
+        page=1,
+        per_page=limit,
+    )
+
+    return [bundle_to_public_list_response(b) for b in bundles]
+
+
 @router.get("/{slug}", response_model=PublicBundleResponse)
 async def get_bundle_by_slug(
     slug: str,
@@ -204,24 +225,3 @@ async def list_categories(
 
     categories = [row[0] for row in result.all() if row[0]]
     return categories
-
-
-@router.get("/featured", response_model=list[PublicBundleListResponse])
-async def get_featured_bundles(
-    limit: int = Query(5, ge=1, le=10, description="Max bundles to return"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get featured bundles for homepage display.
-
-    Returns active bundles sorted by display_order.
-    Cached for 5 minutes.
-    """
-    bundles, _ = await BundleService.list_bundles(
-        db,
-        active_only=True,
-        page=1,
-        per_page=limit,
-    )
-    
-    return [bundle_to_public_list_response(b) for b in bundles]
