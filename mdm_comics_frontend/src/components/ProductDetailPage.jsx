@@ -290,6 +290,60 @@ export default function ProductDetailPage({
                 ))}
               </div>
             )}
+
+            {/* Product Details - Under Image Gallery */}
+            <div className="mt-6 pt-6 border-t border-zinc-800 space-y-2">
+              <h3 className="text-sm font-semibold text-zinc-300 mb-3">Product Details</h3>
+              {product.category && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">Category</span>
+                  <span className="text-zinc-300 capitalize">{product.category}</span>
+                </div>
+              )}
+              {product.upc && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">UPC</span>
+                  <span className="text-zinc-300 font-mono">{product.upc}</span>
+                </div>
+              )}
+              {product.sku && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">SKU</span>
+                  <span className="text-zinc-300 font-mono">{product.sku}</span>
+                </div>
+              )}
+              {/* Dimensions */}
+              {(() => {
+                const dims = formatDimensions(product.interior_width, product.interior_height, product.interior_length);
+                return dims ? (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-zinc-500">Interior Dimensions</span>
+                    <span className="text-zinc-300">{dims}</span>
+                  </div>
+                ) : null;
+              })()}
+              {(() => {
+                const dims = formatDimensions(product.exterior_width, product.exterior_height, product.exterior_length);
+                return dims ? (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-zinc-500">Exterior Dimensions</span>
+                    <span className="text-zinc-300">{dims}</span>
+                  </div>
+                ) : null;
+              })()}
+              {product.weight && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">Weight</span>
+                  <span className="text-zinc-300">{product.weight}</span>
+                </div>
+              )}
+              {product.material && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-500">Material</span>
+                  <span className="text-zinc-300">{product.material}</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Details Section */}
@@ -424,59 +478,6 @@ export default function ProductDetailPage({
               </button>
             </div>
 
-            {/* Product Details - Order: Category, UPC, SKU, Dimensions, Weight, Material */}
-            <div className="mt-8 pt-8 border-t border-zinc-800 space-y-2">
-              <h3 className="text-sm font-semibold text-zinc-300 mb-3">Product Details</h3>
-              {product.category && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">Category</span>
-                  <span className="text-zinc-300 capitalize">{product.category}</span>
-                </div>
-              )}
-              {product.upc && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">UPC</span>
-                  <span className="text-zinc-300 font-mono">{product.upc}</span>
-                </div>
-              )}
-              {product.sku && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">SKU</span>
-                  <span className="text-zinc-300 font-mono">{product.sku}</span>
-                </div>
-              )}
-              {/* Dimensions */}
-              {(() => {
-                const dims = formatDimensions(product.interior_width, product.interior_height, product.interior_length);
-                return dims ? (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-zinc-500">Interior Dimensions</span>
-                    <span className="text-zinc-300">{dims}</span>
-                  </div>
-                ) : null;
-              })()}
-              {(() => {
-                const dims = formatDimensions(product.exterior_width, product.exterior_height, product.exterior_length);
-                return dims ? (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-zinc-500">Exterior Dimensions</span>
-                    <span className="text-zinc-300">{dims}</span>
-                  </div>
-                ) : null;
-              })()}
-              {product.weight && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">Weight</span>
-                  <span className="text-zinc-300">{product.weight}</span>
-                </div>
-              )}
-              {product.material && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">Material</span>
-                  <span className="text-zinc-300">{product.material}</span>
-                </div>
-              )}
-            </div>
           </div>
         </div>
 
