@@ -53,6 +53,12 @@ export default function ProductCreator() {
     price: '', original_price: '', stock: 1, image_url: '',
     issue_number: '', publisher: '', year: '', upc: '', featured: false, tags: [],
     variant: '',
+    // Grading fields (for graded category)
+    grading_company: 'cgc',
+    certification_number: '',
+    cgc_grade: '',
+    grade_label: 'universal',
+    is_graded: false,
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
@@ -320,6 +326,12 @@ export default function ProductCreator() {
           issue_number: productForm.issue_number || null,
           publisher: productForm.publisher || null,
           subcategory: productForm.subcategory || null,
+          // Grading fields - only include if category is graded
+          grading_company: productForm.category === 'graded' ? productForm.grading_company : null,
+          certification_number: productForm.category === 'graded' ? (productForm.certification_number || null) : null,
+          cgc_grade: productForm.category === 'graded' ? parseFloat(productForm.cgc_grade) : null,
+          grade_label: productForm.category === 'graded' ? productForm.grade_label : null,
+          is_graded: productForm.category === 'graded',
         };
         delete data.variant;
 
@@ -333,6 +345,7 @@ export default function ProductCreator() {
         price: '', original_price: '', stock: 1, image_url: '',
         issue_number: '', publisher: '', year: '', upc: '', featured: false, tags: [],
         variant: '',
+        grading_company: 'cgc', certification_number: '', cgc_grade: '', grade_label: 'universal', is_graded: false,
       });
       setSelectedComic(null);
       setIsBCWProduct(false);
@@ -395,13 +408,87 @@ export default function ProductCreator() {
                   </div>
                   <div>
                     <label className="block text-sm text-zinc-400 mb-1">Category</label>
-                    <select value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white">
-                      <option value="comics">Comics</option>
+                    <select
+                      value={productForm.category}
+                      onChange={(e) => setProductForm({
+                        ...productForm,
+                        category: e.target.value,
+                        is_graded: e.target.value === 'graded'
+                      })}
+                      className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white"
+                    >
+                      <option value="bagged-boarded">Bagged & Boarded</option>
+                      <option value="graded">Graded</option>
                       <option value="funko">Funko</option>
                       <option value="supplies">Supplies</option>
                     </select>
                   </div>
                 </div>
+
+                {/* Grading Section - only shown when category is "graded" */}
+                {productForm.category === 'graded' && (
+                  <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg space-y-3">
+                    <h4 className="text-sm font-semibold text-yellow-400 flex items-center gap-2">
+                      🏆 Grading Information
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm text-zinc-400 mb-1">Grading Company *</label>
+                        <select
+                          value={productForm.grading_company}
+                          onChange={(e) => setProductForm({ ...productForm, grading_company: e.target.value })}
+                          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white"
+                          required
+                        >
+                          <option value="cgc">CGC</option>
+                          {/* Future: CBCS, PGX */}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-zinc-400 mb-1">Certification # *</label>
+                        <input
+                          type="text"
+                          value={productForm.certification_number}
+                          onChange={(e) => setProductForm({ ...productForm, certification_number: e.target.value })}
+                          placeholder="e.g., 4375892006"
+                          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white font-mono"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm text-zinc-400 mb-1">Grade *</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          max="10.0"
+                          value={productForm.cgc_grade}
+                          onChange={(e) => setProductForm({ ...productForm, cgc_grade: e.target.value })}
+                          placeholder="9.8"
+                          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-zinc-400 mb-1">Label Type *</label>
+                        <select
+                          value={productForm.grade_label}
+                          onChange={(e) => setProductForm({ ...productForm, grade_label: e.target.value })}
+                          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white"
+                          required
+                        >
+                          <option value="universal">Universal (Blue)</option>
+                          <option value="signature">Signature Series (Yellow)</option>
+                          <option value="qualified">Qualified (Green)</option>
+                          <option value="restored">Restored (Purple)</option>
+                          <option value="conserved">Conserved (Purple)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm text-zinc-400 mb-1">Name *</label>

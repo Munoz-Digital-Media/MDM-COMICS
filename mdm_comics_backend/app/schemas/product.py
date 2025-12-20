@@ -2,8 +2,10 @@
 Product schemas
 """
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, field_validator
+from typing import Optional, List, Literal
+from pydantic import BaseModel, field_validator, Field
+
+from app.models.product import GradingCompany, GradeLabel
 
 
 class ProductBase(BaseModel):
@@ -35,8 +37,11 @@ class ProductCreate(ProductBase):
     writer: Optional[str] = None
 
     # Grading
-    cgc_grade: Optional[float] = None
+    cgc_grade: Optional[float] = Field(None, ge=0.5, le=10.0, description="Numeric grade 0.5-10.0")
     is_graded: bool = False
+    grading_company: Optional[GradingCompany] = None
+    certification_number: Optional[str] = Field(None, max_length=50)
+    grade_label: Optional[GradeLabel] = None
 
 
 class ProductUpdate(BaseModel):
@@ -74,9 +79,12 @@ class ProductUpdate(BaseModel):
     material: Optional[str] = None
 
     # Grading
-    cgc_grade: Optional[float] = None
+    cgc_grade: Optional[float] = Field(None, ge=0.5, le=10.0, description="Numeric grade 0.5-10.0")
     estimated_grade: Optional[float] = None
     is_graded: Optional[bool] = None
+    grading_company: Optional[GradingCompany] = None
+    certification_number: Optional[str] = Field(None, max_length=50)
+    grade_label: Optional[GradeLabel] = None
 
 
 class ProductResponse(ProductBase):
@@ -116,6 +124,9 @@ class ProductResponse(ProductBase):
     estimated_grade: Optional[float] = None
     grade_confidence: Optional[float] = None
     is_graded: bool = False
+    grading_company: Optional[str] = None  # Returns enum value as string
+    certification_number: Optional[str] = None
+    grade_label: Optional[str] = None  # Returns enum value as string
 
     created_at: Optional[datetime] = None
 

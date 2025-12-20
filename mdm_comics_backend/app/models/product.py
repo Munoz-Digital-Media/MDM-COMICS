@@ -10,11 +10,29 @@ Updated for Admin Console Inventory System v1.3.0:
 DB-005/DB-006: Added audit columns and check constraints per constitution_db.json
 """
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, JSON, Index, Numeric, ForeignKey, CheckConstraint
+from enum import Enum as PyEnum
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, JSON, Index, Numeric, ForeignKey, CheckConstraint, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+
+
+class GradingCompany(str, PyEnum):
+    """Supported comic grading companies."""
+    CGC = "cgc"
+    # Future expansion:
+    # CBCS = "cbcs"
+    # PGX = "pgx"
+
+
+class GradeLabel(str, PyEnum):
+    """CGC/grading label types."""
+    UNIVERSAL = "universal"           # Blue label - standard graded
+    SIGNATURE_SERIES = "signature"    # Yellow label - witnessed signature
+    QUALIFIED = "qualified"           # Green label - significant defect noted
+    RESTORED = "restored"             # Purple label - restoration detected
+    CONSERVED = "conserved"           # Purple label - conservation work
 
 
 class Product(Base):
@@ -62,10 +80,13 @@ class Product(Base):
     writer = Column(String)
 
     # Grading
-    cgc_grade = Column(Float)  # Actual CGC grade if graded
+    cgc_grade = Column(Float)  # Numeric grade (0.5-10.0)
     estimated_grade = Column(Float)  # AI estimated grade
     grade_confidence = Column(Float)  # AI confidence score
     is_graded = Column(Boolean, default=False)
+    grading_company = Column(Enum(GradingCompany), nullable=True)  # CGC, future: CBCS, PGX
+    certification_number = Column(String(50), nullable=True, index=True)  # CGC cert number
+    grade_label = Column(Enum(GradeLabel), nullable=True)  # Universal, Signature Series, etc.
 
     # Metadata
     tags = Column(JSON, default=list)

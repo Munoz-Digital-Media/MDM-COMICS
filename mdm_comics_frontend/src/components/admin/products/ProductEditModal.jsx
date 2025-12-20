@@ -104,6 +104,12 @@ export default function ProductEditModal({ product, onClose, onSave }) {
     // Physical properties
     weight: '',
     material: '',
+    // Grading fields
+    grading_company: '',
+    certification_number: '',
+    cgc_grade: '',
+    grade_label: '',
+    is_graded: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -148,6 +154,12 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         exterior_length: product.exterior_length?.toString() || '',
         weight: product.weight || '',
         material: product.material || '',
+        // Grading fields
+        grading_company: product.grading_company || '',
+        certification_number: product.certification_number || '',
+        cgc_grade: product.cgc_grade?.toString() || '',
+        grade_label: product.grade_label || '',
+        is_graded: product.is_graded || false,
       });
     }
   }, [product]);
@@ -336,6 +348,12 @@ export default function ProductEditModal({ product, onClose, onSave }) {
         exterior_length: form.exterior_length ? parseFloat(form.exterior_length) : null,
         weight: form.weight || null,
         material: form.material || null,
+        // Grading fields - only include if category is graded
+        grading_company: form.category === 'graded' ? (form.grading_company || null) : null,
+        certification_number: form.category === 'graded' ? (form.certification_number || null) : null,
+        cgc_grade: form.category === 'graded' && form.cgc_grade ? parseFloat(form.cgc_grade) : null,
+        grade_label: form.category === 'graded' ? (form.grade_label || null) : null,
+        is_graded: form.category === 'graded',
       };
 
       await adminAPI.updateProduct(null, product.id, updateData);
@@ -396,15 +414,79 @@ export default function ProductEditModal({ product, onClose, onSave }) {
                   <label className="block text-sm text-zinc-400 mb-1">Category</label>
                   <select
                     value={form.category}
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    onChange={(e) => setForm({ ...form, category: e.target.value, is_graded: e.target.value === 'graded' })}
                     className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
                   >
-                    <option value="comics">Comics</option>
+                    <option value="bagged-boarded">Bagged & Boarded</option>
+                    <option value="graded">Graded</option>
                     <option value="funko">Funko</option>
                     <option value="supplies">Supplies</option>
                   </select>
                 </div>
               </div>
+
+              {/* Grading Section - only shown when category is "graded" */}
+              {form.category === 'graded' && (
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg space-y-3">
+                  <h4 className="text-sm font-semibold text-yellow-400 flex items-center gap-2">
+                    🏆 Grading Information
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">Grading Company</label>
+                      <select
+                        value={form.grading_company}
+                        onChange={(e) => setForm({ ...form, grading_company: e.target.value })}
+                        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
+                      >
+                        <option value="">Select...</option>
+                        <option value="cgc">CGC</option>
+                        {/* Future: CBCS, PGX */}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">Certification #</label>
+                      <input
+                        type="text"
+                        value={form.certification_number}
+                        onChange={(e) => setForm({ ...form, certification_number: e.target.value })}
+                        placeholder="e.g., 4375892006"
+                        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white font-mono focus:border-orange-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">Grade</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.5"
+                        max="10.0"
+                        value={form.cgc_grade}
+                        onChange={(e) => setForm({ ...form, cgc_grade: e.target.value })}
+                        placeholder="9.8"
+                        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">Label Type</label>
+                      <select
+                        value={form.grade_label}
+                        onChange={(e) => setForm({ ...form, grade_label: e.target.value })}
+                        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-orange-500 focus:outline-none"
+                      >
+                        <option value="">Select...</option>
+                        <option value="universal">Universal (Blue)</option>
+                        <option value="signature">Signature Series (Yellow)</option>
+                        <option value="qualified">Qualified (Green)</option>
+                        <option value="restored">Restored (Purple)</option>
+                        <option value="conserved">Conserved (Purple)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Name */}
               <div>
