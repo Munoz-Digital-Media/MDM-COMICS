@@ -3,10 +3,13 @@ import React, { useState, useMemo, useEffect, useCallback, useRef, lazy, Suspens
   import { ShoppingCart, Search, X, Plus, Minus, Trash2, ChevronDown, Package, CreditCard, Truck, User, LogOut, Database, Shield, Loader2, QrCode } from "lucide-react";
   import { authAPI } from "./services/api";
   import { useProducts } from "./hooks/useProducts";
+  import { useHomepageSections } from "./hooks/useHomepageSections";
+  import { useFeaturedBundles } from "./hooks/useFeaturedBundles";
   import ComicSearch from "./components/ComicSearch";
   import FunkoSearch from "./components/FunkoSearch";
   import ErrorBoundary from "./components/ErrorBoundary";
   import ProductCard from "./components/ProductCard";
+import HomepageSection from "./components/HomepageSection";
 import ProductDetailPage from "./components/ProductDetailPage";
   // Phase 3: Use new full-page AdminLayout instead of modal-based AdminConsole
 // Phase 5: Lazy load admin to reduce initial bundle size
@@ -46,6 +49,10 @@ import './styles/animations.css';
   export default function App() {
     // FE-004: Products from API instead of static array
     const { products, loading: productsLoading, error: productsError } = useProducts();
+
+    // CHARLIE: Homepage sections and bundles
+    const { sections: homepageSections, loading: sectionsLoading } = useHomepageSections();
+    const { bundles: featuredBundles, loading: bundlesLoading } = useFeaturedBundles(5);
 
     // State management
     // FE-STATE-001: Persist cart to localStorage to survive page refresh
@@ -313,6 +320,30 @@ import './styles/animations.css';
         .slice(0, count);
     }, [categorizedProducts]);
 
+    // CHARLIE-05: Helper to get items for any homepage section
+    const getSectionItems = useCallback((section) => {
+      if (!section) return [];
+      
+      if (section.data_source === 'bundles') {
+        return featuredBundles.slice(0, section.max_items || 5);
+      }
+      
+      // For product sections, use the category key
+      return getCategoryProducts(section.key, section.max_items || 5);
+    }, [getCategoryProducts, featuredBundles]);
+
+    // CHARLIE-05: Handler for section navigation
+    const handleSectionNavigate = useCallback((section) => {
+      if (section.data_source === 'bundles') {
+        // TODO: Navigate to bundles page when implemented
+        setSelectedCategory('all');
+        setCurrentView('category');
+      } else {
+        setSelectedCategory(section.key);
+        setCurrentView('category');
+      }
+    }, []);
+
     // FE-PERF-005: Memoized sorted category products for grid view
     const sortedCategoryProducts = useMemo(() => {
       const categoryProducts = selectedCategory === "bagged-boarded"
@@ -547,97 +578,18 @@ import './styles/animations.css';
                 </div>
               )}
 
-              {/* Bagged & Boarded Books Section - uses memoized categorizedProducts */}
-              {!productsLoading && (
-                <section className="mb-12">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-comic text-2xl text-white flex items-center gap-2">
-                      📚 BAGGED & BOARDED BOOKS
-                    </h3>
-                    <a
-                      href="/shop/bagged-boarded"
-                      onClick={(e) => { e.preventDefault(); setSelectedCategory("bagged-boarded"); setCurrentView("category"); }}
-                      className="see-more-link text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1"
-                    >
-                      See More →
-                    </a>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {getCategoryProducts("bagged-boarded", 5).map((product, index) => (
-                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              {/* Graded Books Section - uses memoized categorizedProducts */}
-              {!productsLoading && (
-                <section className="mb-12">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-comic text-2xl text-white flex items-center gap-2">
-                      🏆 GRADED BOOKS
-                    </h3>
-                    <a
-                      href="/shop/graded"
-                      onClick={(e) => { e.preventDefault(); setSelectedCategory("graded"); setCurrentView("category"); }}
-                      className="see-more-link text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1"
-                    >
-                      See More →
-                    </a>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {getCategoryProducts("graded", 5).map((product, index) => (
-                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              {/* Funko POPs Section - uses memoized categorizedProducts */}
-              {!productsLoading && (
-                <section className="mb-12">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-comic text-2xl text-white flex items-center gap-2">
-                      🎭 FUNKO POPS
-                    </h3>
-                    <a
-                      href="/shop/funko"
-                      onClick={(e) => { e.preventDefault(); setSelectedCategory("funko"); setCurrentView("category"); }}
-                      className="see-more-link text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1"
-                    >
-                      See More →
-                    </a>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {getCategoryProducts("funko", 5).map((product, index) => (
-                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              {/* Supplies Section - uses memoized categorizedProducts */}
-              {!productsLoading && (
-                <section className="mb-12">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-comic text-2xl text-white flex items-center gap-2">
-                      📦 SUPPLIES
-                    </h3>
-                    <a
-                      href="/shop/supplies"
-                      onClick={(e) => { e.preventDefault(); setSelectedCategory("supplies"); setCurrentView("category"); }}
-                      className="see-more-link text-orange-500 hover:text-orange-400 text-sm font-semibold flex items-center gap-1"
-                    >
-                      See More →
-                    </a>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {getCategoryProducts("supplies", 5).map((product, index) => (
-                      <ProductCard key={product.id} product={product} index={index} addToCart={addToCart} onViewProduct={handleViewProduct} />
-                    ))}
-                  </div>
-                </section>
-              )}
+              {/* Dynamic Homepage Sections - CHARLIE-05 */}
+              {!productsLoading && homepageSections.map((section) => (
+                <HomepageSection
+                  key={section.key}
+                  section={section}
+                  items={getSectionItems(section)}
+                  loading={section.data_source === 'bundles' ? bundlesLoading : false}
+                  onItemClick={section.data_source === 'bundles' ? undefined : handleViewProduct}
+                  onAddToCart={addToCart}
+                  onNavigate={handleSectionNavigate}
+                />
+              ))}
 
             </section>
 

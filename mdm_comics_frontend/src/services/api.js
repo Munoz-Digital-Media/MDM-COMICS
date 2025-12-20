@@ -908,6 +908,88 @@ export const matchReviewAPI = {
   },
 };
 
+/**
+ * Homepage API
+ * CHARLIE-06: Homepage section configuration
+ */
+export const homepageAPI = {
+  /**
+   * Get homepage sections configuration
+   * Returns ordered, visible sections for the landing page
+   */
+  getSections: async (options = {}) => {
+    const fetchOptions = {};
+    if (options.signal) fetchOptions.signal = options.signal;
+    return fetchAPI('/homepage/sections', fetchOptions);
+  },
+};
+
+/**
+ * Bundles API
+ * CHARLIE-06: Bundle display and cart integration
+ */
+export const bundlesAPI = {
+  /**
+   * Get featured bundles for homepage
+   * @param {number} limit - Max bundles to return (default 5, max 10)
+   * @param {Object} options - Fetch options (signal for abort)
+   */
+  getFeatured: async (limit = 5, options = {}) => {
+    const params = new URLSearchParams();
+    params.append('limit', Math.min(limit, 10));
+
+    const fetchOptions = {};
+    if (options.signal) fetchOptions.signal = options.signal;
+
+    return fetchAPI(`/bundles/featured?${params.toString()}`, fetchOptions);
+  },
+
+  /**
+   * Get all active bundles with pagination
+   * @param {Object} options - Query options
+   */
+  getAll: async ({ page = 1, per_page = 20, category, sort, signal } = {}) => {
+    const params = new URLSearchParams();
+    params.append('page', page);
+    params.append('per_page', per_page);
+    if (category) params.append('category', category);
+    if (sort) params.append('sort', sort);
+
+    const fetchOptions = {};
+    if (signal) fetchOptions.signal = signal;
+
+    return fetchAPI(`/bundles?${params.toString()}`, fetchOptions);
+  },
+
+  /**
+   * Get bundle by slug
+   * @param {string} slug - Bundle slug
+   */
+  getBySlug: async (slug) => {
+    return fetchAPI(`/bundles/${slug}`);
+  },
+
+  /**
+   * Get bundle by ID
+   * @param {number} id - Bundle ID
+   */
+  getById: async (id) => {
+    return fetchAPI(`/bundles/id/${id}`);
+  },
+
+  /**
+   * Add bundle to cart
+   * @param {number} bundleId - Bundle ID
+   * @param {number} quantity - Quantity (default 1)
+   */
+  addToCart: async (bundleId, quantity = 1) => {
+    return fetchAPI('/cart/bundle', {
+      method: 'POST',
+      body: JSON.stringify({ bundle_id: bundleId, quantity }),
+    });
+  },
+};
+
 // Re-export middleware API for convenience
 export { middlewareAPI, isMiddlewareConfigured } from './middlewareApi.js';
 
@@ -924,4 +1006,6 @@ export default {
   matchReview: matchReviewAPI,
   refunds: refundsAPI,
   orders: ordersAPI,
+  homepage: homepageAPI,
+  bundles: bundlesAPI,
 };
