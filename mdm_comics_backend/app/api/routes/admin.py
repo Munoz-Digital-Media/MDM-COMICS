@@ -1831,12 +1831,16 @@ async def get_gcd_import_status(
 
         for idx, phase in enumerate(phase_order):
             phase_total = phase_totals.get(phase, 0)
-            if idx < current_idx:
+
+            # If phase has no records (total = 0), show 0/0 regardless of offset
+            if phase_total == 0:
+                phase_progress[phase] = {"processed": 0, "errors": 0}
+            elif idx < current_idx:
                 # Completed phases
                 phase_progress[phase] = {"processed": phase_total, "errors": 0}
             elif idx == current_idx:
-                # Current phase - use offset as processed count
-                phase_progress[phase] = {"processed": current_offset, "errors": 0}
+                # Current phase - use offset as processed count (capped at total)
+                phase_progress[phase] = {"processed": min(current_offset, phase_total), "errors": 0}
             else:
                 # Future phases
                 phase_progress[phase] = {"processed": 0, "errors": 0}
