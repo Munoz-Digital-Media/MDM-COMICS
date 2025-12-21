@@ -1,20 +1,23 @@
 """
-Multi-Source Comic Search Service v1.1.0
+Multi-Source Comic Search Service v1.2.0
 
 Provides resilient comic search with automatic failover across multiple sources.
 Per constitution_cyberSec.json: No single point of failure.
 
+v1.2.0: Smart series-based wiki routing for Fandom searches
+        - "spawn" now correctly routes to Image Fandom
+        - Series name pattern matching for 100+ known titles
 v1.1.0: Added ComicVine fallback, fixed error propagation for rate limits
 
 Search Priority:
 1. Local cache (GCD data) - always checked first
 2. Metron API - primary external source
 3. ComicVine API - secondary API fallback
-4. Fandom wikis - publisher-aware routing (DC, Marvel, Image)
+4. Fandom wikis - smart publisher-aware routing (DC, Marvel, Image)
 
 Features:
 - Automatic failover on source failure/rate limit
-- Publisher-aware routing to relevant Fandom wikis
+- Smart series-to-publisher inference for Fandom routing
 - Result aggregation from multiple sources
 - Source attribution in results
 """
@@ -72,6 +75,175 @@ PUBLISHER_WIKI_MAP = {
     "idw publishing": "idw_fandom",
     "dynamite": "dynamite_fandom",
     "dynamite entertainment": "dynamite_fandom",
+}
+
+# Well-known series to publisher mapping for smart wiki routing
+# Enables automatic wiki selection when publisher is not provided
+SERIES_PUBLISHER_MAP = {
+    # Image Comics - Major titles
+    "spawn": "image",
+    "the walking dead": "image",
+    "walking dead": "image",
+    "invincible": "image",
+    "saga": "image",
+    "savage dragon": "image",
+    "witchblade": "image",
+    "the darkness": "image",
+    "darkness": "image",
+    "wildcats": "image",
+    "cyberforce": "image",
+    "youngblood": "image",
+    "haunt": "image",
+    "curse of spawn": "image",
+    "spawn the dark ages": "image",
+    "violator": "image",
+    "angela": "image",
+    "medieval spawn": "image",
+    "sam and twitch": "image",
+    "sam & twitch": "image",
+    "deadly class": "image",
+    "wytches": "image",
+    "east of west": "image",
+    "jupiter's legacy": "image",
+    "kick-ass": "image",
+    "chew": "image",
+    "black science": "image",
+    "descender": "image",
+    "monstress": "image",
+    "paper girls": "image",
+    "sex criminals": "image",
+    "the wicked + the divine": "image",
+    "criminal": "image",
+    "fatale": "image",
+    "lazarus": "image",
+    "rad black": "image",
+    "rat queens": "image",
+    "southern bastards": "image",
+    "ice cream man": "image",
+
+    # DC Comics - Major titles
+    "batman": "dc",
+    "superman": "dc",
+    "wonder woman": "dc",
+    "justice league": "dc",
+    "flash": "dc",
+    "the flash": "dc",
+    "green lantern": "dc",
+    "aquaman": "dc",
+    "green arrow": "dc",
+    "nightwing": "dc",
+    "teen titans": "dc",
+    "suicide squad": "dc",
+    "harley quinn": "dc",
+    "batgirl": "dc",
+    "supergirl": "dc",
+    "robin": "dc",
+    "detective comics": "dc",
+    "action comics": "dc",
+    "swamp thing": "dc",
+    "sandman": "dc",
+    "the sandman": "dc",
+    "doom patrol": "dc",
+    "hellblazer": "dc",
+    "john constantine hellblazer": "dc",
+    "constantine": "dc",
+    "preacher": "dc",
+    "y the last man": "dc",
+    "fables": "dc",
+    "100 bullets": "dc",
+    "transmetropolitan": "dc",
+    "watchmen": "dc",
+    "v for vendetta": "dc",
+    "crisis on infinite earths": "dc",
+    "final crisis": "dc",
+    "infinite crisis": "dc",
+    "dceased": "dc",
+    "dark nights metal": "dc",
+    "dark knights death metal": "dc",
+    "the batman who laughs": "dc",
+    "shazam": "dc",
+    "cyborg": "dc",
+    "hawkman": "dc",
+    "black adam": "dc",
+    "blue beetle": "dc",
+    "booster gold": "dc",
+    "catwoman": "dc",
+    "poison ivy": "dc",
+    "red hood": "dc",
+    "joker": "dc",
+    "the joker": "dc",
+    "birds of prey": "dc",
+    "batwoman": "dc",
+    "batwing": "dc",
+
+    # Marvel Comics - Major titles
+    "amazing spider-man": "marvel",
+    "the amazing spider-man": "marvel",
+    "spider-man": "marvel",
+    "spectacular spider-man": "marvel",
+    "x-men": "marvel",
+    "uncanny x-men": "marvel",
+    "avengers": "marvel",
+    "fantastic four": "marvel",
+    "iron man": "marvel",
+    "invincible iron man": "marvel",
+    "captain america": "marvel",
+    "thor": "marvel",
+    "mighty thor": "marvel",
+    "hulk": "marvel",
+    "incredible hulk": "marvel",
+    "daredevil": "marvel",
+    "wolverine": "marvel",
+    "deadpool": "marvel",
+    "punisher": "marvel",
+    "the punisher": "marvel",
+    "venom": "marvel",
+    "carnage": "marvel",
+    "ghost rider": "marvel",
+    "moon knight": "marvel",
+    "black panther": "marvel",
+    "doctor strange": "marvel",
+    "captain marvel": "marvel",
+    "ms marvel": "marvel",
+    "ms. marvel": "marvel",
+    "scarlet witch": "marvel",
+    "vision": "marvel",
+    "hawkeye": "marvel",
+    "black widow": "marvel",
+    "guardians of the galaxy": "marvel",
+    "silver surfer": "marvel",
+    "new mutants": "marvel",
+    "x-force": "marvel",
+    "excalibur": "marvel",
+    "x-factor": "marvel",
+    "cable": "marvel",
+    "gambit": "marvel",
+    "rogue": "marvel",
+    "magneto": "marvel",
+    "secret wars": "marvel",
+    "civil war": "marvel",
+    "house of m": "marvel",
+    "house of x": "marvel",
+    "powers of x": "marvel",
+    "infinity gauntlet": "marvel",
+    "infinity war": "marvel",
+    "age of apocalypse": "marvel",
+    "ultimate spider-man": "marvel",
+    "miles morales": "marvel",
+    "miles morales spider-man": "marvel",
+    "spider-gwen": "marvel",
+    "spider-verse": "marvel",
+    "secret invasion": "marvel",
+    "eternals": "marvel",
+    "blade": "marvel",
+    "ant-man": "marvel",
+    "wasp": "marvel",
+    "she-hulk": "marvel",
+    "elektra": "marvel",
+    "iron fist": "marvel",
+    "luke cage": "marvel",
+    "jessica jones": "marvel",
+    "star wars": "marvel",  # Marvel currently publishes Star Wars
 }
 
 
@@ -134,6 +306,28 @@ class MultiSourceSearchService:
             return None
         pub_lower = publisher_name.lower().strip()
         return PUBLISHER_WIKI_MAP.get(pub_lower)
+
+    def _infer_publisher_from_series(self, series_name: str) -> Optional[str]:
+        """
+        Infer publisher from well-known series names.
+        Returns publisher shorthand (dc, marvel, image) or None if unknown.
+        """
+        if not series_name:
+            return None
+
+        series_lower = series_name.lower().strip()
+
+        # Direct match first
+        if series_lower in SERIES_PUBLISHER_MAP:
+            return SERIES_PUBLISHER_MAP[series_lower]
+
+        # Try partial matching for series that contain the keyword
+        # e.g., "spawn #1" should match "spawn"
+        for known_series, publisher in SERIES_PUBLISHER_MAP.items():
+            if series_lower.startswith(known_series + " ") or series_lower == known_series:
+                return publisher
+
+        return None
 
     async def search_local_cache(
         self,
@@ -354,8 +548,12 @@ class MultiSourceSearchService:
         publisher_name: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Search Fandom wikis with publisher-aware routing.
-        If publisher known, search that wiki. Otherwise, search major wikis in parallel.
+        Search Fandom wikis with smart publisher-aware routing.
+
+        Routing logic:
+        1. If publisher explicitly provided, use that wiki only
+        2. If series name matches known series (e.g., "spawn" -> Image), prioritize that wiki
+        3. Otherwise, search all major wikis in parallel
         """
         results = []
 
@@ -363,11 +561,26 @@ class MultiSourceSearchService:
         wiki_key = self._get_wiki_for_publisher(publisher_name)
 
         if wiki_key:
-            # Publisher known - search specific wiki
+            # Publisher explicitly provided - search that wiki only
             wikis_to_search = [wiki_key]
+            logger.debug(f"[FANDOM] Using explicit publisher wiki: {wiki_key}")
         else:
-            # Publisher unknown - search major wikis in parallel
-            wikis_to_search = ["dc_fandom", "marvel_fandom", "image_fandom"]
+            # Try to infer publisher from series name
+            inferred_publisher = self._infer_publisher_from_series(series_name)
+
+            if inferred_publisher:
+                # Series matched - prioritize that publisher's wiki, but also search others
+                primary_wiki = PUBLISHER_WIKI_MAP.get(inferred_publisher)
+                if primary_wiki:
+                    # Search inferred wiki first (higher priority), then others
+                    wikis_to_search = [primary_wiki]
+                    logger.info(f"[FANDOM] Inferred '{series_name}' -> {inferred_publisher} -> {primary_wiki}")
+                else:
+                    wikis_to_search = ["dc_fandom", "marvel_fandom", "image_fandom"]
+            else:
+                # Publisher unknown - search major wikis in parallel
+                wikis_to_search = ["dc_fandom", "marvel_fandom", "image_fandom"]
+                logger.debug(f"[FANDOM] No publisher inferred for '{series_name}', searching all wikis")
 
         async def search_wiki(wiki_key: str) -> List[Dict[str, Any]]:
             try:
