@@ -593,35 +593,6 @@ import './styles/animations.css';
               ))}
 
             </section>
-
-            {/* Features Section */}
-            <section className="border-t border-zinc-800 bg-zinc-900/50">
-              <div className="max-w-5xl mx-auto px-4 py-8">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-0 sm:divide-x divide-zinc-800">
-                  <div className="flex flex-col items-center text-center px-4">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
-                      <Truck className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
-                    </div>
-                    <h4 className="font-bold text-white text-sm">Fast Shipping</h4>
-                    <p className="text-zinc-500 text-xs">Free on orders $50+</p>
-                  </div>
-                  <div className="flex flex-col items-center text-center px-4">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
-                      <Package className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
-                    </div>
-                    <h4 className="font-bold text-white text-sm">Secure Packaging</h4>
-                    <p className="text-zinc-500 text-xs">Protective cases included</p>
-                  </div>
-                  <div className="flex flex-col items-center text-center px-4">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
-                      <CreditCard className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
-                    </div>
-                    <h4 className="font-bold text-white text-sm">Secure Payment</h4>
-                    <p className="text-zinc-500 text-xs">PayPal, Stripe & more</p>
-                  </div>
-                </div>
-              </div>
-            </section>
           </main>
         )}
 
@@ -1015,6 +986,35 @@ import './styles/animations.css';
 
         {/* Conventions Showcase */}
         <ConventionShowcase />
+
+        {/* Shipping Banner - Fixed above footer */}
+        <section className="border-t border-zinc-800 bg-zinc-900/50">
+          <div className="max-w-5xl mx-auto px-4 py-8">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-0 sm:divide-x divide-zinc-800">
+              <div className="flex flex-col items-center text-center px-4">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
+                  <Truck className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
+                </div>
+                <h4 className="font-bold text-white text-sm">Fast Shipping</h4>
+                <p className="text-zinc-500 text-xs">Free on orders $50+</p>
+              </div>
+              <div className="flex flex-col items-center text-center px-4">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
+                  <Package className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
+                </div>
+                <h4 className="font-bold text-white text-sm">Secure Packaging</h4>
+                <p className="text-zinc-500 text-xs">Protective cases included</p>
+              </div>
+              <div className="flex flex-col items-center text-center px-4">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
+                  <CreditCard className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
+                </div>
+                <h4 className="font-bold text-white text-sm">Secure Payment</h4>
+                <p className="text-zinc-500 text-xs">PayPal, Stripe & more</p>
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* Footer */}
         <footer className="bg-zinc-900 border-t border-zinc-800">
