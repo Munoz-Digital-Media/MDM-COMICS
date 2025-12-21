@@ -2,7 +2,7 @@
 MDM Comics Backend
 FastAPI application entry point
 
-v1.8.0 - GCD Granular Progress Tracking (IMP-20251221-GCD-GRANULAR-PROGRESS)
+v1.8.1 - GCD Synopsis Enrichment (IMP-20251221-GCD-GRANULAR-PROGRESS)
 
 Risk Mitigation Implementation:
 - P0-1: Stock cleanup scheduler with heartbeat metrics
