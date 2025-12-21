@@ -92,7 +92,7 @@ class MultiSourceSearchService:
                 name="comicvine",
                 source_type=DataSourceType.API,
                 base_url="https://comicvine.gamespot.com/api",
-                rate_limit=RateLimitConfig(requests_per_minute=3),  # 200/hour = 3.3/min
+                rate_limit=RateLimitConfig(requests_per_second=0.05),  # 200/hour = ~3/min = 0.05/sec
                 retry=RetryConfig(max_retries=2, base_delay=1.0),
             )
             self._comicvine_client = ResilientHTTPClient(config.rate_limit, config.retry)
@@ -107,7 +107,7 @@ class MultiSourceSearchService:
                 name="mycomicshop",
                 source_type=DataSourceType.SCRAPER,
                 base_url="https://www.mycomicshop.com",
-                rate_limit=RateLimitConfig(requests_per_minute=10),  # Conservative for scraping
+                rate_limit=RateLimitConfig(requests_per_second=0.15),  # ~10/min for scraping
                 retry=RetryConfig(max_retries=2, base_delay=2.0),
             )
             self._mycomicshop_client = ResilientHTTPClient(config.rate_limit, config.retry)
