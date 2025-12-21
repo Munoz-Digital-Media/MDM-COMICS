@@ -75,7 +75,7 @@ export default function AdminLayout({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-950 flex">
+    <div className="fixed inset-0 z-50 bg-zinc-950 flex overflow-hidden">
       {/* Mobile overlay */}
       {mobileMenuOpen && (
         <div

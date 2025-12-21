@@ -384,7 +384,7 @@ import './styles/animations.css';
     }
 
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ fontFamily: "'Barlow', sans-serif" }}>
+      <div className={`min-h-screen bg-zinc-950 text-zinc-100 ${isAdminOpen ? 'h-screen overflow-hidden' : ''}`} style={{ fontFamily: "'Barlow', sans-serif" }}>
         {/* Notification Toast */}
         {notification && (
           <div className={`fixed top-4 right-4 z-50 notification-enter px-6 py-3 rounded-lg shadow-xl ${
