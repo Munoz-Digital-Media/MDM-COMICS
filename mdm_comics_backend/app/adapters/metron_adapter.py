@@ -370,6 +370,24 @@ class MetronAdapter(DataSourceAdapter):
             "_source_id": str(record.get("id")),
         }
 
+    async def search_series(
+        self,
+        name: Optional[str] = None,
+        publisher_name: Optional[str] = None,
+        year_began: Optional[int] = None,
+        page: int = 1
+    ) -> FetchResult:
+        """Search for comic series by name."""
+        filters = {}
+        if name:
+            filters["name"] = name
+        if publisher_name:
+            filters["publisher"] = publisher_name
+        if year_began:
+            filters["year_began"] = year_began
+
+        return await self.fetch_page(page=page, endpoint="series", **filters)
+
     async def search_issues(
         self,
         series_name: Optional[str] = None,
@@ -379,17 +397,53 @@ class MetronAdapter(DataSourceAdapter):
         upc: Optional[str] = None,
         page: int = 1
     ) -> FetchResult:
-        """Search for comic issues with filters."""
-        filters = {}
+        """
+        Search for comic issues with filters.
+
+        Note: Metron's issues endpoint requires a series ID, not series name.
+        If series_name is provided, we first search for matching series,
+        then search for issues within those series.
+        """
+        # If series_name provided, first find matching series IDs
+        series_ids = []
         if series_name:
-            filters["series_name"] = series_name
+            series_result = await self.search_series(name=series_name, publisher_name=publisher_name)
+            if series_result.success and series_result.records:
+                # Get up to 5 matching series IDs
+                series_ids = [r.get("id") for r in series_result.records[:5] if r.get("id")]
+                logger.debug(f"[METRON] Found {len(series_ids)} series matching '{series_name}'")
+
+            if not series_ids:
+                # No matching series found
+                logger.debug(f"[METRON] No series found matching '{series_name}'")
+                return FetchResult(success=True, records=[], total_count=0)
+
+        # Build issue search filters
+        filters = {}
         if number:
             filters["number"] = number
-        if publisher_name:
-            filters["publisher_name"] = publisher_name
         if cover_year:
             filters["cover_year"] = cover_year
         if upc:
             filters["upc"] = upc
 
-        return await self.fetch_page(page=page, endpoint="issue", **filters)
+        # If we have series IDs, search issues for each series
+        if series_ids:
+            all_records = []
+            for series_id in series_ids[:3]:  # Limit to first 3 series to avoid too many requests
+                filters["series"] = series_id
+                result = await self.fetch_page(page=page, endpoint="issue", **filters)
+                if result.success and result.records:
+                    all_records.extend(result.records)
+
+            return FetchResult(
+                success=True,
+                records=all_records[:20],  # Limit total results
+                total_count=len(all_records),
+                has_more=len(all_records) > 20
+            )
+        else:
+            # No series filter - search all issues (only if other filters provided)
+            if not filters:
+                return FetchResult(success=True, records=[], total_count=0)
+            return await self.fetch_page(page=page, endpoint="issue", **filters)
