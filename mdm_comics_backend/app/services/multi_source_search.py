@@ -266,7 +266,7 @@ class MultiSourceSearchService:
 
             result = await asyncio.wait_for(
                 adapter.search_issues(query, limit=10),
-                timeout=8.0
+                timeout=15.0  # Increased from 8s - ComicVine can be slow
             )
 
             # Convert FetchResult to dict format
@@ -508,9 +508,9 @@ class MultiSourceSearchService:
                         all_results.extend(cv_records)
                         logger.info(f"[MULTI-SEARCH] Found {len(cv_records)} from ComicVine")
 
-            # 4. Still no results? Try Fandom wikis
-            if not all_results and series_name:
-                logger.info("[MULTI-SEARCH] Trying Fandom wikis")
+            # 4. Try Fandom wikis (if no results OR fewer than 5)
+            if len(all_results) < 5 and series_name:
+                logger.info(f"[MULTI-SEARCH] Trying Fandom wikis (have {len(all_results)} results)")
                 fandom_results = await self.search_fandom(
                     series_name=series_name,
                     number=number,
@@ -522,9 +522,9 @@ class MultiSourceSearchService:
                     sources_tried.append("fandom")
                     logger.info(f"[MULTI-SEARCH] Found {len(fandom_results)} from Fandom")
 
-            # 5. FINAL FALLBACK: MyComicShop scraper (no API rate limits)
-            if not all_results and series_name:
-                logger.info("[MULTI-SEARCH] All APIs failed, trying MyComicShop scraper")
+            # 5. FINAL FALLBACK: MyComicShop scraper (if still fewer than 5 results)
+            if len(all_results) < 5 and series_name:
+                logger.info(f"[MULTI-SEARCH] Trying MyComicShop scraper (have {len(all_results)} results)")
                 mcs_result = await self.search_mycomicshop(
                     series_name=series_name,
                     number=number
