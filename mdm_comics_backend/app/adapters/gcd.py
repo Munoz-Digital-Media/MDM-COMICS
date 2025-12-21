@@ -726,7 +726,7 @@ class GCDAdapter(DataSourceAdapter):
             "issues": "SELECT COUNT(*) FROM gcd_issue WHERE deleted = 0",
             "stories": "SELECT COUNT(*) FROM gcd_story WHERE deleted = 0",
             "credits": "SELECT COUNT(*) FROM gcd_story_credit",
-            "reprints": "SELECT COUNT(*) FROM gcd_issue_reprint",
+            "reprints": "SELECT COUNT(*) FROM gcd_reprint",
         }
 
         totals = {}
