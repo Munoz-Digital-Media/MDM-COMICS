@@ -457,7 +457,6 @@ class GCDAdapter(DataSourceAdapter):
                 SELECT
                     id as gcd_id,
                     name,
-                    publisher_id as gcd_publisher_id,
                     year_began,
                     year_ended,
                     notes,
@@ -624,30 +623,30 @@ class GCDAdapter(DataSourceAdapter):
 
         Handles NULL values and type conversions.
         """
-        # Parse cover price - GCD stores as text like "$2.99"
+        # Parse cover price - GCD stores as text like "$2.99" or "[none]"
         cover_price = row.get("cover_price")
-        if cover_price and isinstance(cover_price, str):
+        parsed_price = None
+        if cover_price and isinstance(cover_price, str) and cover_price.lower() != '[none]':
+            # Extract numeric value from price string
             price_match = re.search(r'[\d.]+', cover_price)
             if price_match:
                 try:
-                    cover_price = float(price_match.group())
+                    parsed_price = float(price_match.group())
                 except ValueError:
-                    cover_price = None
+                    parsed_price = None
 
         # Parse key_date to release_date (YYYY-MM-DD format)
         key_date = row.get("key_date")
         release_date = None
         if key_date and len(key_date) >= 4:
             try:
-                # Try to extract valid date part
-                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', key_date)
-                if date_match:
-                    release_date = date_match.group(1)
-                else:
-                    # Year only?
-                    year_match = re.search(r'(\d{4})', key_date)
-                    if year_match:
-                        release_date = f"{year_match.group(1)}-01-01"
+                # GCD uses YYYY-MM-DD but often with zeros: 1963-07-00
+                # Postgres hates 00 month/day
+                parts = key_date.split('-')
+                year = parts[0]
+                month = parts[1] if len(parts) > 1 and parts[1] != '00' else '01'
+                day = parts[2] if len(parts) > 2 and parts[2] != '00' else '01'
+                release_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
             except:
                 pass
 
@@ -668,7 +667,7 @@ class GCDAdapter(DataSourceAdapter):
             "volume": row.get("volume"),
             "story_title": row.get("story_title"),
             "page_count": row.get("page_count"),
-            "price": cover_price,
+            "price": parsed_price,
             "gcd_price": row.get("cover_price"),
             "publication_date": row.get("publication_date"),
             "key_date": row.get("key_date"),

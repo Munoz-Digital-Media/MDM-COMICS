@@ -293,6 +293,7 @@ async def update_checkpoint(
     is_running: Optional[bool] = None,
     batch_id: Optional[str] = None,
     last_error: Optional[str] = None,
+    state_data: Optional[dict] = None,
 ):
     """Update checkpoint with progress."""
     updates = ["updated_at = NOW()"]
@@ -330,6 +331,9 @@ async def update_checkpoint(
     if last_error is not None:
         updates.append("last_error = :error")
         params["error"] = last_error[:1000]
+    if state_data is not None:
+        updates.append("state_data = :state")
+        params["state"] = json.dumps(state_data)
 
     await db.execute(
         text(f"UPDATE pipeline_checkpoints SET {', '.join(updates)} WHERE job_name = :name"),
@@ -468,54 +472,79 @@ async def run_gcd_import_job():
                         
                         # Prepare batch data
                         cleaned_batch = []
-                        for record in batch:
-                            # Basic cleanup
-                            cleaned_rec = {k: v for k, v in record.items() if not k.startswith('_')}
-                            cleaned_batch.append(cleaned_rec)
+                        if mode == "indicia_publishers":
+                            for rec in batch:
+                                if 'is_surrogate' in rec:
+                                    rec['is_surrogate'] = bool(rec['is_surrogate'])
+                        elif mode == "issues":
+                            from dateutil import parser
+                            for rec in batch:
+                                if rec.get('store_date'):
+                                    try:
+                                        rec['store_date'] = parser.parse(rec['store_date']).date()
+                                    except:
+                                        rec['store_date'] = None
+                        elif mode == "story_characters":
+                            # Map story_characters using subqueries for IDs
+                            # Convert 0/1 to Booleans for PG
+                            for rec in batch:
+                                for key in ['is_origin', 'is_death', 'is_flashback']:
+                                    if key in rec:
+                                        rec[key] = bool(rec[key])
+                        
+                        # Get all unique keys in the batch
+                        if batch:
+                            all_keys = set()
+                            for record in batch:
+                                all_keys.update(record.keys())
+                            
+                            for record in batch:
+                                cleaned_rec = {k: record.get(k) for k in all_keys if not k.startswith('_')}
+                                cleaned_batch.append(cleaned_rec)
 
                         if cleaned_batch:
-                            if mode == "story_credits":
-                                # Map story_creators using subqueries for IDs
-                                # This handles the GCD ID -> Internal ID translation
-                                await db.execute(text("""
-                                    INSERT INTO story_creators (story_id, creator_id, role, credited_as)
-                                    SELECT s.id, c.id, :role, :credited_as
-                                    FROM stories s, comic_creators c
-                                    WHERE s.gcd_story_id = :gcd_story_id 
-                                      AND c.gcd_id = :gcd_creator_id
-                                    ON CONFLICT (story_id, creator_id, role) DO NOTHING
-                                """), batch)
-                            elif mode == "story_characters":
-                                # Map story_characters using subqueries for IDs
-                                await db.execute(text("""
-                                    INSERT INTO story_characters (story_id, character_id, is_origin, is_death, is_flashback)
-                                    SELECT s.id, c.id, :is_origin, :is_death, :is_flashback
-                                    FROM stories s, comic_characters c
-                                    WHERE s.gcd_story_id = :gcd_story_id 
-                                      AND c.gcd_id = :gcd_character_id
-                                    ON CONFLICT (story_id, character_id) DO NOTHING
-                                """), batch)
-                            elif mode == "reprints":
-                                # Map comic_reprints using subqueries for story IDs
-                                await db.execute(text("""
-                                    INSERT INTO comic_reprints (gcd_id, origin_story_id, target_story_id, notes)
-                                    SELECT :gcd_id, s1.id, s2.id, :notes
-                                    FROM stories s1, stories s2
-                                    WHERE s1.gcd_story_id = :gcd_origin_story_id 
-                                      AND s2.gcd_story_id = :gcd_target_story_id
-                                    ON CONFLICT (gcd_id) DO NOTHING
-                                """), batch)
-                            else:
-                                stmt = insert(text(target_table)).values(cleaned_batch)
-                                if mode in ["issues", "stories", "creators", "characters", "brands", "indicia_publishers"]:
-                                    update_cols = {c: stmt.excluded[c] for c in cleaned_batch[0].keys() if c not in index_elements and c != 'id'}
-                                    update_cols['updated_at'] = utcnow()
-                                    upsert_stmt = stmt.on_conflict_do_update(index_elements=index_elements, set_=update_cols)
+                                if mode == "story_credits":
+                                    await db.execute(text("""
+                                        INSERT INTO story_creators (story_id, creator_id, role, credited_as)
+                                        SELECT s.id, c.id, :role, :credited_as
+                                        FROM stories s, comic_creators c
+                                        WHERE s.gcd_story_id = :gcd_story_id 
+                                          AND c.gcd_id = :gcd_creator_id
+                                        ON CONFLICT (story_id, creator_id, role) DO NOTHING
+                                    """), batch)
+                                elif mode == "story_characters":
+                                    # Map story_characters using subqueries for IDs
+                                    # Convert 0/1 to Booleans for PG
+                                    for rec in batch:
+                                        for key in ['is_origin', 'is_death', 'is_flashback']:
+                                            if key in rec:
+                                                rec[key] = bool(rec[key])
+                                                
+                                    await db.execute(text("""
+                                        INSERT INTO story_characters (story_id, character_id, is_origin, is_death, is_flashback)
+                                        SELECT s.id, c.id, :is_origin, :is_death, :is_flashback
+                                        FROM stories s, comic_characters c
+                                        WHERE s.gcd_story_id = :gcd_story_id 
+                                          AND c.gcd_id = :gcd_character_id
+                                        ON CONFLICT (story_id, character_id) DO NOTHING
+                                    """), batch)
                                 else:
-                                    upsert_stmt = stmt.on_conflict_do_nothing(index_elements=index_elements)
-                                    
-                                await db.execute(upsert_stmt)
-                            
+                                                                    # Generic raw SQL upsert
+                                                                    # Filter all_keys for the SQL statement
+                                                                    columns = [k for k in all_keys if not k.startswith('_')]
+                                                                    col_names = ", ".join(columns)
+                                                                    col_placeholders = ", ".join([f":{c}" for c in columns])
+                                                                    
+                                                                    conflict_clause = ""
+                                                                    if mode in ["issues", "stories", "creators", "characters", "brands", "indicia_publishers"]:
+                                                                        update_parts = [f"{c} = EXCLUDED.{c}" for c in columns if c not in index_elements and c != 'id']
+                                                                        update_parts.append("updated_at = NOW()")
+                                                                        conflict_clause = f"ON CONFLICT ({', '.join(index_elements)}) DO UPDATE SET {', '.join(update_parts)}"
+                                                                    else:
+                                                                        conflict_clause = f"ON CONFLICT ({', '.join(index_elements)}) DO NOTHING"
+                                                                    
+                                                                    sql = f"INSERT INTO {target_table} ({col_names}) VALUES ({col_placeholders}) {conflict_clause}"
+                                                                    await db.execute(text(sql), cleaned_batch)                            
                         stats[mode]["processed"] += len(batch)
                         current_offset += len(batch)
 
