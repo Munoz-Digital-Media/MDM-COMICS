@@ -29,7 +29,7 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/test/setupTests.js',
     coverage: {
-      provider: 'c8',
+      provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
       all: false,
       include: ['src/__tests__/**'],

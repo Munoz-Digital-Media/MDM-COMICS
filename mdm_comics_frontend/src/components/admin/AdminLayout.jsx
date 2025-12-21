@@ -16,7 +16,7 @@ import BrandAssets from './branding/BrandAssets';
 import IngestionManager from './ingestion/IngestionManager';
 import FulfillmentManager from './fulfillment/FulfillmentManager';
 import ConventionsManager from './conventions/ConventionsManager';
-import ConventionShowcase from '../ConventionShowcase';
+import ConventionQuickAccess from '../ConventionQuickAccess';
 
 // Navigation items
 const NAV_ITEMS = [
@@ -80,7 +80,7 @@ export default function AdminLayout({ onClose }) {
               <div className="border-b border-zinc-800 px-4 py-3 text-sm text-zinc-400">
                 Preview
               </div>
-              <ConventionShowcase />
+              <ConventionQuickAccess />
             </div>
           </div>
         );
