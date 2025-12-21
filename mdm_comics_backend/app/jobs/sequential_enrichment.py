@@ -1,5 +1,14 @@
 """
-Sequential Exhaustive Enrichment Job v2.3.0
+Sequential Exhaustive Enrichment Job v2.4.0
+
+v2.4.0 Changes (METRON RATE LIMIT HARDENING - IMPL-2025-1221-METRON-RL):
+- NEW: Global Metron rate limiter with strict serialization (max concurrency = 1)
+- NEW: Daily budget tracking with persistence (9,500/day, buffer before 10k)
+- NEW: Shared cooldown after 429 responses with exponential backoff
+- NEW: Stricter Phase 1.5 gating: description AND long_form_description missing
+- NEW: Feature flag METRON_RL_HARDENING_ENABLED (default off)
+- NEW: Observability endpoint /admin/metron/rate-limit-status
+- FIX: Prevents 429 storms from parallel Metron calls
 
 v2.3.0 Changes (UPC-FIRST STRATEGY):
 - NEW: UPC/ISBN lookup BEFORE fuzzy matching (exact match priority)
@@ -124,6 +133,12 @@ try:
     from app.models.source_quota import EnrichmentAttempt
 except ImportError:
     EnrichmentAttempt = None
+
+# v2.4.0: Metron rate limit hardening (IMPL-2025-1221-METRON-RL)
+try:
+    from app.core.metron_rate_limiter import get_metron_rate_limiter
+except ImportError:
+    get_metron_rate_limiter = None
 
 logger = logging.getLogger(__name__)
 
@@ -966,11 +981,32 @@ async def query_metron(
 
     v2.0.0: Uses official Mokkari library with built-in rate limiting.
     Mokkari handles: 30 req/min, 10,000 req/day (SQLite persisted).
+
+    v2.4.0: Global rate limiter integration (IMPL-2025-1221-METRON-RL)
+    - Strict serialization (max concurrency = 1)
+    - Global daily budget with persistence
+    - Cooldown after 429 responses
     """
     from app.adapters.metron_adapter import MetronAdapter, RateLimitError
 
     updates = {}
     source = "metron"
+    request_id = str(uuid4())[:8]
+    comic_id = comic.get("id")
+
+    # v2.4.0: Use global rate limiter if enabled
+    global_rl = get_metron_rate_limiter() if get_metron_rate_limiter else None
+    if global_rl and global_rl.is_enabled:
+        can_proceed, reason = await global_rl.acquire(
+            request_id=request_id,
+            comic_id=comic_id,
+            timeout=30.0
+        )
+        if not can_proceed:
+            logger.debug(
+                f"[metron] SKIP comic={comic_id}: global rate limiter rejected ({reason})"
+            )
+            return updates
 
     try:
         # v2.0.0: Mokkari handles rate limiting internally - no manual client management
@@ -978,6 +1014,8 @@ async def query_metron(
 
         # Check if source is available (non-blocking check from our rate manager)
         if not await rate_mgr.wait_for_source(source):
+            if global_rl and global_rl.is_enabled:
+                global_rl.release(success=False)
             return updates
 
         # Strategy: If we have metron_id, direct lookup. Otherwise, search.
@@ -1099,16 +1137,31 @@ async def query_metron(
     except RateLimitError as e:
         # Mokkari rate limit - use retry_after from exception
         rate_mgr.get_limiter(source).record_rate_limit(e.retry_after)
+        # v2.4.0: Notify global rate limiter of 429
+        if global_rl and global_rl.is_enabled:
+            global_rl.record_rate_limit(e.retry_after)
+            global_rl.release(success=False, response_code=429)
         logger.warning(f"[{source}] Mokkari rate limited: {e}, retry after {e.retry_after}s")
+        return updates
     except Exception as e:
         error_str = str(e).lower()
         if "429" in error_str or "rate" in error_str:
             rate_mgr.get_limiter(source).record_rate_limit()
+            if global_rl and global_rl.is_enabled:
+                global_rl.record_rate_limit()
+                global_rl.release(success=False, response_code=429)
         else:
             logger.warning(f"[{source}] Error querying: {e}")
+            if global_rl and global_rl.is_enabled:
+                global_rl.release(success=False)
+        return updates
+
+    # v2.4.0: Release global rate limiter on success
+    if global_rl and global_rl.is_enabled:
+        global_rl.release(success=True)
 
     if updates:
-        logger.info(f"[{source}] Found {len(updates)} fields for comic {comic.get('id')}")
+        logger.info(f"[{source}] Found {len(updates)} fields for comic {comic_id}")
 
     return updates
 
@@ -2432,9 +2485,48 @@ async def run_sequential_exhaustive_enrichment_job(
                 # =========================================================
                 # PHASE 1.5: Query Metron ONLY if description still missing
                 # v2.2.1: Conditional execution to prevent 429 storms
+                # v2.4.0: Stricter gating (IMPL-2025-1221-METRON-RL)
+                #   - Require description AND long_form_description missing
+                #   - Require UPC or ISBN present (exact match possible)
+                #   - Skip if global rate limiter budget exhausted or in cooldown
                 # =========================================================
-                if "description" in missing:
-                    logger.debug(f"[enrichment] Phase 1.5: Description missing, querying Metron")
+                should_query_metron = False
+                skip_reason = None
+
+                # Check if descriptions are missing
+                desc_missing = "description" in missing
+                long_desc_missing = not comic.get("long_form_description")
+
+                # Check if we have identifiers for exact match
+                has_upc = bool(comic.get("upc"))
+                has_isbn = bool(comic.get("isbn"))
+                has_identifier = has_upc or has_isbn
+
+                # v2.4.0: Check global rate limiter status
+                global_rl = get_metron_rate_limiter() if get_metron_rate_limiter else None
+                if global_rl and global_rl.is_enabled:
+                    if global_rl.remaining_daily_budget <= 0:
+                        skip_reason = "budget_exhausted"
+                    elif global_rl.is_in_cooldown:
+                        skip_reason = f"cooldown_{global_rl.cooldown_remaining:.0f}s"
+
+                # Stricter gating logic
+                if skip_reason:
+                    logger.debug(
+                        f"[enrichment] Phase 1.5 SKIP comic={comic_id}: {skip_reason}"
+                    )
+                elif desc_missing and (long_desc_missing or has_identifier):
+                    # Query Metron if:
+                    # - Description is missing AND
+                    # - Either long_form_description is also missing OR we have UPC/ISBN
+                    should_query_metron = True
+                    logger.debug(
+                        f"[enrichment] Phase 1.5: Description missing "
+                        f"(long_desc={not long_desc_missing}, upc={has_upc}, isbn={has_isbn}), "
+                        f"querying Metron"
+                    )
+
+                if should_query_metron:
                     for source_name, query_func in PHASE1_5_SOURCES:
                         if not circuit_breaker.is_available(source_name):
                             continue

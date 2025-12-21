@@ -4158,3 +4158,68 @@ async def get_pipeline_metrics(
             "batch_stats": {},
             "pipeline_summary": []
         }
+
+
+# ----- Metron Rate Limit Status (IMPL-2025-1221-METRON-RL) -----
+
+@router.get("/metron/rate-limit-status")
+async def get_metron_rate_limit_status(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get Metron API rate limiter status for monitoring.
+
+    Returns:
+    - Feature flag status
+    - Daily budget (used/remaining)
+    - Current cooldown state
+    - Queue depth
+    - Metrics counters
+
+    IMPL-2025-1221-METRON-RL: Rate limit hardening observability
+    """
+    try:
+        from app.core.metron_rate_limiter import get_metron_rate_limiter
+
+        limiter = get_metron_rate_limiter()
+        status = limiter.get_status()
+
+        # Get persisted data from database
+        db_data = None
+        try:
+            result = await db.execute(text("""
+                SELECT date_utc, request_count, rate_limit_count,
+                       consecutive_429s, last_updated
+                FROM metron_rate_budget
+                WHERE date_utc = CURRENT_DATE
+            """))
+            row = result.fetchone()
+            if row:
+                db_data = {
+                    "date_utc": str(row.date_utc),
+                    "request_count": row.request_count,
+                    "rate_limit_count": row.rate_limit_count,
+                    "consecutive_429s": row.consecutive_429s,
+                    "last_updated": row.last_updated.isoformat() if row.last_updated else None
+                }
+        except Exception as e:
+            logger.debug(f"[MetronRL] DB query failed (table may not exist): {e}")
+
+        return {
+            "status": "ok",
+            **status,
+            "db_data": db_data
+        }
+
+    except ImportError:
+        return {
+            "status": "unavailable",
+            "error": "Metron rate limiter module not available"
+        }
+    except Exception as e:
+        logger.error(f"[MetronRL] Failed to get status: {e}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
