@@ -1821,6 +1821,8 @@ async def get_gcd_import_status(
             "total_errors": checkpoint[6] if checkpoint else 0,
             "last_error": checkpoint[7] if checkpoint else None,
             "current_offset": checkpoint[8].get("offset", 0) if checkpoint and checkpoint[8] else 0,
+            "current_mode": checkpoint[8].get("mode", "unknown") if checkpoint and checkpoint[8] else "unknown",
+            "state_data": checkpoint[8] if checkpoint else {}, # Expose full state data for frontend stats
         } if checkpoint else None,
         "imported_count": gcd_count,
         "data_quality": data_quality,
@@ -1878,8 +1880,9 @@ async def reset_gcd_checkpoint(
     """))
     row = result.fetchone()
     old_offset = 0
-    if row and row.state_data:
-        old_offset = row.state_data.get("offset", 0) if isinstance(row.state_data, dict) else 0
+    if row and row[0]:
+        state_data = row[0]
+        old_offset = state_data.get("offset", 0) if isinstance(state_data, dict) else 0
 
     await db.execute(text("""
         UPDATE pipeline_checkpoints
