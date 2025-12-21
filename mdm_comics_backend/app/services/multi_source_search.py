@@ -600,10 +600,12 @@ class MultiSourceSearchService:
                 wiki_results = []
                 for item in search_results[:5]:  # Limit per wiki
                     title = item.get("title", "")
+                    # Format issue field properly: "Series #Number" or just "Series"
+                    issue_display = f"{title} #{number}" if number else title
                     wiki_results.append({
                         "id": f"fandom_{wiki_key}_{item.get('pageid', '')}",
-                        "issue": title,
-                        "series": {"name": series_name},
+                        "issue": issue_display,
+                        "series": {"name": title},  # Use wiki title as series name
                         "number": number or "",
                         "image": None,  # Would need additional fetch
                         "cover_date": None,
