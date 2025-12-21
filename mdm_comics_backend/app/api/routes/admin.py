@@ -1800,15 +1800,59 @@ async def get_gcd_import_status(
     dump_exists = os.path.exists(settings.GCD_DUMP_PATH)
     gcd_info["dump_exists"] = dump_exists
 
-    # Get total count from GCD if dump exists
+    # Get total count and phase totals from GCD if dump exists
+    # v1.8.0: Added phase_totals for granular progress tracking (IMP-20251221-GCD-GRANULAR-PROGRESS)
+    phase_totals = None
     if dump_exists:
         try:
             from app.adapters.gcd import GCDAdapter
             adapter = GCDAdapter()
             gcd_info["dump_total_count"] = adapter.get_total_count(settings.GCD_DUMP_PATH)
+            phase_totals = adapter.get_phase_totals(settings.GCD_DUMP_PATH)
         except Exception as e:
             gcd_info["dump_total_count"] = None
             gcd_info["dump_error"] = str(e)
+
+    # Extract state_data for progress calculation
+    state_data = checkpoint[8] if checkpoint else {}
+    current_phase = state_data.get("current_phase", "unknown") if state_data else "unknown"
+    phase_progress = state_data.get("phase_progress", {}) if state_data else {}
+
+    # Calculate overall progress
+    # v1.8.0: Added overall_progress for granular progress tracking
+    overall_progress = None
+    if phase_totals:
+        phase_order = ["brands", "indicia", "creators", "characters", "issues", "stories", "credits", "reprints"]
+        phases_complete = 0
+        total_records = sum(phase_totals.values())
+        processed_records = 0
+
+        for phase in phase_order:
+            phase_data = phase_progress.get(phase, {})
+            phase_processed = phase_data.get("processed", 0)
+            processed_records += phase_processed
+
+            # Phase is complete if processed >= total for that phase
+            phase_total = phase_totals.get(phase, 0)
+            if phase_total > 0 and phase_processed >= phase_total:
+                phases_complete += 1
+
+        percent_complete = round((processed_records / total_records) * 100, 1) if total_records > 0 else 0
+
+        # Calculate ETA based on velocity
+        velocity = state_data.get("velocity", {}) if state_data else {}
+        records_per_minute = velocity.get("records_per_minute", 0)
+        remaining_records = total_records - processed_records
+        eta_minutes = int(remaining_records / records_per_minute) if records_per_minute > 0 else None
+
+        overall_progress = {
+            "phases_complete": phases_complete,
+            "phases_total": len(phase_order),
+            "percent_complete": percent_complete,
+            "processed_records": processed_records,
+            "total_records": total_records,
+            "eta_minutes": eta_minutes,
+        }
 
     return {
         "settings": gcd_info,
@@ -1820,12 +1864,17 @@ async def get_gcd_import_status(
             "total_updated": checkpoint[5] if checkpoint else 0,
             "total_errors": checkpoint[6] if checkpoint else 0,
             "last_error": checkpoint[7] if checkpoint else None,
-            "current_offset": checkpoint[8].get("offset", 0) if checkpoint and checkpoint[8] else 0,
-            "current_mode": checkpoint[8].get("mode", "unknown") if checkpoint and checkpoint[8] else "unknown",
-            "state_data": checkpoint[8] if checkpoint else {}, # Expose full state data for frontend stats
+            "current_offset": state_data.get("offset", 0) if state_data else 0,
+            "current_mode": state_data.get("mode", "unknown") if state_data else "unknown",
+            "current_phase": current_phase,
+            "state_data": state_data,
         } if checkpoint else None,
         "imported_count": gcd_count,
         "data_quality": data_quality,
+        # v1.8.0: Granular progress tracking fields
+        "phase_totals": phase_totals,
+        "phase_progress": phase_progress,
+        "overall_progress": overall_progress,
     }
 
 

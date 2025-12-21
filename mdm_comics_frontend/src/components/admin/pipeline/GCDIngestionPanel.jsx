@@ -1,112 +1,99 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Building2, Users, BookOpen, FileText, 
-  Database, AlertCircle, CheckCircle2, Loader2,
-  RefreshCw, Layers
+import React from 'react';
+import {
+  Building2, Users, BookOpen, FileText,
+  Database, AlertCircle, Layers, RefreshCw, Link2
 } from 'lucide-react';
+import PhaseProgressBar from './PhaseProgressBar';
+import OverallProgressSection from './OverallProgressSection';
 
+/**
+ * GCDIngestionPanel - Main panel for GCD data ingestion progress
+ *
+ * v1.8.0: Refactored for granular progress tracking (IMP-20251221-GCD-GRANULAR-PROGRESS)
+ *         - Now uses PhaseProgressBar for each phase
+ *         - Now uses OverallProgressSection for summary
+ *         - Consumes phase_totals, phase_progress, overall_progress from backend
+ */
 export default function GCDIngestionPanel({ status, onRefresh, onTrigger }) {
-  const [activeStep, setActiveStep] = useState(0);
-  
-  // Phase mapping for the stepper
-  const phases = [
-    { id: 'brands', label: 'Brands', icon: Building2 },
-    { id: 'indicia_publishers', label: 'Indicia', icon: FileText },
-    { id: 'creators', label: 'Creators', icon: Users },
-    { id: 'characters', label: 'Characters', icon: Users },
-    { id: 'issues', label: 'Issues', icon: BookOpen },
-    { id: 'stories', label: 'Stories', icon: Layers },
-    { id: 'story_credits', label: 'Credits', icon: Users },
-    { id: 'story_characters', label: 'Appearances', icon: Users },
-    { id: 'reprints', label: 'Reprints', icon: RefreshCw },
-  ];
+  // Phase configuration with icons
+  const phaseConfig = {
+    brands: { label: 'Brands', icon: Building2 },
+    indicia: { label: 'Indicia Publishers', icon: FileText },
+    creators: { label: 'Creators', icon: Users },
+    characters: { label: 'Characters', icon: Users },
+    issues: { label: 'Issues', icon: BookOpen },
+    stories: { label: 'Stories', icon: Layers },
+    credits: { label: 'Story Credits', icon: Link2 },
+    reprints: { label: 'Reprints', icon: RefreshCw },
+  };
 
-  // Derive current phase from status
-  const currentMode = status?.checkpoint?.state_data?.mode || 'brands';
-  
-  useEffect(() => {
-    const index = phases.findIndex(p => p.id === currentMode);
-    if (index !== -1) setActiveStep(index);
-  }, [currentMode]);
+  // Ordered phases for display
+  const phaseOrder = ['brands', 'indicia', 'creators', 'characters', 'issues', 'stories', 'credits', 'reprints'];
 
   if (!status) return null;
 
-  const { checkpoint, settings } = status;
+  const { checkpoint, settings, phase_totals, phase_progress, overall_progress } = status;
   const isRunning = checkpoint?.is_running;
-  
-  // Calculate aggregate stats
-  const totalProcessed = checkpoint?.total_processed || 0;
-  const totalErrors = checkpoint?.total_errors || 0;
-  
-  // Get phase-specific stats if available (requires backend update)
-  // Fallback to global counters for now if granular stats missing
-  const currentOffset = checkpoint?.current_offset || 0;
+  const currentMode = checkpoint?.state_data?.mode || 'brands';
+
+  // Calculate which phases are complete/active
+  const getPhaseStatus = (phaseId) => {
+    const phaseIdx = phaseOrder.indexOf(phaseId);
+    const currentIdx = phaseOrder.indexOf(currentMode);
+
+    // Get progress data for this phase
+    const progress = phase_progress?.[phaseId] || { processed: 0, errors: 0 };
+    const total = phase_totals?.[phaseId] || 0;
+
+    // Determine state
+    if (phaseIdx < currentIdx) {
+      // Past phases are complete
+      return { isComplete: true, isActive: false, ...progress, total };
+    } else if (phaseIdx === currentIdx && isRunning) {
+      // Current phase is active
+      return { isComplete: false, isActive: true, ...progress, total };
+    } else if (phaseIdx === currentIdx && !isRunning && progress.processed > 0) {
+      // Current phase stopped mid-way
+      return { isComplete: false, isActive: false, ...progress, total };
+    } else {
+      // Future phases are pending
+      return { isComplete: false, isActive: false, processed: 0, errors: 0, total };
+    }
+  };
 
   return (
     <div className="space-y-6">
-      {/* Header Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-zinc-900/50 border border-zinc-800 p-4 rounded-lg">
-          <div className="text-zinc-400 text-sm mb-1">Status</div>
-          <div className="flex items-center gap-2">
-            {isRunning ? (
-              <>
-                <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
-                <span className="text-blue-400 font-medium">Processing: {currentMode}</span>
-              </>
-            ) : (
-              <>
-                <div className="w-2 h-2 rounded-full bg-zinc-600" />
-                <span className="text-zinc-400">Idle</span>
-              </>
-            )}
-          </div>
-        </div>
-        
-        <div className="bg-zinc-900/50 border border-zinc-800 p-4 rounded-lg">
-          <div className="text-zinc-400 text-sm mb-1">Total Processed</div>
-          <div className="text-2xl font-mono text-white">{totalProcessed.toLocaleString()}</div>
-        </div>
+      {/* Overall Progress Section */}
+      <OverallProgressSection
+        totalProcessed={overall_progress?.total_processed || checkpoint?.total_processed || 0}
+        totalRecords={overall_progress?.total_records || 0}
+        totalErrors={overall_progress?.total_errors || checkpoint?.total_errors || 0}
+        estimatedTimeRemaining={overall_progress?.estimated_time_remaining}
+        recordsPerSecond={overall_progress?.records_per_second || 0}
+        isRunning={isRunning}
+      />
 
-        <div className="bg-zinc-900/50 border border-zinc-800 p-4 rounded-lg">
-          <div className="text-zinc-400 text-sm mb-1">Current Offset</div>
-          <div className="text-2xl font-mono text-emerald-400">{currentOffset.toLocaleString()}</div>
-        </div>
-
-        <div className="bg-zinc-900/50 border border-zinc-800 p-4 rounded-lg">
-          <div className="text-zinc-400 text-sm mb-1">Total Errors</div>
-          <div className="text-2xl font-mono text-red-400">{totalErrors.toLocaleString()}</div>
-        </div>
-      </div>
-
-      {/* Progress Stepper */}
-      <div className="relative">
-        <div className="absolute top-1/2 left-0 w-full h-0.5 bg-zinc-800 -z-10" />
-        <div className="flex justify-between">
-          {phases.map((phase, index) => {
-            const Icon = phase.icon;
-            const isActive = index === activeStep;
-            const isCompleted = index < activeStep;
-            const isPending = index > activeStep;
+      {/* Phase Progress Bars */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wide">
+          Phase Progress
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {phaseOrder.map((phaseId) => {
+            const config = phaseConfig[phaseId];
+            const phaseStatus = getPhaseStatus(phaseId);
 
             return (
-              <div key={phase.id} className="flex flex-col items-center gap-2 bg-zinc-950 px-2">
-                <div className={`
-                  w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all
-                  ${isActive ? 'border-blue-500 bg-blue-500/10 text-blue-400' : ''}
-                  ${isCompleted ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' : ''}
-                  ${isPending ? 'border-zinc-800 bg-zinc-900 text-zinc-600' : ''}
-                `}>
-                  {isCompleted ? (
-                    <CheckCircle2 className="w-5 h-5" />
-                  ) : (
-                    <Icon className="w-5 h-5" />
-                  )}
-                </div>
-                <span className={`text-xs font-medium ${isActive ? 'text-white' : 'text-zinc-500'}`}>
-                  {phase.label}
-                </span>
-              </div>
+              <PhaseProgressBar
+                key={phaseId}
+                phaseName={config.label}
+                icon={config.icon}
+                processed={phaseStatus.processed}
+                total={phaseStatus.total}
+                errors={phaseStatus.errors}
+                isActive={phaseStatus.isActive}
+                isComplete={phaseStatus.isComplete}
+              />
             );
           })}
         </div>
@@ -118,21 +105,25 @@ export default function GCDIngestionPanel({ status, onRefresh, onTrigger }) {
           <Database className="w-5 h-5 text-blue-400" />
           Ingestion Details
         </h3>
-        
+
         <div className="space-y-4">
           <div className="flex justify-between text-sm border-b border-zinc-800 pb-2">
             <span className="text-zinc-400">Current Phase</span>
             <span className="text-white font-mono">{currentMode.toUpperCase()}</span>
           </div>
           <div className="flex justify-between text-sm border-b border-zinc-800 pb-2">
+            <span className="text-zinc-400">Current Offset</span>
+            <span className="text-white font-mono">{(checkpoint?.current_offset || 0).toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between text-sm border-b border-zinc-800 pb-2">
             <span className="text-zinc-400">Dump File</span>
-            <span className="text-zinc-300 font-mono text-xs">{settings?.dump_path}</span>
+            <span className="text-zinc-300 font-mono text-xs truncate ml-4">{settings?.dump_path || 'N/A'}</span>
           </div>
           <div className="flex justify-between text-sm border-b border-zinc-800 pb-2">
             <span className="text-zinc-400">Batch Size</span>
-            <span className="text-white font-mono">{settings?.batch_size}</span>
+            <span className="text-white font-mono">{settings?.batch_size || 'N/A'}</span>
           </div>
-          
+
           {checkpoint?.last_error && (
             <div className="mt-4 p-3 bg-red-950/30 border border-red-900/50 rounded text-sm text-red-200">
               <div className="flex items-center gap-2 mb-1 text-red-400 font-medium">
