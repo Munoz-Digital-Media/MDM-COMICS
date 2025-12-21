@@ -4347,7 +4347,6 @@ class PipelineScheduler:
 
         # Start job loops
         self._tasks = [
-            asyncio.create_task(self._run_job_loop("comic_enrichment", run_comic_enrichment_job, interval_minutes=30)),
             asyncio.create_task(self._run_job_loop("funko_price_check", run_funko_price_check_job, interval_minutes=60)),
             asyncio.create_task(self._run_job_loop("dlq_retry", run_dlq_retry_job, interval_minutes=15)),
             # v1.7.0: Daily price snapshot for AI/ML training (runs once per day at startup, then every 24h)
@@ -4477,7 +4476,6 @@ class PipelineScheduler:
         cron auto-resume of paused/stopped jobs.
         """
         jobs = {
-            "comic_enrichment": run_comic_enrichment_job,
             "funko_price_check": run_funko_price_check_job,
             "dlq_retry": run_dlq_retry_job,
             "daily_snapshot": run_daily_snapshot_job,  # v1.7.0
