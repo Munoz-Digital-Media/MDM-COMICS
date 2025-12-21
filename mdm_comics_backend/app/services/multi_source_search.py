@@ -35,6 +35,7 @@ from app.adapters.fandom_adapter import (
     create_dc_fandom_adapter, create_image_fandom_adapter
 )
 from app.adapters.comicvine_adapter import ComicVineAdapter
+from app.adapters.mycomicshop_adapter import MyComicShopAdapter
 from app.core.adapter_registry import AdapterConfig, DataSourceType
 from app.core.http_client import ResilientHTTPClient, RateLimitConfig, RetryConfig
 
@@ -76,6 +77,8 @@ class MultiSourceSearchService:
         self._fandom_adapters: Dict[str, FandomAdapter] = {}
         self._comicvine_adapter: Optional[ComicVineAdapter] = None
         self._comicvine_client: Optional[ResilientHTTPClient] = None
+        self._mycomicshop_adapter: Optional[MyComicShopAdapter] = None
+        self._mycomicshop_client: Optional[ResilientHTTPClient] = None
 
     async def _get_comicvine_adapter(self) -> Optional[ComicVineAdapter]:
         """Get or create ComicVine adapter with HTTP client."""
@@ -96,6 +99,21 @@ class MultiSourceSearchService:
             self._comicvine_adapter = ComicVineAdapter(config, self._comicvine_client, api_key)
 
         return self._comicvine_adapter
+
+    async def _get_mycomicshop_adapter(self) -> Optional[MyComicShopAdapter]:
+        """Get or create MyComicShop adapter with HTTP client."""
+        if self._mycomicshop_adapter is None:
+            config = AdapterConfig(
+                name="mycomicshop",
+                source_type=DataSourceType.SCRAPER,
+                base_url="https://www.mycomicshop.com",
+                rate_limit=RateLimitConfig(requests_per_minute=10),  # Conservative for scraping
+                retry=RetryConfig(max_retries=2, base_delay=2.0),
+            )
+            self._mycomicshop_client = ResilientHTTPClient(config.rate_limit, config.retry)
+            self._mycomicshop_adapter = MyComicShopAdapter(config, self._mycomicshop_client)
+
+        return self._mycomicshop_adapter
 
     def _get_fandom_adapter(self, wiki_key: str) -> Optional[FandomAdapter]:
         """Get or create a Fandom adapter for a wiki."""
@@ -276,6 +294,54 @@ class MultiSourceSearchService:
             logger.warning(f"[MULTI-SEARCH] ComicVine error: {e}")
             return {"results": [], "error": str(e)}
 
+    async def search_mycomicshop(
+        self,
+        series_name: Optional[str] = None,
+        number: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Search MyComicShop as final fallback (scraper - no API rate limits).
+
+        This is a web scraper, so it's slower but doesn't have API quotas.
+        """
+        adapter = await self._get_mycomicshop_adapter()
+        if adapter is None:
+            return {"results": [], "error": "not_configured"}
+
+        try:
+            if not series_name:
+                return {"results": [], "error": "no_query"}
+
+            result = await asyncio.wait_for(
+                adapter.search_issues(series_name, issue_number=number, limit=10),
+                timeout=15.0  # Scrapers are slower
+            )
+
+            if result.success:
+                records = []
+                for item in result.records:
+                    records.append({
+                        "id": f"mcs_{item.get('id', '')}",
+                        "issue": item.get("title", ""),
+                        "series": {"name": item.get("series_name", series_name)},
+                        "number": item.get("issue_number", number or ""),
+                        "image": item.get("image"),
+                        "cover_date": item.get("cover_date"),
+                        "_source": "mycomicshop",
+                    })
+                logger.info(f"[MULTI-SEARCH] MyComicShop returned {len(records)} results")
+                return {"results": records}
+            else:
+                error = result.errors[0].get("error", "unknown") if result.errors else "unknown"
+                return {"results": [], "error": error}
+
+        except asyncio.TimeoutError:
+            logger.warning("[MULTI-SEARCH] MyComicShop timeout")
+            return {"results": [], "error": "timeout"}
+        except Exception as e:
+            logger.warning(f"[MULTI-SEARCH] MyComicShop error: {e}")
+            return {"results": [], "error": str(e)}
+
     async def search_fandom(
         self,
         series_name: str,
@@ -370,6 +436,7 @@ class MultiSourceSearchService:
         2. Metron API (primary)
         3. ComicVine API (if Metron fails/rate limited)
         4. Fandom wikis (if ComicVine also fails)
+        5. MyComicShop scraper (final fallback - no API limits)
 
         Returns aggregated results with source attribution.
         """
@@ -439,10 +506,27 @@ class MultiSourceSearchService:
                     sources_tried.append("fandom")
                     logger.info(f"[MULTI-SEARCH] Found {len(fandom_results)} from Fandom")
 
-                if metron_result["error"] == "rate_limited":
-                    message = "Primary API rate limited. Showing results from alternative sources."
-                elif metron_result["error"] == "timeout":
-                    message = "Primary API timed out. Showing results from alternative sources."
+            # 5. FINAL FALLBACK: MyComicShop scraper (no API rate limits)
+            if not all_results and series_name:
+                logger.info("[MULTI-SEARCH] All APIs failed, trying MyComicShop scraper")
+                mcs_result = await self.search_mycomicshop(
+                    series_name=series_name,
+                    number=number
+                )
+                sources_tried.append("mycomicshop")
+
+                if mcs_result.get("error"):
+                    sources_failed.append(f"mycomicshop:{mcs_result['error']}")
+                else:
+                    mcs_records = mcs_result.get("results", [])
+                    if mcs_records:
+                        all_results.extend(mcs_records)
+                        logger.info(f"[MULTI-SEARCH] Found {len(mcs_records)} from MyComicShop")
+
+            if metron_result.get("error") == "rate_limited":
+                message = "Primary API rate limited. Showing results from alternative sources."
+            elif metron_result.get("error") == "timeout":
+                message = "Primary API timed out. Showing results from alternative sources."
         else:
             # Metron succeeded
             metron_issues = metron_result.get("results", [])
@@ -453,9 +537,9 @@ class MultiSourceSearchService:
         seen_ids = set()
         unique_results = []
 
-        # Sort by source priority (metron first, then comicvine, then cache, then fandom)
-        source_priority = {"metron": 0, "comicvine": 1, "local_cache": 2}
-        all_results.sort(key=lambda x: source_priority.get(x.get("_source", ""), 3))
+        # Sort by source priority
+        source_priority = {"metron": 0, "comicvine": 1, "local_cache": 2, "fandom": 3, "mycomicshop": 4}
+        all_results.sort(key=lambda x: source_priority.get(x.get("_source", ""), 5))
 
         for result in all_results:
             # Create a dedup key
