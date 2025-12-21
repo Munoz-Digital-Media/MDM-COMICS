@@ -463,13 +463,22 @@ async def run_funko_pricecharting_match_job(
 
                     # Fetch batch of Funkos without pricecharting_id
                     result = await db.execute(text("""
-                        SELECT id, title, box_number
-                        FROM funkos
-                        WHERE pricecharting_id IS NULL
-                          AND id > :last_id
+                        SELECT
+                          f.id,
+                          f.title,
+                          f.box_number,
+                          f.category,
+                          f.license,
+                          string_agg(DISTINCT fsn.name, ', ') AS series_names
+                        FROM funkos f
+                        LEFT JOIN funko_series fs ON fs.funko_id = f.id
+                        LEFT JOIN funko_series_names fsn ON fsn.id = fs.series_id
+                        WHERE f.pricecharting_id IS NULL
+                          AND f.id > :last_id
+                        GROUP BY f.id, f.title, f.box_number, f.category, f.license
                         ORDER BY
-                          CASE WHEN box_number IS NOT NULL THEN 0 ELSE 1 END,
-                          id
+                          CASE WHEN f.box_number IS NOT NULL THEN 0 ELSE 1 END,
+                          f.id
                         LIMIT :limit
                     """), {"last_id": last_id, "limit": batch_size})
 
@@ -513,6 +522,9 @@ async def run_funko_pricecharting_match_job(
                                     funko_dict = {
                                         "title": funko.title,
                                         "box_number": funko.box_number,
+                                        "category": funko.category,
+                                        "license": funko.license,
+                                        "series_names": funko.series_names,
                                     }
                                     match_result = find_best_match(
                                         item=funko_dict,
@@ -975,6 +987,65 @@ async def run_funko_price_sync_job(
             "circuit_opens": 0,
         }
 
+        async def fuzzy_match_and_fetch(funko_row, client, pc_token: str, circuit_breaker):
+            """
+            Fallback path: build enriched fuzzy query using title + box_number + category + series
+            to recover pricecharting_id and fetch prices in one flow.
+            """
+            query_parts = [funko_row.title or ""]
+            if funko_row.box_number:
+                query_parts.append(f"#{funko_row.box_number}")
+            if funko_row.category:
+                query_parts.append(funko_row.category)
+            if funko_row.series_names:
+                query_parts.append(funko_row.series_names)
+
+            search_query = " ".join([part for part in query_parts if part]).strip() or (funko_row.title or "")
+
+            products = await cached_pricecharting_search(
+                client=client,
+                pc_token=pc_token,
+                query=search_query,
+                circuit_breaker=circuit_breaker,
+            )
+
+            funko_dict = {
+                "title": funko_row.title,
+                "box_number": funko_row.box_number,
+                "category": funko_row.category,
+                "license": funko_row.license,
+                "series_names": funko_row.series_names,
+            }
+            match_result = find_best_match(
+                item=funko_dict,
+                products=products,
+                item_type="funko",
+            )
+
+            if not match_result or not match_result.matched:
+                return None, None
+
+            pc_id = match_result.pricecharting_id
+
+            async def do_price_fetch_by_match():
+                return await client.get(
+                    "https://www.pricecharting.com/api/product",
+                    params={"t": pc_token, "id": pc_id}
+                )
+
+            response = await circuit_breaker.execute(do_price_fetch_by_match)
+            pc_quota_tracker.record_call(job_name)
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                except json.JSONDecodeError:
+                    data = None
+            else:
+                data = None
+
+            return pc_id, data
+
         # Start pipeline metrics tracking
         try:
             await pipeline_metrics.start_batch(
@@ -1026,13 +1097,27 @@ async def run_funko_price_sync_job(
                     # v1.1.0: Incremental sync - only fetch stale records
                     # Phase 2: Use configurable staleness threshold (PC_STALENESS_HOURS)
                     result = await db.execute(text("""
-                        SELECT id, pricecharting_id, price_loose, price_cib, price_new
-                        FROM funkos
-                        WHERE pricecharting_id IS NOT NULL
-                          AND id > :last_id
-                          AND (pricecharting_synced_at IS NULL
-                               OR pricecharting_synced_at < NOW() - make_interval(hours => :staleness_hours))
-                        ORDER BY id
+                        SELECT
+                          f.id,
+                          f.pricecharting_id,
+                          f.price_loose,
+                          f.price_cib,
+                          f.price_new,
+                          f.title,
+                          f.box_number,
+                          f.category,
+                          f.license,
+                          string_agg(DISTINCT fsn.name, ', ') AS series_names
+                        FROM funkos f
+                        LEFT JOIN funko_series fs ON fs.funko_id = f.id
+                        LEFT JOIN funko_series_names fsn ON fsn.id = fs.series_id
+                        WHERE f.pricecharting_id IS NOT NULL
+                          AND f.id > :last_id
+                          AND (f.pricecharting_synced_at IS NULL
+                               OR f.pricecharting_synced_at < NOW() - make_interval(hours => :staleness_hours))
+                        GROUP BY f.id, f.pricecharting_id, f.price_loose, f.price_cib, f.price_new,
+                                 f.title, f.box_number, f.category, f.license
+                        ORDER BY f.id
                         LIMIT :limit
                     """), {"last_id": last_id, "limit": batch_size, "staleness_hours": PC_STALENESS_HOURS})
 
@@ -1058,6 +1143,9 @@ async def run_funko_price_sync_job(
                         stats["processed"] += 1
 
                         try:
+                            data = None
+                            resolved_pc_id = funko.pricecharting_id
+
                             async def do_price_fetch():
                                 return await client.get(
                                     "https://www.pricecharting.com/api/product",
@@ -1079,78 +1167,6 @@ async def run_funko_price_sync_job(
                                             f"[{job_name}] JSON decode error for Funko {funko_id}: {e}"
                                         )
                                         stats["errors"] += 1
-                                        continue
-
-                                    # Extract prices (in cents, convert to dollars)
-                                    loose_price = data.get("loose-price")
-                                    cib_price = data.get("cib-price")
-                                    new_price = data.get("new-price")
-
-                                    # Convert from cents to dollars
-                                    updates = []
-                                    params = {"id": funko_id}
-
-                                    # Phase 3: Track significant price changes
-                                    if "significant_changes" not in stats:
-                                        stats["significant_changes"] = 0
-
-                                    def check_price_change(field_name, old_val, new_cents):
-                                        """Check for significant price change and log alert."""
-                                        if not new_cents:
-                                            return None
-                                        new_dollars = float(new_cents) / 100
-                                        old_dollars = float(old_val) if old_val else 0
-
-                                        if old_dollars > 0:
-                                            pct_change = ((new_dollars - old_dollars) / old_dollars) * 100
-                                            if abs(pct_change) >= PC_PRICE_ALERT_THRESHOLD:
-                                                stats["significant_changes"] += 1
-                                                direction = "UP" if pct_change > 0 else "DOWN"
-                                                logger.warning(
-                                                    f"[PRICE_ALERT] Funko {funko_id} {field_name}: "
-                                                    f"${old_dollars:.2f} -> ${new_dollars:.2f} "
-                                                    f"({direction} {abs(pct_change):.1f}%)"
-                                                )
-                                        return new_dollars
-
-                                    if loose_price:
-                                        new_loose = check_price_change("loose", funko.price_loose, loose_price)
-                                        if new_loose:
-                                            updates.append("price_loose = :loose")
-                                            params["loose"] = new_loose
-
-                                    if cib_price:
-                                        new_cib = check_price_change("cib", funko.price_cib, cib_price)
-                                        if new_cib:
-                                            updates.append("price_cib = :cib")
-                                            params["cib"] = new_cib
-
-                                    if new_price:
-                                        new_new = check_price_change("new", funko.price_new, new_price)
-                                        if new_new:
-                                            updates.append("price_new = :new")
-                                            params["new"] = new_new
-
-                                    if updates:
-                                        # v1.1.0: Track sync timestamp for incremental sync
-                                        updates.append("pricecharting_synced_at = NOW()")
-                                        updates.append("updated_at = NOW()")
-                                        await db.execute(
-                                            text(f"UPDATE funkos SET {', '.join(updates)} WHERE id = :id"),
-                                            params
-                                        )
-                                        stats["updated"] += 1
-                                        logger.debug(
-                                            f"[{job_name}] Updated Funko {funko_id} prices"
-                                        )
-                                    else:
-                                        # No price changes but mark as synced
-                                        await db.execute(text("""
-                                            UPDATE funkos
-                                            SET pricecharting_synced_at = NOW()
-                                            WHERE id = :id
-                                        """), {"id": funko_id})
-
                                 elif response.status_code >= 500:
                                     circuit_breaker._on_failure(
                                         Exception(f"API returned {response.status_code}")
@@ -1159,6 +1175,94 @@ async def run_funko_price_sync_job(
                             except CircuitOpenError:
                                 stats["circuit_opens"] += 1
                                 break
+
+                            # Fallback fuzzy match if we still don't have price data
+                            if data is None:
+                                fallback_pc_id, fallback_data = await fuzzy_match_and_fetch(funko, client, pc_token, circuit_breaker)
+                                if fallback_pc_id:
+                                    resolved_pc_id = fallback_pc_id
+                                    if resolved_pc_id != funko.pricecharting_id:
+                                        await db.execute(text("""
+                                            UPDATE funkos
+                                            SET pricecharting_id = :pc_id,
+                                                updated_at = NOW()
+                                            WHERE id = :id
+                                        """), {"pc_id": resolved_pc_id, "id": funko_id})
+                                data = fallback_data
+
+                            if not data:
+                                # No data to update
+                                continue
+
+                            # Extract prices (in cents, convert to dollars)
+                            loose_price = data.get("loose-price")
+                            cib_price = data.get("cib-price")
+                            new_price = data.get("new-price")
+
+                            # Convert from cents to dollars
+                            updates = []
+                            params = {"id": funko_id}
+
+                            # Phase 3: Track significant price changes
+                            if "significant_changes" not in stats:
+                                stats["significant_changes"] = 0
+
+                            def check_price_change(field_name, old_val, new_cents):
+                                """Check for significant price change and log alert."""
+                                if not new_cents:
+                                    return None
+                                new_dollars = float(new_cents) / 100
+                                old_dollars = float(old_val) if old_val else 0
+
+                                if old_dollars > 0:
+                                    pct_change = ((new_dollars - old_dollars) / old_dollars) * 100
+                                    if abs(pct_change) >= PC_PRICE_ALERT_THRESHOLD:
+                                        stats["significant_changes"] += 1
+                                        direction = "UP" if pct_change > 0 else "DOWN"
+                                        logger.warning(
+                                            f"[PRICE_ALERT] Funko {funko_id} {field_name}: "
+                                            f"${old_dollars:.2f} -> ${new_dollars:.2f} "
+                                            f"({direction} {abs(pct_change):.1f}%)"
+                                        )
+                                return new_dollars
+
+                            if loose_price:
+                                new_loose = check_price_change("loose", funko.price_loose, loose_price)
+                                if new_loose:
+                                    updates.append("price_loose = :loose")
+                                    params["loose"] = new_loose
+
+                            if cib_price:
+                                new_cib = check_price_change("cib", funko.price_cib, cib_price)
+                                if new_cib:
+                                    updates.append("price_cib = :cib")
+                                    params["cib"] = new_cib
+
+                            if new_price:
+                                new_new = check_price_change("new", funko.price_new, new_price)
+                                if new_new:
+                                    updates.append("price_new = :new")
+                                    params["new"] = new_new
+
+                            if updates:
+                                # v1.1.0: Track sync timestamp for incremental sync
+                                updates.append("pricecharting_synced_at = NOW()")
+                                updates.append("updated_at = NOW()")
+                                await db.execute(
+                                    text(f"UPDATE funkos SET {', '.join(updates)} WHERE id = :id"),
+                                    params
+                                )
+                                stats["updated"] += 1
+                                logger.debug(
+                                    f"[{job_name}] Updated Funko {funko_id} prices (pc_id={resolved_pc_id})"
+                                )
+                            else:
+                                # No price changes but mark as synced
+                                await db.execute(text("""
+                                    UPDATE funkos
+                                    SET pricecharting_synced_at = NOW()
+                                    WHERE id = :id
+                                """), {"id": funko_id})
 
                         except Exception as e:
                             stats["errors"] += 1
