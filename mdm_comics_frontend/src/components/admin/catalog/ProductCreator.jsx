@@ -85,10 +85,26 @@ export default function ProductCreator() {
   // Comic search handler
   const handleComicSearch = async (e) => {
     e?.preventDefault();
-    if (!searchParams.series && !searchParams.upc) return;
+    
+    if (import.meta.env.DEV) {
+      console.debug('[ProductCreator] handleComicSearch triggered', searchParams);
+    }
+
+    // Relaxed validation: Check if ANY field is populated
+    const hasCriteria = Object.values(searchParams).some(val => val && val.trim() !== '');
+    
+    if (!hasCriteria) {
+      if (import.meta.env.DEV) console.debug('[ProductCreator] Search aborted: No criteria provided');
+      setMessage({ type: 'warning', text: 'Please enter at least one search criteria (Series, Number, Publisher, or UPC)' });
+      return;
+    }
 
     setSearchLoading(true);
+    setMessage(null); // Clear previous messages
+
     try {
+      if (import.meta.env.DEV) console.debug('[ProductCreator] Dispatching search API call...');
+      
       const result = await comicsAPI.search({
         series: searchParams.series,
         number: searchParams.number,
@@ -96,6 +112,9 @@ export default function ProductCreator() {
         upc: searchParams.upc,
         page: 1,
       });
+
+      if (import.meta.env.DEV) console.debug('[ProductCreator] Search result received:', result);
+
       setSearchResults(result.results || []);
       // Check for API message (rate limit, timeout, etc.)
       if (result.message) {
@@ -104,6 +123,7 @@ export default function ProductCreator() {
         setMessage({ type: 'info', text: 'No results found' });
       }
     } catch (err) {
+      console.error('[ProductCreator] Comic search error:', err);
       setMessage({ type: 'error', text: 'Search failed: ' + err.message });
     } finally {
       setSearchLoading(false);

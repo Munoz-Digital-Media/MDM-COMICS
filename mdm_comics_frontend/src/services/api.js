@@ -81,6 +81,10 @@ async function fetchAPI(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
   const method = options.method || 'GET';
 
+  if (import.meta.env.DEV) {
+    console.debug(`[API] Request: ${method} ${url}`, options.body ? JSON.parse(options.body) : '');
+  }
+
   // Build headers
   const headers = {
     'Content-Type': 'application/json',
@@ -154,10 +158,15 @@ async function fetchAPI(endpoint, options = {}) {
 
     // Handle 204 No Content
     if (response.status === 204) {
+      if (import.meta.env.DEV) console.debug(`[API] Response: 204 No Content (${endpoint})`);
       return null;
     }
 
-    return await response.json();
+    const data = await response.json();
+    if (import.meta.env.DEV) {
+      console.debug(`[API] Response: 200 OK (${endpoint})`, data);
+    }
+    return data;
   } catch (error) {
     // LOW-001: Gate console.error behind DEV mode
     if (import.meta.env.DEV) console.error(`API call failed: ${endpoint}`, error);
