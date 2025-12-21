@@ -20,7 +20,7 @@ const ScannerApp = lazy(() => import("./components/admin/ingestion/ScannerApp"))
   import ComingSoon from "./components/ComingSoon";
   import AuthModal from "./components/AuthModal";
 import AboutContact from "./components/AboutContact";
-import ConventionShowcase from "./components/ConventionShowcase";
+import ConventionQuickAccess from "./components/ConventionQuickAccess";
 import MyOrders from "./components/MyOrders";
 import RefundPolicy from "./components/RefundPolicy";
 import AccountDashboard from "./components/AccountDashboard";
@@ -553,6 +553,9 @@ import './styles/animations.css';
         {/* Main Content */}
         {currentView === "shop" && (
           <main className="hero-gradient">
+            {/* Convention Quick Access - Above Hero */}
+            <ConventionQuickAccess />
+
             {/* Hero Section */}
             <section className="max-w-7xl mx-auto px-4 py-12">
               <div className="text-center mb-8 sm:mb-12 fade-up" style={{ animationDelay: "0.1s" }}>
@@ -983,9 +986,6 @@ import './styles/animations.css';
             onLogout={handleLogout}
           />
         )}
-
-        {/* Conventions Showcase */}
-        <ConventionShowcase />
 
         {/* Shipping Banner - Fixed above footer */}
         <section className="border-t border-zinc-800 bg-zinc-900/50">
