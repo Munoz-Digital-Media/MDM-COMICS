@@ -1815,14 +1815,36 @@ async def get_gcd_import_status(
 
     # Extract state_data for progress calculation
     state_data = checkpoint[8] if checkpoint else {}
-    current_phase = state_data.get("current_phase", "unknown") if state_data else "unknown"
-    phase_progress = state_data.get("phase_progress", {}) if state_data else {}
+    current_mode = state_data.get("mode", "brands") if state_data else "brands"
+    current_offset = state_data.get("offset", 0) if state_data else 0
+
+    # v1.8.0: Derive phase_progress from checkpoint mode/offset
+    # Since checkpoint only tracks current mode and offset, we derive per-phase progress:
+    # - Phases before current_mode are complete (processed = total)
+    # - Current phase has processed = offset
+    # - Phases after current_mode have processed = 0
+    phase_order = ["brands", "indicia", "creators", "characters", "issues", "stories", "credits", "reprints"]
+    phase_progress = {}
+
+    if phase_totals:
+        current_idx = phase_order.index(current_mode) if current_mode in phase_order else 0
+
+        for idx, phase in enumerate(phase_order):
+            phase_total = phase_totals.get(phase, 0)
+            if idx < current_idx:
+                # Completed phases
+                phase_progress[phase] = {"processed": phase_total, "errors": 0}
+            elif idx == current_idx:
+                # Current phase - use offset as processed count
+                phase_progress[phase] = {"processed": current_offset, "errors": 0}
+            else:
+                # Future phases
+                phase_progress[phase] = {"processed": 0, "errors": 0}
 
     # Calculate overall progress
     # v1.8.0: Added overall_progress for granular progress tracking
     overall_progress = None
     if phase_totals:
-        phase_order = ["brands", "indicia", "creators", "characters", "issues", "stories", "credits", "reprints"]
         phases_complete = 0
         total_records = sum(phase_totals.values())
         processed_records = 0
@@ -1839,11 +1861,19 @@ async def get_gcd_import_status(
 
         percent_complete = round((processed_records / total_records) * 100, 1) if total_records > 0 else 0
 
-        # Calculate ETA based on velocity
-        velocity = state_data.get("velocity", {}) if state_data else {}
-        records_per_minute = velocity.get("records_per_minute", 0)
-        remaining_records = total_records - processed_records
-        eta_minutes = int(remaining_records / records_per_minute) if records_per_minute > 0 else None
+        # Calculate ETA based on elapsed time and progress
+        eta_minutes = None
+        if checkpoint and checkpoint[2] and processed_records > 0:
+            # Calculate velocity from elapsed time
+            from datetime import datetime, timezone
+            started_at = checkpoint[2]
+            if started_at:
+                elapsed = (datetime.now(timezone.utc) - started_at).total_seconds() / 60  # minutes
+                if elapsed > 0:
+                    records_per_minute = processed_records / elapsed
+                    remaining_records = total_records - processed_records
+                    if records_per_minute > 0:
+                        eta_minutes = int(remaining_records / records_per_minute)
 
         overall_progress = {
             "phases_complete": phases_complete,
