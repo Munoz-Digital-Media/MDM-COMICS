@@ -282,6 +282,16 @@ class Settings(BaseSettings):
     RACK_FACTOR_DAILY_TOP_MOVERS: int = 5  # Top 5 up + Top 5 down
     RACK_FACTOR_WEEKLY_TOP_MOVERS: int = 10  # Top 10 in newsletter
 
+    # ===== METRON RATE LIMIT HARDENING v1.0.0 =====
+    # IMPL-2025-1221-METRON-RL: Prevents 429 storms from Metron API
+    METRON_RL_HARDENING_ENABLED: bool = False  # Feature flag - disabled by default
+    METRON_MAX_RPS: float = 1.0  # Max requests per second
+    METRON_MAX_RPM: int = 30  # Max requests per minute
+    METRON_MAX_DAILY: int = 9500  # Max daily requests (buffer before 10k limit)
+    METRON_DAILY_RESET_UTC_HOUR: int = 0  # UTC hour to reset daily counter
+    METRON_COOLDOWN_SECONDS: float = 60.0  # Cooldown after 429 response
+    METRON_BACKLOG_CAP: int = 100  # Max pending requests in queue
+
     @model_validator(mode="after")
     def validate_production_config(self):
         """Runtime validation to catch insecure production configurations."""
