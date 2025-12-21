@@ -73,3 +73,12 @@ assets/
 nul
 F:/apps/governance
 .coverage
+
+# Debug/maintenance utility scripts
+mdm_comics_backend/check_*.py
+mdm_comics_backend/clear_*.py
+mdm_comics_backend/force_*.py
+mdm_comics_backend/inspect_*.py
+mdm_comics_backend/manual_*.py
+mdm_comics_backend/reset_*.py
+mdm_comics_backend/remove_*.py

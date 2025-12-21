@@ -24,7 +24,7 @@ from app.jobs.social import (
 # Data Acquisition Pipeline v1.6.0
 from app.jobs.pipeline_scheduler import (
     pipeline_scheduler,
-    run_comic_enrichment_job,
+    run_gcd_import_job,
     run_funko_price_check_job,
     run_dlq_retry_job,
     run_daily_snapshot_job,  # v1.7.0
@@ -56,7 +56,7 @@ __all__ = [
     "process_content_queue",
     # Data Acquisition Pipeline v1.6.0
     "pipeline_scheduler",
-    "run_comic_enrichment_job",
+    "run_gcd_import_job",
     "run_funko_price_check_job",
     "run_dlq_retry_job",
     # Price Snapshots for AI Intelligence v1.7.0
