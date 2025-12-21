@@ -2085,6 +2085,185 @@ async def validate_gcd_dump(
     return validation
 
 
+# ----- GCD Synopsis Enrichment (v1.8.1) -----
+
+class GCDSynopsisRequest(BaseModel):
+    """Request for GCD synopsis enrichment."""
+    batch_size: int = Field(default=1000, ge=100, le=10000, description="Records per batch")
+    max_records: int = Field(default=0, ge=0, description="Max records to process (0=unlimited)")
+
+
+@router.post("/pipeline/gcd/enrich-synopses")
+async def enrich_from_gcd_synopses(
+    request: GCDSynopsisRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Enrich comic_issues descriptions from GCD story synopses.
+
+    v1.8.1: Pulls synopsis data from locally imported GCD stories and populates
+    the description field for comic_issues that have a gcd_id but no description.
+
+    This is a fast local operation (no external API calls) that should run
+    after GCD import completes.
+    """
+    # Count how many records need enrichment
+    count_result = await db.execute(text("""
+        SELECT COUNT(*) FROM comic_issues ci
+        WHERE ci.gcd_id IS NOT NULL
+        AND (ci.description IS NULL OR ci.description = '')
+        AND EXISTS (
+            SELECT 1 FROM stories s
+            WHERE s.gcd_issue_id = ci.gcd_id
+            AND s.synopsis IS NOT NULL
+            AND s.synopsis != ''
+        )
+    """))
+    eligible_count = count_result.scalar() or 0
+
+    if eligible_count == 0:
+        return {
+            "status": "nothing_to_do",
+            "message": "No comic_issues found that need synopsis enrichment",
+            "eligible_count": 0
+        }
+
+    # Run enrichment in background
+    async def run_synopsis_enrichment():
+        from app.core.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as enrich_db:
+            processed = 0
+            updated = 0
+            last_id = 0
+            batch_size = request.batch_size
+            max_records = request.max_records
+
+            while True:
+                # Fetch batch of comic_issues needing enrichment
+                result = await enrich_db.execute(text("""
+                    SELECT ci.id, ci.gcd_id
+                    FROM comic_issues ci
+                    WHERE ci.gcd_id IS NOT NULL
+                    AND (ci.description IS NULL OR ci.description = '')
+                    AND ci.id > :last_id
+                    ORDER BY ci.id
+                    LIMIT :limit
+                """), {"last_id": last_id, "limit": batch_size})
+
+                rows = result.fetchall()
+                if not rows:
+                    break
+
+                for row in rows:
+                    comic_id, gcd_id = row.id, row.gcd_id
+                    last_id = comic_id
+                    processed += 1
+
+                    if max_records > 0 and processed > max_records:
+                        break
+
+                    # Get best synopsis: prefer 'comic story' type, longest synopsis
+                    synopsis_result = await enrich_db.execute(text("""
+                        SELECT synopsis FROM stories
+                        WHERE gcd_issue_id = :gcd_id
+                        AND synopsis IS NOT NULL AND synopsis != ''
+                        ORDER BY
+                            CASE WHEN story_type = 'comic story' THEN 0 ELSE 1 END,
+                            LENGTH(synopsis) DESC
+                        LIMIT 1
+                    """), {"gcd_id": gcd_id})
+
+                    synopsis_row = synopsis_result.fetchone()
+                    if synopsis_row and synopsis_row.synopsis:
+                        # Update description (limit to 5000 chars)
+                        synopsis = synopsis_row.synopsis[:5000]
+                        await enrich_db.execute(text("""
+                            UPDATE comic_issues
+                            SET description = :synopsis,
+                                updated_at = NOW()
+                            WHERE id = :id
+                        """), {"synopsis": synopsis, "id": comic_id})
+                        updated += 1
+
+                await enrich_db.commit()
+
+                if max_records > 0 and processed >= max_records:
+                    break
+
+            logger.info(f"[GCD Synopsis Enrichment] Complete: processed={processed}, updated={updated}")
+
+    background_tasks.add_task(run_synopsis_enrichment)
+
+    return {
+        "status": "started",
+        "message": f"GCD synopsis enrichment started for up to {eligible_count:,} records",
+        "eligible_count": eligible_count,
+        "batch_size": request.batch_size,
+        "max_records": request.max_records or "unlimited"
+    }
+
+
+@router.get("/pipeline/gcd/synopsis-stats")
+async def get_gcd_synopsis_stats(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get statistics about GCD synopsis availability and enrichment potential.
+    """
+    # Total comic_issues with gcd_id
+    total_result = await db.execute(text("""
+        SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
+    """))
+    total_with_gcd = total_result.scalar() or 0
+
+    # Already have description
+    with_desc_result = await db.execute(text("""
+        SELECT COUNT(*) FROM comic_issues
+        WHERE gcd_id IS NOT NULL
+        AND description IS NOT NULL
+        AND description != ''
+    """))
+    with_description = with_desc_result.scalar() or 0
+
+    # Missing description but have synopsis available
+    enrichable_result = await db.execute(text("""
+        SELECT COUNT(DISTINCT ci.id) FROM comic_issues ci
+        WHERE ci.gcd_id IS NOT NULL
+        AND (ci.description IS NULL OR ci.description = '')
+        AND EXISTS (
+            SELECT 1 FROM stories s
+            WHERE s.gcd_issue_id = ci.gcd_id
+            AND s.synopsis IS NOT NULL
+            AND s.synopsis != ''
+        )
+    """))
+    enrichable = enrichable_result.scalar() or 0
+
+    # Total stories with synopsis
+    stories_result = await db.execute(text("""
+        SELECT COUNT(*) FROM stories
+        WHERE synopsis IS NOT NULL AND synopsis != ''
+    """))
+    stories_with_synopsis = stories_result.scalar() or 0
+
+    return {
+        "comic_issues": {
+            "total_with_gcd_id": total_with_gcd,
+            "with_description": with_description,
+            "enrichable_from_gcd": enrichable,
+            "missing_description_no_synopsis": total_with_gcd - with_description - enrichable
+        },
+        "stories": {
+            "with_synopsis": stories_with_synopsis
+        },
+        "potential_improvement": f"{enrichable:,} issues can be enriched from GCD synopses"
+    }
+
+
 # ----- Multi-Source Enrichment (v1.10.0) -----
 
 class MSERequest(BaseModel):
