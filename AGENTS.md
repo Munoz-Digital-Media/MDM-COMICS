@@ -1,25 +1,26 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Monorepo root contains four deployable services: `mdm_comics_frontend/` (React/Vite SPA), `mdm_comics_backend/` (FastAPI API + jobs), `mdm_comics_middleware/` (FastAPI utilities), and `mdm_comics_cron_jobs/` (Railway wrapper for backend cron runner). Shared docs live in `docs/` and governance artifacts in `implementations/`; `assets/` is local-only.
-- Each service has its own `railway.json` and `Dockerfile*`; infra files and root service folders are CODEOWNERS-locked to @JD.
+- Monorepo with four deployables: `mdm_comics_frontend/` (React 18 + Vite), `mdm_comics_backend/` (FastAPI API, jobs, Alembic), `mdm_comics_middleware/` (FastAPI utilities), and `mdm_comics_cron_jobs/` (Railway wrapper that runs backend cron). Shared datasets, CGC PDFs/labels, and ML artifacts live under `assets/` (gitignored for size/privacy).
+- Backend ML helpers live in `mdm_comics_backend/app/ml/` with label registry, text encoders, and PDF/signature parsers; rerun `assets/cgc/update_cgc_labels.py`, `assets/cgc/build_pdf_corpus.py`, and `assets/cgc/signatures_2026/parse_signings.py` whenever source CGC files change.
+- Infra: each service ships its own `railway.json` and Dockerfile; backend/middleware Docker contexts expect the repo root. Python is pinned to 3.12 via `.python-version`.
 
 ## Build, Test, and Development Commands
-- Frontend: `cd mdm_comics_frontend && npm install && npm run dev` for Vite dev server; `npm run build` for production bundle; `npm run lint` for ESLint; `npm run test`, `test:unit`, or `test:integration` for Vitest suites; `npm run preview` to serve the built app.
-- Backend: `cd mdm_comics_backend && python -m venv .venv && . .venv/Scripts/Activate.ps1 && pip install -r requirements.txt` then `uvicorn app.main:app --reload --port 8000`; run jobs via `python run_cron.py`.
+- Frontend: `cd mdm_comics_frontend && npm install && npm run dev` (Vite dev server); `npm run build && npm run preview` to smoke prod bundles; `npm run lint` plus `npm run test`/`test:unit`/`test:integration` for Vitest.
+- Backend: `cd mdm_comics_backend && python -m venv .venv && . .venv/Scripts/Activate.ps1 && pip install -r requirements.txt && uvicorn app.main:app --reload --port 8000`; cron locally via `python run_cron.py`; migrations via `alembic upgrade head`.
 - Middleware: `cd mdm_comics_middleware && python -m venv .venv && . .venv/Scripts/Activate.ps1 && pip install -r requirements.txt && uvicorn app.main:app --reload --port 4100`.
-- Cron wrapper: `cd mdm_comics_backend && python run_cron.py` (shares backend codebase; deployment config sits in `mdm_comics_cron_jobs/`).
+- Data/ML refresh: after adding CGC PDFs or label HTML, run the refresh scripts above; keep generated artifacts under `assets/**` (they stay out of git).
 
 ## Coding Style & Naming Conventions
-- JavaScript/JSX: 2-space indent, React components in `PascalCase`, hooks/functions `camelCase`, tests in `src/__tests__`. Run `npm run lint` before PRs.
-- Python: PEP 8 (4-space indent), type hints for new modules, snake_case for files/functions. Optional formatters (black/isort) are commented in `requirements.txt`—match existing import/grouping order when touching files.
-- Keep configuration in `.env` (copy from `.env.example` when present); never commit secrets. Prefer `railway.json` overrides for service-specific env when deploying.
+- JavaScript/JSX: 2-space indent, components in `PascalCase`, hooks/functions `camelCase`; keep Tailwind class lists readable and colocate tests under `src/__tests__/unit|integration`. ESLint (`npm run lint`) is the authority.
+- Python: PEP 8 with 4-space indent, snake_case modules/functions, type hints for new code, and docstrings on services/schemas. Place side-effectful scripts in `scripts/` or `assets/**` rather than `app/`.
+- Config: copy `.env.example` when present; never commit secrets. Prefer Railway env overrides for deploys; keep large local-only assets in `assets/`.
 
 ## Testing Guidelines
-- Frontend uses Vitest + Testing Library; prefer colocated tests under `src/__tests__/unit|integration`. Aim for meaningful coverage of UI state, API hooks, and routing guards.
-- Backend and middleware use Pytest with 100% coverage gates (`--cov-fail-under=100`) and `tests/test_*.py` naming. Run `pytest` from each service root; coverage reports write to `coverage/*.xml`.
-- Add fixtures/mocks rather than hitting real APIs; seed data lives in `mdm_comics_backend/data/` when needed for tests.
+- Frontend: Vitest + Testing Library; mock network calls. Use `npm run test:unit` for UI units and `npm run test:integration` for router/API hooks.
+- Backend & Middleware: Pytest with `--cov-fail-under=100` and discovery under `tests/test_*.py`. Run `pytest` from each service root; coverage XML writes to `coverage/*.xml`.
+- Add fixtures/mocks instead of hitting live services; seed data belongs in `mdm_comics_backend/data/` or temporary fixtures, not in tracked code.
 
 ## Commit & Pull Request Guidelines
-- Follow Conventional Commits seen in history (e.g., `fix(bundles): move /featured route before /{slug}`); include a scope tied to the service or feature (`feat(homepage): ...`), and reference tickets like `GOLF-01` in the summary when applicable.
-- PRs should include a short description, links to related issues, screenshots for UI changes, and a checklist of commands/tests executed. Call out infra changes (Dockerfile, `railway.json`) explicitly because they require CODEOWNERS review.
+- Use Conventional Commits with scoped prefixes per service/feature (e.g., `feat(backend): add label embeddings cache`, `fix(frontend): guard checkout totals`). Reference tickets when applicable.
+- PRs: include a concise description, linked issues, screenshots for UI changes, and a checklist of commands/tests run. Call out infra changes (Dockerfile, Railway, migrations) and any updates to `assets/**` regeneration scripts.
