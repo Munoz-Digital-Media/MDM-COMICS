@@ -546,6 +546,17 @@ class GCDAdapter(DataSourceAdapter):
                 WHERE deleted = 0
                 ORDER BY id
             """
+        elif import_mode == "reprints":
+            count_query = "SELECT COUNT(*) FROM gcd_reprint"
+            query = """
+                SELECT
+                    id as gcd_id,
+                    origin_id as gcd_origin_story_id,
+                    target_id as gcd_target_story_id,
+                    notes
+                FROM gcd_reprint
+                ORDER BY id
+            """
         else:
             raise ValueError(f"Unknown import mode: {import_mode}")
 
@@ -664,7 +675,7 @@ class GCDAdapter(DataSourceAdapter):
             "store_date": release_date, # Mapped from key_date
 
             # Variant tracking
-            "variant_of_gcd_id": row.get("variant_of_gcd_id"),
+            "gcd_variant_of_id": row.get("variant_of_gcd_id"),
             "variant_name": row.get("variant_name"),
             "variant_cover_status": row.get("variant_cover_status"),
 

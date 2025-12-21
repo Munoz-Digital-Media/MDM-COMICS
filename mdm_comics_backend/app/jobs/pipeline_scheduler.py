@@ -420,7 +420,7 @@ async def run_gcd_import_job():
         # Define mode sequence
         MODES = [
             "brands", "indicia_publishers", "creators", "characters", 
-            "issues", "stories", "story_credits", "story_characters"
+            "issues", "stories", "story_credits", "story_characters", "reprints"
         ]
         
         # Fast-forward to current mode
@@ -460,7 +460,8 @@ async def run_gcd_import_job():
                             "issues": ("comic_issues", ["gcd_id"]),
                             "stories": ("stories", ["gcd_story_id"]),
                             "story_credits": ("story_creators", ["story_id", "creator_id", "role"]),
-                            "story_characters": ("story_characters", ["story_id", "character_id"])
+                            "story_characters": ("story_characters", ["story_id", "character_id"]),
+                            "reprints": ("comic_reprints", ["gcd_id"])
                         }
                         
                         target_table, index_elements = config[mode]
@@ -468,23 +469,52 @@ async def run_gcd_import_job():
                         # Prepare batch data
                         cleaned_batch = []
                         for record in batch:
-                            # Map keys to match DB columns if needed
-                            if mode == "story_credits" or mode == "story_characters":
-                                continue # Skipping M2M for now until ID mapping logic is refined
-                                
+                            # Basic cleanup
                             cleaned_rec = {k: v for k, v in record.items() if not k.startswith('_')}
                             cleaned_batch.append(cleaned_rec)
 
                         if cleaned_batch:
-                            stmt = insert(text(target_table)).values(cleaned_batch)
-                            if mode in ["issues", "stories", "creators", "characters", "brands", "indicia_publishers"]:
-                                update_cols = {c: stmt.excluded[c] for c in cleaned_batch[0].keys() if c not in index_elements and c != 'id'}
-                                update_cols['updated_at'] = utcnow()
-                                upsert_stmt = stmt.on_conflict_do_update(index_elements=index_elements, set_=update_cols)
+                            if mode == "story_credits":
+                                # Map story_creators using subqueries for IDs
+                                # This handles the GCD ID -> Internal ID translation
+                                await db.execute(text("""
+                                    INSERT INTO story_creators (story_id, creator_id, role, credited_as)
+                                    SELECT s.id, c.id, :role, :credited_as
+                                    FROM stories s, comic_creators c
+                                    WHERE s.gcd_story_id = :gcd_story_id 
+                                      AND c.gcd_id = :gcd_creator_id
+                                    ON CONFLICT (story_id, creator_id, role) DO NOTHING
+                                """), batch)
+                            elif mode == "story_characters":
+                                # Map story_characters using subqueries for IDs
+                                await db.execute(text("""
+                                    INSERT INTO story_characters (story_id, character_id, is_origin, is_death, is_flashback)
+                                    SELECT s.id, c.id, :is_origin, :is_death, :is_flashback
+                                    FROM stories s, comic_characters c
+                                    WHERE s.gcd_story_id = :gcd_story_id 
+                                      AND c.gcd_id = :gcd_character_id
+                                    ON CONFLICT (story_id, character_id) DO NOTHING
+                                """), batch)
+                            elif mode == "reprints":
+                                # Map comic_reprints using subqueries for story IDs
+                                await db.execute(text("""
+                                    INSERT INTO comic_reprints (gcd_id, origin_story_id, target_story_id, notes)
+                                    SELECT :gcd_id, s1.id, s2.id, :notes
+                                    FROM stories s1, stories s2
+                                    WHERE s1.gcd_story_id = :gcd_origin_story_id 
+                                      AND s2.gcd_story_id = :gcd_target_story_id
+                                    ON CONFLICT (gcd_id) DO NOTHING
+                                """), batch)
                             else:
-                                upsert_stmt = stmt.on_conflict_do_nothing(index_elements=index_elements)
-                                
-                            await db.execute(upsert_stmt)
+                                stmt = insert(text(target_table)).values(cleaned_batch)
+                                if mode in ["issues", "stories", "creators", "characters", "brands", "indicia_publishers"]:
+                                    update_cols = {c: stmt.excluded[c] for c in cleaned_batch[0].keys() if c not in index_elements and c != 'id'}
+                                    update_cols['updated_at'] = utcnow()
+                                    upsert_stmt = stmt.on_conflict_do_update(index_elements=index_elements, set_=update_cols)
+                                else:
+                                    upsert_stmt = stmt.on_conflict_do_nothing(index_elements=index_elements)
+                                    
+                                await db.execute(upsert_stmt)
                             
                         stats[mode]["processed"] += len(batch)
                         current_offset += len(batch)
@@ -3351,7 +3381,7 @@ async def _restart_gcd_import():
     """
     try:
         logger.info("[_restart_gcd_import] Starting GCD import (offset auto-synced by previous run)...")
-        result = await run_gcd_import_job(max_records=0, batch_size=5000)
+        result = await run_gcd_import_job()
         logger.info(f"[_restart_gcd_import] GCD import completed: {result}")
     except Exception as e:
         logger.error(f"[_restart_gcd_import] GCD import failed: {e}")
@@ -3361,406 +3391,6 @@ async def _restart_gcd_import():
 # =============================================================================
 # GCD IMPORT JOB (v1.8.0 - Grand Comics Database)
 # =============================================================================
-
-async def run_gcd_import_job(
-    db_path: str = None,
-    batch_size: int = None,
-    max_records: int = None,
-):
-    """
-    Import comics from GCD SQLite database dump.
-
-    This is the primary catalog import job for GCD-Primary architecture.
-    Uses SQLite dump from comics.org/download/ (CC-BY-SA 4.0 licensed).
-
-    Args:
-        db_path: Path to SQLite dump (default from settings.GCD_DUMP_PATH)
-        batch_size: Records per batch (default from settings.GCD_IMPORT_BATCH_SIZE)
-        max_records: Limit for subset imports (0 = unlimited)
-
-    The job:
-    1. Opens GCD SQLite dump
-    2. Queries gcd_issue JOIN gcd_series JOIN gcd_publisher
-    3. Normalizes to ComicIssue schema
-    4. Upserts into comic_issues (by gcd_id)
-    5. Tracks provenance for all fields
-    6. Checkpoints every batch for crash recovery
-    """
-    from app.core.config import settings
-    from app.adapters.gcd import GCDAdapter
-
-    job_name = "gcd_import"
-    batch_id = str(uuid4())
-
-    # Get settings with defaults
-    db_path = db_path or settings.GCD_DUMP_PATH
-    batch_size = batch_size or settings.GCD_IMPORT_BATCH_SIZE
-    max_records = max_records if max_records is not None else settings.GCD_IMPORT_MAX_RECORDS
-
-    logger.info(f"[{job_name}] Starting GCD import job (batch: {batch_id})")
-    logger.info(f"[{job_name}] Config: db_path={db_path}, batch_size={batch_size}, max_records={max_records or 'unlimited'}")
-
-    # Check if GCD import is enabled
-    if not settings.GCD_IMPORT_ENABLED:
-        logger.info(f"[{job_name}] GCD import is disabled (GCD_IMPORT_ENABLED=false)")
-        return {"status": "disabled", "message": "GCD import is disabled in settings"}
-
-    async with AsyncSessionLocal() as db:
-        # Atomically claim job to prevent race condition
-        claimed, checkpoint = await try_claim_job(db, job_name, "import", batch_id)
-
-        if not claimed:
-            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
-            return {"status": "skipped", "message": "Job already running"}
-
-        stats = {"processed": 0, "inserted": 0, "updated": 0, "errors": 0}
-
-        try:
-            # v1.10.4: Ensure GCD dump exists (download from S3 if needed)
-            from app.adapters.gcd import ensure_gcd_dump_exists
-            import os
-
-            if not os.path.exists(db_path):
-                logger.info(f"[{job_name}] GCD dump not found at {db_path}, attempting S3 download...")
-                if not ensure_gcd_dump_exists():
-                    raise FileNotFoundError(f"GCD SQLite dump not found and S3 download failed: {db_path}")
-
-            # Initialize adapter
-            adapter = GCDAdapter()
-
-            # Validate schema before import
-            validation = adapter.validate_schema(db_path)
-            if not validation["valid"]:
-                raise ValueError(f"GCD schema validation failed: {validation['errors']}")
-
-            logger.info(f"[{job_name}] Schema validated. Tables: {list(validation['tables'].keys())}")
-
-            # Get starting offset from checkpoint for resume
-            state_data = checkpoint.get("state_data") or {}
-            start_offset = state_data.get("offset", 0) if isinstance(state_data, dict) else 0
-
-            # v1.10.2: SANITY CHECK - Prevent re-processing if offset << DB count
-            # This catches cases where checkpoint was accidentally reset to 0
-            # v1.10.5: Allow re-processing if series_name needs backfilling
-            gcd_count_result = await db.execute(text(
-                "SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL"
-            ))
-            actual_db_count = gcd_count_result.scalar() or 0
-
-            # Check if series_name backfill is needed
-            backfill_needed_result = await db.execute(text("""
-                SELECT COUNT(*) FROM comic_issues
-                WHERE gcd_id IS NOT NULL
-                AND (series_name IS NULL OR series_name = 'None' OR raw_data IS NULL)
-            """))
-            backfill_needed = (backfill_needed_result.scalar() or 0) > 0
-
-            if start_offset < actual_db_count * 0.9 and not backfill_needed:
-                # Standard sanity check - prevent accidental reprocessing
-                logger.warning(
-                    f"[{job_name}] OFFSET SANITY CHECK FAILED: "
-                    f"offset={start_offset:,} but DB has {actual_db_count:,} records. "
-                    f"Auto-fixing to resume from {actual_db_count:,}"
-                )
-                start_offset = actual_db_count
-
-                # Update checkpoint to fixed offset
-                await db.execute(text("""
-                    UPDATE pipeline_checkpoints
-                    SET state_data = jsonb_build_object('offset', :offset),
-                        last_error = 'Offset auto-fixed from ' ||
-                            COALESCE((state_data->>'offset')::text, '0') ||
-                            ' to ' || :offset || ' at ' || NOW()::text
-                    WHERE job_name = :name
-                """), {"name": job_name, "offset": actual_db_count})
-                await db.commit()
-            elif backfill_needed:
-                # Allow reprocessing for series_name/raw_data backfill
-                logger.info(
-                    f"[{job_name}] Backfill mode: series_name/raw_data needs population. "
-                    f"Starting from offset {start_offset:,}"
-                )
-
-            logger.info(f"[{job_name}] Resuming from offset {start_offset:,} (DB has {actual_db_count:,} records)")
-
-            # Stream records from GCD SQLite
-            for batch in adapter.import_from_sqlite(
-                db_path=db_path,
-                batch_size=batch_size,
-                offset=start_offset,
-                limit=max_records,
-            ):
-                batch_stats = {"inserted": 0, "updated": 0, "errors": 0}
-
-                # Helper to safely truncate strings for DB columns
-                def truncate(val, max_len):
-                    if val is None:
-                        return None
-                    return str(val)[:max_len] if len(str(val)) > max_len else val
-
-                for record in batch:
-                    try:
-                        gcd_id = record.get("gcd_id")
-                        if not gcd_id:
-                            batch_stats["errors"] += 1
-                            continue
-
-                        # Truncate fields to match DB column limits
-                        isbn = truncate(record.get("isbn"), 50)
-                        upc = truncate(record.get("upc"), 50)
-                        issue_number = truncate(record.get("issue_number"), 50)
-                        story_title = truncate(record.get("story_title"), 500)
-                        series_name = truncate(record.get("series_name"), 255)
-
-                        # v1.10.7: Extract ALL GCD fields into proper columns
-                        publisher_name = truncate(record.get("publisher_name"), 255)
-                        series_sort_name = truncate(record.get("series_sort_name"), 255)
-                        series_year_began = record.get("series_year_began")
-                        series_year_ended = record.get("series_year_ended")
-                        volume = truncate(record.get("volume"), 50)
-                        variant_name = truncate(record.get("variant_name"), 255)
-                        variant_of_gcd_id = record.get("variant_of_gcd_id")
-                        # Use series_year_began as the issue year
-                        year = series_year_began
-
-                        # Store raw GCD data as backup
-                        raw_data = json.dumps(record) if record else None
-
-                        # v1.10.3: Map cover_date and price from GCD data
-                        # v1.10.4: Sanitize to convert empty strings to None
-                        # Constitution Compliance: Phase 3 Input Validation
-                        release_date = sanitize_date(record.get("release_date"), "cover_date")
-                        cover_price = sanitize_decimal(record.get("cover_price"), "price", min_value=0)
-
-                        # Check if record exists (by gcd_id)
-                        existing = await db.execute(text("""
-                            SELECT id FROM comic_issues WHERE gcd_id = :gcd_id
-                        """), {"gcd_id": gcd_id})
-                        existing_row = existing.fetchone()
-
-                        if existing_row:
-                            # UPDATE existing record with ALL GCD fields
-                            comic_id = existing_row.id
-                            await db.execute(text("""
-                                UPDATE comic_issues SET
-                                    gcd_series_id = :gcd_series_id,
-                                    gcd_publisher_id = :gcd_publisher_id,
-                                    number = COALESCE(:issue_number, number),
-                                    issue_name = COALESCE(:story_title, issue_name),
-                                    series_name = COALESCE(:series_name, series_name),
-                                    publisher_name = COALESCE(:publisher_name, publisher_name),
-                                    series_sort_name = COALESCE(:series_sort_name, series_sort_name),
-                                    series_year_began = COALESCE(:series_year_began, series_year_began),
-                                    series_year_ended = COALESCE(:series_year_ended, series_year_ended),
-                                    volume = COALESCE(:volume, volume),
-                                    variant_name = COALESCE(:variant_name, variant_name),
-                                    year = COALESCE(:year, year),
-                                    isbn = COALESCE(:isbn, isbn),
-                                    upc = COALESCE(:upc, upc),
-                                    page_count = COALESCE(:page_count, page_count),
-                                    cover_date = COALESCE(:cover_date, cover_date),
-                                    price = COALESCE(:price, price),
-                                    raw_data = :raw_data,
-                                    updated_at = NOW()
-                                WHERE gcd_id = :gcd_id
-                            """), {
-                                "gcd_id": gcd_id,
-                                "gcd_series_id": record.get("gcd_series_id"),
-                                "gcd_publisher_id": record.get("gcd_publisher_id"),
-                                "issue_number": issue_number,
-                                "story_title": story_title,
-                                "series_name": series_name,
-                                "publisher_name": publisher_name,
-                                "series_sort_name": series_sort_name,
-                                "series_year_began": series_year_began,
-                                "series_year_ended": series_year_ended,
-                                "volume": volume,
-                                "variant_name": variant_name,
-                                "year": year,
-                                "isbn": isbn,
-                                "upc": upc,
-                                "page_count": record.get("page_count"),
-                                "cover_date": release_date,
-                                "price": cover_price,
-                                "raw_data": raw_data,
-                            })
-                            batch_stats["updated"] += 1
-                        else:
-                            # INSERT new record with ALL GCD fields
-                            result = await db.execute(text("""
-                                INSERT INTO comic_issues (
-                                    gcd_id, gcd_series_id, gcd_publisher_id,
-                                    number, issue_name, series_name, publisher_name,
-                                    series_sort_name, series_year_began, series_year_ended,
-                                    volume, variant_name, year,
-                                    isbn, upc, page_count, cover_date, price, raw_data,
-                                    created_at, updated_at
-                                ) VALUES (
-                                    :gcd_id, :gcd_series_id, :gcd_publisher_id,
-                                    :issue_number, :story_title, :series_name, :publisher_name,
-                                    :series_sort_name, :series_year_began, :series_year_ended,
-                                    :volume, :variant_name, :year,
-                                    :isbn, :upc, :page_count, :cover_date, :price, :raw_data,
-                                    NOW(), NOW()
-                                )
-                                RETURNING id
-                            """), {
-                                "gcd_id": gcd_id,
-                                "gcd_series_id": record.get("gcd_series_id"),
-                                "gcd_publisher_id": record.get("gcd_publisher_id"),
-                                "issue_number": issue_number,
-                                "story_title": story_title,
-                                "series_name": series_name,
-                                "publisher_name": publisher_name,
-                                "series_sort_name": series_sort_name,
-                                "series_year_began": series_year_began,
-                                "series_year_ended": series_year_ended,
-                                "volume": volume,
-                                "variant_name": variant_name,
-                                "year": year,
-                                "isbn": isbn,
-                                "upc": upc,
-                                "page_count": record.get("page_count"),
-                                "cover_date": release_date,
-                                "price": cover_price,
-                                "raw_data": raw_data,
-                            })
-                            new_row = result.fetchone()
-                            comic_id = new_row.id if new_row else None
-                            batch_stats["inserted"] += 1
-
-                        # v1.10.1: Skip per-field provenance during bulk import
-                        # Provenance tracking was doing 6 DB operations per record,
-                        # reducing throughput from ~500/s to ~7/s.
-                        # GCD provenance is implicit - all gcd_* fields come from GCD.
-                        # Can backfill provenance table later if needed.
-
-                        stats["processed"] += 1
-
-                    except Exception as e:
-                        logger.error(f"[{job_name}] Error importing GCD record {record.get('gcd_id')}: {e}")
-                        batch_stats["errors"] += 1
-                        await add_to_dlq(
-                            db, job_name, str(e),
-                            entity_type="comic_issue",
-                            external_id=str(record.get("gcd_id")),
-                            error_type=type(e).__name__,
-                            error_trace=traceback.format_exc()[:2000],
-                            batch_id=batch_id
-                        )
-
-                # Commit batch and update checkpoint
-                await db.commit()
-
-                stats["inserted"] += batch_stats["inserted"]
-                stats["updated"] += batch_stats["updated"]
-                stats["errors"] += batch_stats["errors"]
-
-                # Update checkpoint with new offset
-                new_offset = start_offset + stats["processed"]
-                await update_checkpoint(
-                    db, job_name,
-                    processed_delta=len(batch),
-                    updated_delta=batch_stats["inserted"] + batch_stats["updated"],
-                    errors_delta=batch_stats["errors"],
-                )
-
-                # Store offset in state_data for resume
-                await db.execute(text("""
-                    UPDATE pipeline_checkpoints
-                    SET state_data = jsonb_build_object('offset', CAST(:offset AS integer))
-                    WHERE job_name = :name
-                """), {"name": job_name, "offset": new_offset})
-                await db.commit()
-
-                logger.info(
-                    f"[{job_name}] Batch complete: {len(batch)} records "
-                    f"(+{batch_stats['inserted']} new, +{batch_stats['updated']} updated, "
-                    f"{batch_stats['errors']} errors). Total: {stats['processed']:,}"
-                )
-
-                # Check if we've hit max_records limit
-                if max_records and stats["processed"] >= max_records:
-                    logger.info(f"[{job_name}] Reached max_records limit ({max_records})")
-                    break
-
-        except Exception as e:
-            logger.error(f"[{job_name}] Job failed: {e}")
-            traceback.print_exc()
-            await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
-            await add_to_dlq(
-                db, job_name, str(e),
-                error_type=type(e).__name__,
-                error_trace=traceback.format_exc(),
-                batch_id=batch_id
-            )
-
-        finally:
-            # v1.9.2: ALWAYS sync offset to actual DB count on exit
-            # This ensures we resume from the correct position whether the job:
-            # 1. Completes normally
-            # 2. Fails with an exception
-            # 3. Is manually interrupted
-            # 4. Times out / is killed by Railway
-            try:
-                actual_count_result = await db.execute(text("""
-                    SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
-                """))
-                actual_count = actual_count_result.scalar() or 0
-
-                await db.execute(text("""
-                    UPDATE pipeline_checkpoints
-                    SET state_data = jsonb_build_object('offset', CAST(:offset AS integer)),
-                        is_running = false
-                    WHERE job_name = :name
-                """), {"name": job_name, "offset": actual_count})
-                await db.commit()
-
-                logger.info(f"[{job_name}] Offset synced to actual DB count: {actual_count:,}")
-            except Exception as sync_err:
-                logger.error(f"[{job_name}] Failed to sync offset on exit: {sync_err}")
-                # Fall back to just clearing is_running flag
-                await update_checkpoint(
-                    db, job_name,
-                    is_running=False,
-                )
-
-        logger.info(
-            f"[{job_name}] Complete: {stats['processed']:,} processed "
-            f"({stats['inserted']:,} new, {stats['updated']:,} updated, {stats['errors']:,} errors)"
-        )
-
-        # v1.11.0: Job chaining - trigger PriceCharting matching when GCD import completes
-        try:
-            actual_count_check = await db.execute(text("""
-                SELECT COUNT(*) FROM comic_issues WHERE gcd_id IS NOT NULL
-            """))
-            current_count = actual_count_check.scalar() or 0
-            # Trigger when 95%+ of GCD records imported
-            if current_count >= 2400000 and stats["processed"] > 0:
-                logger.info(f"[{job_name}] GCD import complete ({current_count:,} records). Queuing PriceCharting matching...")
-                asyncio.create_task(_trigger_pricecharting_matching_after_gcd())
-        except Exception as chain_err:
-            logger.warning(f"[{job_name}] Job chain trigger failed: {chain_err}")
-
-        return {
-            "status": "completed",
-            "batch_id": batch_id,
-            "stats": stats,
-        }
-
-
-async def _trigger_pricecharting_matching_after_gcd():
-    """Trigger PriceCharting matching after GCD import (v1.11.0 job chaining)."""
-    await asyncio.sleep(5)
-    try:
-        logger.info("[job_chain] Starting PriceCharting matching for Funkos + Comics...")
-        result = await run_pricecharting_matching_job(batch_size=100, max_records=0)
-        logger.info(f"[job_chain] PriceCharting matching completed: {result}")
-    except Exception as e:
-        logger.error(f"[job_chain] PriceCharting matching failed: {e}")
-        traceback.print_exc()
-
 
 # =============================================================================
 # CROSS-REFERENCE MATCHING JOB (v1.8.0 - GCD-Primary)

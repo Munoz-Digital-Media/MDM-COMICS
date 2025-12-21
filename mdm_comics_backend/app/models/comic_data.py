@@ -37,7 +37,7 @@ issue_arcs = Table(
 story_characters = Table(
     'story_characters',
     Base.metadata,
-    Column('story_id', Integer, ForeignKey('comic_stories.id'), primary_key=True),
+    Column('story_id', Integer, ForeignKey('stories.id'), primary_key=True),
     Column('character_id', Integer, ForeignKey('comic_characters.id'), primary_key=True),
     Column('is_origin', Boolean, default=False),
     Column('is_death', Boolean, default=False),
@@ -47,9 +47,9 @@ story_characters = Table(
 story_creators = Table(
     'story_creators',
     Base.metadata,
-    Column('story_id', Integer, ForeignKey('comic_stories.id'), primary_key=True),
+    Column('story_id', Integer, ForeignKey('stories.id'), primary_key=True),
     Column('creator_id', Integer, ForeignKey('comic_creators.id'), primary_key=True),
-    Column('role', String(100)),
+    Column('role', String(100), primary_key=True),
     Column('credited_as', String(255))
 )
 
@@ -242,6 +242,7 @@ class ComicIssue(Base):
     # Variant info
     is_variant = Column(Boolean, default=False)
     variant_of_id = Column(Integer, ForeignKey('comic_issues.id'))
+    gcd_variant_of_id = Column(Integer, index=True) # GCD's variant link
     variant_name = Column(String(255))  # "Jim Lee Cover", "1:25 Variant", etc.
     variant_cover_status = Column(Integer)
 
@@ -315,15 +316,15 @@ class ComicIssue(Base):
 
 class ComicStory(Base):
     """Specific stories/content within a comic issue"""
-    __tablename__ = 'comic_stories'
+    __tablename__ = 'stories'
 
     id = Column(Integer, primary_key=True)
-    gcd_id = Column(Integer, unique=True, index=True)
-    issue_id = Column(Integer, ForeignKey('comic_issues.id'), index=True)
+    gcd_story_id = Column(Integer, unique=True, index=True)
+    comic_issue_id = Column(Integer, ForeignKey('comic_issues.id'), index=True)
     
     title = Column(String(500))
     feature = Column(String(500))
-    sequence_number = Column(Integer)
+    story_number = Column(Integer)
     page_count = Column(Numeric(10, 3))
     
     script = Column(Text)
@@ -337,8 +338,10 @@ class ComicStory(Base):
     synopsis = Column(Text)
     reprint_notes = Column(Text)
     notes = Column(Text)
-    type_name = Column(String(100)) # e.g. comic story, cover, pin-up
+    story_type = Column(String(100)) # e.g. comic story, cover, pin-up
     
+    marvel_fandom_id = Column(String(255))
+
     # Timestamps
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
@@ -347,6 +350,23 @@ class ComicStory(Base):
     issue = relationship("ComicIssue", back_populates="stories")
     characters = relationship("ComicCharacter", secondary=story_characters, back_populates="stories")
     creators = relationship("ComicCreator", secondary=story_creators, back_populates="stories")
+
+
+class ComicReprint(Base):
+    """Links between original stories and their reprints"""
+    __tablename__ = 'comic_reprints'
+
+    id = Column(Integer, primary_key=True)
+    gcd_id = Column(Integer, unique=True, index=True)
+    
+    origin_story_id = Column(Integer, ForeignKey('stories.id'), index=True)
+    target_story_id = Column(Integer, ForeignKey('stories.id'), index=True)
+    
+    notes = Column(Text)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class ComicCharacter(Base):
