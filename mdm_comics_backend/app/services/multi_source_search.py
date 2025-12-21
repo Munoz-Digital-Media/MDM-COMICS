@@ -472,11 +472,22 @@ class MultiSourceSearchService:
 
         sources_tried.append("metron")
 
-        if metron_result.get("error"):
+        metron_records = metron_result.get("results", [])
+        metron_failed = metron_result.get("error") is not None
+        metron_empty = len(metron_records) == 0
+
+        if metron_failed:
             sources_failed.append(f"metron:{metron_result['error']}")
 
-            # 3. Metron failed - try ComicVine as first fallback
-            if series_name:
+        # Add Metron results if any
+        if metron_records:
+            all_results.extend(metron_records)
+            logger.info(f"[MULTI-SEARCH] Found {len(metron_records)} from Metron")
+
+        # Try fallbacks if Metron failed OR returned empty results
+        if (metron_failed or metron_empty) and series_name:
+            # 3. Try ComicVine as first fallback
+            if not all_results:
                 logger.info("[MULTI-SEARCH] Metron failed, trying ComicVine")
                 cv_result = await self.search_comicvine(
                     series_name=series_name,
@@ -523,15 +534,11 @@ class MultiSourceSearchService:
                         all_results.extend(mcs_records)
                         logger.info(f"[MULTI-SEARCH] Found {len(mcs_records)} from MyComicShop")
 
-            if metron_result.get("error") == "rate_limited":
-                message = "Primary API rate limited. Showing results from alternative sources."
-            elif metron_result.get("error") == "timeout":
-                message = "Primary API timed out. Showing results from alternative sources."
-        else:
-            # Metron succeeded
-            metron_issues = metron_result.get("results", [])
-            all_results.extend(metron_issues)
-            logger.info(f"[MULTI-SEARCH] Found {len(metron_issues)} from Metron")
+            if metron_failed:
+                if metron_result.get("error") == "rate_limited":
+                    message = "Primary API rate limited. Showing results from alternative sources."
+                elif metron_result.get("error") == "timeout":
+                    message = "Primary API timed out. Showing results from alternative sources."
 
         # Deduplicate by issue identifier (prefer Metron results)
         seen_ids = set()

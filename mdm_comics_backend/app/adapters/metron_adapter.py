@@ -449,17 +449,36 @@ class MetronAdapter(DataSourceAdapter):
         # If we have series IDs, search issues for each series
         if series_ids:
             all_records = []
+            last_error = None
             for series_id in series_ids[:3]:  # Limit to first 3 series to avoid too many requests
                 filters["series"] = series_id
                 result = await self.fetch_page(page=page, endpoint="issue", **filters)
                 if result.success and result.records:
                     all_records.extend(result.records)
+                elif not result.success and result.errors:
+                    # Track the error for propagation
+                    last_error = result.errors
 
+            # If we got results, return success
+            if all_records:
+                return FetchResult(
+                    success=True,
+                    records=all_records[:20],
+                    total_count=len(all_records),
+                    has_more=len(all_records) > 20
+                )
+            # If no results AND we had errors, propagate the error
+            elif last_error:
+                return FetchResult(
+                    success=False,
+                    records=[],
+                    errors=last_error
+                )
+            # No results, no errors - genuine empty result
             return FetchResult(
                 success=True,
-                records=all_records[:20],  # Limit total results
-                total_count=len(all_records),
-                has_more=len(all_records) > 20
+                records=[],
+                total_count=0
             )
         else:
             # No series filter - need at least one filter to search
