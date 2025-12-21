@@ -34,6 +34,25 @@ issue_arcs = Table(
     Column('arc_id', Integer, ForeignKey('comic_arcs.id'), primary_key=True)
 )
 
+story_characters = Table(
+    'story_characters',
+    Base.metadata,
+    Column('story_id', Integer, ForeignKey('comic_stories.id'), primary_key=True),
+    Column('character_id', Integer, ForeignKey('comic_characters.id'), primary_key=True),
+    Column('is_origin', Boolean, default=False),
+    Column('is_death', Boolean, default=False),
+    Column('is_flashback', Boolean, default=False)
+)
+
+story_creators = Table(
+    'story_creators',
+    Base.metadata,
+    Column('story_id', Integer, ForeignKey('comic_stories.id'), primary_key=True),
+    Column('creator_id', Integer, ForeignKey('comic_creators.id'), primary_key=True),
+    Column('role', String(100)),
+    Column('credited_as', String(255))
+)
+
 
 class ComicPublisher(Base):
     """Comic book publishers - Marvel, DC, Image, etc."""
@@ -41,9 +60,13 @@ class ComicPublisher(Base):
 
     id = Column(Integer, primary_key=True)
     metron_id = Column(Integer, unique=True, index=True)  # Metron's ID
+    gcd_id = Column(Integer, unique=True, index=True)     # GCD's ID
     name = Column(String(255), nullable=False)
     founded = Column(Integer)  # Year founded
+    year_ended = Column(Integer)
     image = Column(Text)  # Logo URL
+    url = Column(String(255))
+    notes = Column(Text)
 
     # Raw Metron response for future parsing
     raw_data = Column(JSON)
@@ -54,6 +77,47 @@ class ComicPublisher(Base):
 
     # Relationships
     series = relationship("ComicSeries", back_populates="publisher")
+    brands = relationship("ComicBrand", back_populates="publisher")
+    indicia_publishers = relationship("ComicIndiciaPublisher", back_populates="publisher")
+
+
+class ComicIndiciaPublisher(Base):
+    """Specific indicia publishers listed in the legal text"""
+    __tablename__ = 'comic_indicia_publishers'
+
+    id = Column(Integer, primary_key=True)
+    gcd_id = Column(Integer, unique=True, index=True)
+    name = Column(String(255), nullable=False)
+    publisher_id = Column(Integer, ForeignKey('comic_publishers.id'))
+    
+    year_began = Column(Integer)
+    year_ended = Column(Integer)
+    is_surrogate = Column(Boolean, default=False)
+    notes = Column(Text)
+    url = Column(String(255))
+
+    # Relationships
+    publisher = relationship("ComicPublisher", back_populates="indicia_publishers")
+    issues = relationship("ComicIssue", back_populates="indicia_publisher")
+
+
+class ComicBrand(Base):
+    """Publisher logos and imprints used on covers"""
+    __tablename__ = 'comic_brands'
+
+    id = Column(Integer, primary_key=True)
+    gcd_id = Column(Integer, unique=True, index=True)
+    name = Column(String(255), nullable=False)
+    publisher_id = Column(Integer, ForeignKey('comic_publishers.id'))
+    
+    year_began = Column(Integer)
+    year_ended = Column(Integer)
+    notes = Column(Text)
+    url = Column(String(255))
+
+    # Relationships
+    publisher = relationship("ComicPublisher", back_populates="brands")
+    issues = relationship("ComicIssue", back_populates="brand")
 
 
 class ComicSeries(Base):
@@ -62,6 +126,7 @@ class ComicSeries(Base):
 
     id = Column(Integer, primary_key=True)
     metron_id = Column(Integer, unique=True, index=True)
+    gcd_id = Column(Integer, unique=True, index=True)
     name = Column(String(500), nullable=False, index=True)
     sort_name = Column(String(500))
     volume = Column(Integer)
@@ -69,6 +134,17 @@ class ComicSeries(Base):
     year_ended = Column(Integer)
     issue_count = Column(Integer)
     image = Column(Text)  # Series cover/logo
+
+    # GCD specific taxonomy
+    format = Column(String(255))
+    publication_dates = Column(String(255))
+    color = Column(String(255))
+    dimensions = Column(String(255))
+    paper_stock = Column(String(255))
+    binding = Column(String(255))
+    publishing_format = Column(String(255))
+    is_current = Column(Boolean, default=False)
+    notes = Column(Text)
 
     # Publisher relationship
     publisher_id = Column(Integer, ForeignKey('comic_publishers.id'))
@@ -115,6 +191,10 @@ class ComicIssue(Base):
     gcd_id = Column(Integer, unique=True, index=True, nullable=True)
     gcd_series_id = Column(Integer, index=True, nullable=True)
     gcd_publisher_id = Column(Integer, index=True, nullable=True)
+    
+    # Brand and Indicia Links (v2.0.0)
+    brand_id = Column(Integer, ForeignKey('comic_brands.id'), nullable=True)
+    indicia_publisher_id = Column(Integer, ForeignKey('comic_indicia_publishers.id'), nullable=True)
 
     # -------------------------------------------------------------------------
     # Multi-Source Data Distribution (v1.11.1)
@@ -141,6 +221,8 @@ class ComicIssue(Base):
     number = Column(String(50), index=True)  # Can be "1", "1A", "Annual 1", etc.
     issue_name = Column(String(500))  # Story title if any
     cover_date = Column(Date, index=True)
+    publication_date = Column(String(255)) # GCD text date (e.g. "July 1963")
+    key_date = Column(String(10), index=True) # GCD YYYY-MM-DD
     store_date = Column(Date)  # Actual release date
 
     # Cover image - THE MONEY SHOT
@@ -148,6 +230,7 @@ class ComicIssue(Base):
 
     # Pricing and specs
     price = Column(Float)  # Cover price
+    gcd_price = Column(String(255)) # Raw GCD price string
     page_count = Column(Integer)
     upc = Column(String(50))
     sku = Column(String(50))
@@ -160,6 +243,7 @@ class ComicIssue(Base):
     is_variant = Column(Boolean, default=False)
     variant_of_id = Column(Integer, ForeignKey('comic_issues.id'))
     variant_name = Column(String(255))  # "Jim Lee Cover", "1:25 Variant", etc.
+    variant_cover_status = Column(Integer)
 
     # Ratings and maturity
     rating = Column(String(50))  # Teen, Mature, etc.
@@ -195,7 +279,7 @@ class ComicIssue(Base):
     sales_volume = Column(Integer)            # PriceCharting sales volume
     handle = Column(String(255))              # URL-friendly identifier
     year = Column(Integer)                    # Publication year
-    series_name = Column(String(255))         # Extracted series name
+    # series_name = Column(String(255))         # Duplicate of denormalized field above
 
     # -------------------------------------------------------------------------
     # ComicBookRealm Market Metrics (v1.11.0 - ML Features)
@@ -217,6 +301,9 @@ class ComicIssue(Base):
     last_fetched = Column(DateTime)  # When we last pulled from Metron
 
     # Relationships
+    brand = relationship("ComicBrand", back_populates="issues")
+    indicia_publisher = relationship("ComicIndiciaPublisher", back_populates="issues")
+    stories = relationship("ComicStory", back_populates="issue", cascade="all, delete-orphan")
     characters = relationship("ComicCharacter", secondary=issue_characters, back_populates="issues")
     creators = relationship("ComicCreator", secondary=issue_creators, back_populates="issues")
     arcs = relationship("ComicArc", secondary=issue_arcs, back_populates="issues")
@@ -226,16 +313,57 @@ class ComicIssue(Base):
     isbn_sources = relationship("IsbnSource", back_populates="comic_issue")
 
 
+class ComicStory(Base):
+    """Specific stories/content within a comic issue"""
+    __tablename__ = 'comic_stories'
+
+    id = Column(Integer, primary_key=True)
+    gcd_id = Column(Integer, unique=True, index=True)
+    issue_id = Column(Integer, ForeignKey('comic_issues.id'), index=True)
+    
+    title = Column(String(500))
+    feature = Column(String(500))
+    sequence_number = Column(Integer)
+    page_count = Column(Numeric(10, 3))
+    
+    script = Column(Text)
+    pencils = Column(Text)
+    inks = Column(Text)
+    colors = Column(Text)
+    letters = Column(Text)
+    editing = Column(Text)
+    
+    genre = Column(String(255))
+    synopsis = Column(Text)
+    reprint_notes = Column(Text)
+    notes = Column(Text)
+    type_name = Column(String(100)) # e.g. comic story, cover, pin-up
+    
+    # Timestamps
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    # Relationships
+    issue = relationship("ComicIssue", back_populates="stories")
+    characters = relationship("ComicCharacter", secondary=story_characters, back_populates="stories")
+    creators = relationship("ComicCreator", secondary=story_creators, back_populates="stories")
+
+
 class ComicCharacter(Base):
     """Characters appearing in comics"""
     __tablename__ = 'comic_characters'
 
     id = Column(Integer, primary_key=True)
     metron_id = Column(Integer, unique=True, index=True)
+    gcd_id = Column(Integer, unique=True, index=True)
     name = Column(String(255), nullable=False, index=True)
     alias = Column(String(255))  # Real name
     description = Column(Text)
     image = Column(Text)
+    
+    year_first_published = Column(Integer)
+    universe_id = Column(Integer) # GCD universe ID
+    notes = Column(Text)
 
     # Raw Metron response
     raw_data = Column(JSON)
@@ -246,6 +374,7 @@ class ComicCharacter(Base):
 
     # Relationships
     issues = relationship("ComicIssue", secondary=issue_characters, back_populates="characters")
+    stories = relationship("ComicStory", secondary=story_characters, back_populates="characters")
 
 
 class ComicCreator(Base):
@@ -254,11 +383,16 @@ class ComicCreator(Base):
 
     id = Column(Integer, primary_key=True)
     metron_id = Column(Integer, unique=True, index=True)
+    gcd_id = Column(Integer, unique=True, index=True)
     name = Column(String(255), nullable=False, index=True)
+    official_name = Column(String(255))
     birth_date = Column(Date)
     death_date = Column(Date)
+    birth_country = Column(String(255))
+    death_country = Column(String(255))
     description = Column(Text)
     image = Column(Text)
+    notes = Column(Text)
 
     # Raw Metron response
     raw_data = Column(JSON)
@@ -269,6 +403,7 @@ class ComicCreator(Base):
 
     # Relationships
     issues = relationship("ComicIssue", secondary=issue_creators, back_populates="creators")
+    stories = relationship("ComicStory", secondary=story_creators, back_populates="creators")
 
 
 class ComicArc(Base):
