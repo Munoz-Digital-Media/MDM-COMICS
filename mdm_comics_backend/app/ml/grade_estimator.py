@@ -12,6 +12,10 @@ from typing import Dict, Any, Optional
 import numpy as np
 from PIL import Image
 
+from app.ml.label_registry import LabelRegistry
+from app.ml.pdf_corpus import PdfCorpus
+from app.ml.text_embeddings import TextEmbedder, hash_embedding, merge_embeddings
+
 # Uncomment when model is ready:
 # import torch
 # import torchvision.transforms as transforms
@@ -34,6 +38,11 @@ class GradeEstimatorService:
         self.model = None
         self.model_version = "0.1.0-mock"
         self.device = "cpu"  # or "cuda" if GPU available
+        self.label_registry = LabelRegistry()
+        self.pdf_corpus = PdfCorpus()
+        # Optional high-quality text embedder; uses hashed BoW fallback if no local model is present.
+        local_model_dir = (Path(__file__).resolve().parents[3] / "assets" / "ml" / "text_encoder")
+        self.text_embedder = TextEmbedder(model_path=local_model_dir)
         
         # TODO: Load actual model
         # self._load_model()
@@ -71,6 +80,57 @@ class GradeEstimatorService:
         # Placeholder: just resize
         image = image.resize((224, 224))
         return np.array(image)
+
+    def _label_features(self, label_slug: Optional[str]) -> Dict[str, float]:
+        """Fetch label feature vector (0/1 flags and metadata) for a given label slug."""
+        if not label_slug:
+            return {}
+        features = self.label_registry.feature_vector(label_slug)
+        return features or {}
+
+    def build_features(
+        self,
+        image_bytes: bytes,
+        label_slug: Optional[str] = None,
+        include_reference_texts: bool = False,
+        embed_reference_texts: bool = True,
+        embedding_dim: int = 128,
+    ) -> Dict[str, Any]:
+        """
+        Build combined feature payload for training/inference.
+
+        Returns a dict with:
+        - image: preprocessed array (placeholder until torch pipeline is wired)
+        - label_features: numeric vector derived from CGC label metadata
+        - reference_texts: optional CGC grading PDFs (text) when include_reference_texts is True
+        - reference_embedding: hashed bag-of-words embedding over CGC PDFs (optional)
+        """
+        image = Image.open(io.BytesIO(image_bytes))
+        image_features = self._preprocess_image(image)
+        label_features = self._label_features(label_slug)
+        reference_texts = None
+        reference_embedding = None
+        if include_reference_texts:
+            reference_texts = {
+                slug: self.pdf_corpus.text(slug)
+                for slug in self.pdf_corpus.slugs()
+                if self.pdf_corpus.text(slug)
+            }
+            if embed_reference_texts and reference_texts:
+                if self.text_embedder.model:
+                    reference_embedding = self.text_embedder.embed_and_merge(reference_texts.values())
+                else:
+                    embeddings = [
+                        hash_embedding(text, dim=embedding_dim)
+                        for text in reference_texts.values()
+                    ]
+                    reference_embedding = merge_embeddings(embeddings)
+        return {
+            "image": image_features,
+            "label_features": label_features,
+            "reference_texts": reference_texts,
+            "reference_embedding": reference_embedding,
+        }
     
     def _grade_to_label(self, grade: float) -> str:
         """Convert numeric grade to CGC label"""

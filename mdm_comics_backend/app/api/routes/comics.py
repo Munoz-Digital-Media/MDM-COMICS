@@ -30,7 +30,8 @@ async def search_comics(
     number: Optional[str] = Query(None, description="Issue number (e.g., '300')"),
     publisher: Optional[str] = Query(None, description="Publisher name (e.g., 'marvel')"),
     year: Optional[int] = Query(None, description="Cover year"),
-    upc: Optional[str] = Query(None, description="UPC barcode number"),
+    upc: Optional[str] = Query(None, description="UPC barcode - exact match, highest priority"),
+    isbn: Optional[str] = Query(None, description="ISBN - exact match"),
     page: int = Query(1, ge=1, description="Page number"),
     db: AsyncSession = Depends(get_db)
 ):
@@ -38,6 +39,11 @@ async def search_comics(
     Search for comic issues across multiple data sources.
     Uses multi-source fallback: Local cache → Metron → Fandom wikis.
     No single point of failure - if one source is rate limited, others are tried.
+
+    Search priority (exact identifiers first):
+    1. UPC - exact barcode match (fastest, most reliable)
+    2. ISBN - exact match
+    3. Series name + filters - fuzzy matching
     """
     import asyncio
     import logging
@@ -47,6 +53,7 @@ async def search_comics(
         ip_address = request.client.host if request.client else None
 
         # Use multi-source search with automatic failover
+        # UPC/ISBN are prioritized for exact matching
         results = await asyncio.wait_for(
             multi_source_search.search_issues(
                 db=db,
@@ -55,6 +62,7 @@ async def search_comics(
                 publisher_name=publisher,
                 cover_year=year,
                 upc=upc,
+                isbn=isbn,
                 page=page,
                 ip_address=ip_address
             ),

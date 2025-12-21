@@ -150,9 +150,17 @@ class MultiSourceSearchService:
         number: Optional[str] = None,
         publisher_name: Optional[str] = None,
         upc: Optional[str] = None,
+        isbn: Optional[str] = None,
         page: int = 1
     ) -> Dict[str, Any]:
-        """Search Metron API with timeout handling."""
+        """
+        Search Metron API with timeout handling.
+
+        Search priority (exact identifiers first):
+        1. UPC - exact barcode match
+        2. ISBN - exact match
+        3. Series name + filters
+        """
         try:
             result = await asyncio.wait_for(
                 metron_service.search_issues(
@@ -160,6 +168,7 @@ class MultiSourceSearchService:
                     number=number,
                     publisher_name=publisher_name,
                     upc=upc,
+                    isbn=isbn,
                     page=page
                 ),
                 timeout=10.0
@@ -259,11 +268,17 @@ class MultiSourceSearchService:
         publisher_name: Optional[str] = None,
         cover_year: Optional[int] = None,
         upc: Optional[str] = None,
+        isbn: Optional[str] = None,
         page: int = 1,
         ip_address: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Multi-source comic search with automatic failover.
+
+        Search priority (exact identifiers first):
+        1. UPC - exact barcode match (fastest, most reliable)
+        2. ISBN - exact match
+        3. Series name + filters
 
         Search order:
         1. Local cache (always, fast)
@@ -292,12 +307,13 @@ class MultiSourceSearchService:
             sources_tried.append("local_cache")
             logger.info(f"[MULTI-SEARCH] Found {len(cache_results)} in local cache")
 
-        # 2. Try Metron API
+        # 2. Try Metron API (UPC/ISBN prioritized in adapter)
         metron_result = await self.search_metron(
             series_name=series_name,
             number=number,
             publisher_name=publisher_name,
             upc=upc,
+            isbn=isbn,
             page=page
         )
 

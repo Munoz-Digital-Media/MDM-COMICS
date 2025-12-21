@@ -73,17 +73,24 @@ class MetronService:
         publisher_name: Optional[str] = None,
         cover_year: Optional[int] = None,
         upc: Optional[str] = None,
+        isbn: Optional[str] = None,
         page: int = 1
     ) -> Dict[str, Any]:
         """
         Search for comic issues.
+
+        Search priority (exact identifiers first):
+        1. UPC - exact barcode match, fastest lookup
+        2. ISBN - exact ISBN match
+        3. Series name + filters - requires series ID lookup
 
         Args:
             series_name: Name of the series (e.g., "amazing spider-man")
             number: Issue number (e.g., "300")
             publisher_name: Publisher name (e.g., "marvel")
             cover_year: Year of cover date
-            upc: UPC barcode number
+            upc: UPC barcode number (highest priority - exact match)
+            isbn: ISBN number (exact match)
             page: Page number for pagination
 
         Returns:
@@ -96,6 +103,7 @@ class MetronService:
             publisher_name=publisher_name,
             cover_year=cover_year,
             upc=upc,
+            isbn=isbn,
             page=page
         )
         # Convert FetchResult to legacy dict format

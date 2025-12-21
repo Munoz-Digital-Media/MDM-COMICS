@@ -395,16 +395,37 @@ class MetronAdapter(DataSourceAdapter):
         publisher_name: Optional[str] = None,
         cover_year: Optional[int] = None,
         upc: Optional[str] = None,
+        isbn: Optional[str] = None,
         page: int = 1
     ) -> FetchResult:
         """
         Search for comic issues with filters.
 
-        Note: Metron's issues endpoint requires a series ID, not series name.
-        If series_name is provided, we first search for matching series,
-        then search for issues within those series.
+        Search Priority (exact identifiers first):
+        1. UPC - exact match, skip series lookup entirely
+        2. ISBN - exact match, skip series lookup entirely
+        3. Series name + filters - requires series ID lookup first
+
+        Note: Metron's issues endpoint requires a series ID for series-based search,
+        but UPC/ISBN can be searched directly without series context.
         """
-        # If series_name provided, first find matching series IDs
+        # PRIORITY 1: UPC is an exact identifier - use it directly
+        if upc:
+            logger.debug(f"[METRON] Searching by UPC (exact match): {upc}")
+            filters = {"upc": upc}
+            if number:
+                filters["number"] = number
+            return await self.fetch_page(page=page, endpoint="issue", **filters)
+
+        # PRIORITY 2: ISBN is an exact identifier - use it directly
+        if isbn:
+            logger.debug(f"[METRON] Searching by ISBN (exact match): {isbn}")
+            filters = {"isbn": isbn}
+            if number:
+                filters["number"] = number
+            return await self.fetch_page(page=page, endpoint="issue", **filters)
+
+        # PRIORITY 3: Series name search - requires series ID lookup first
         series_ids = []
         if series_name:
             series_result = await self.search_series(name=series_name, publisher_name=publisher_name)
@@ -424,8 +445,6 @@ class MetronAdapter(DataSourceAdapter):
             filters["number"] = number
         if cover_year:
             filters["cover_year"] = cover_year
-        if upc:
-            filters["upc"] = upc
 
         # If we have series IDs, search issues for each series
         if series_ids:
@@ -443,7 +462,7 @@ class MetronAdapter(DataSourceAdapter):
                 has_more=len(all_records) > 20
             )
         else:
-            # No series filter - search all issues (only if other filters provided)
+            # No series filter - need at least one filter to search
             if not filters:
                 return FetchResult(success=True, records=[], total_count=0)
             return await self.fetch_page(page=page, endpoint="issue", **filters)
