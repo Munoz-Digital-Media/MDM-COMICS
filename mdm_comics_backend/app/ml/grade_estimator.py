@@ -7,6 +7,7 @@ Replace with actual model inference when training is complete.
 """
 import io
 import random
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 import numpy as np
@@ -14,6 +15,7 @@ from PIL import Image
 
 from app.ml.label_registry import LabelRegistry
 from app.ml.pdf_corpus import PdfCorpus
+from app.ml.convention_events import ConventionEvents
 from app.ml.text_embeddings import TextEmbedder, hash_embedding, merge_embeddings
 
 # Uncomment when model is ready:
@@ -40,6 +42,7 @@ class GradeEstimatorService:
         self.device = "cpu"  # or "cuda" if GPU available
         self.label_registry = LabelRegistry()
         self.pdf_corpus = PdfCorpus()
+        self.conventions = ConventionEvents()
         # Optional high-quality text embedder; uses hashed BoW fallback if no local model is present.
         local_model_dir = (Path(__file__).resolve().parents[3] / "assets" / "ml" / "text_encoder")
         self.text_embedder = TextEmbedder(model_path=local_model_dir)
@@ -92,6 +95,7 @@ class GradeEstimatorService:
         self,
         image_bytes: bytes,
         label_slug: Optional[str] = None,
+        signer_name: Optional[str] = None,
         include_reference_texts: bool = False,
         embed_reference_texts: bool = True,
         embedding_dim: int = 128,
@@ -104,10 +108,12 @@ class GradeEstimatorService:
         - label_features: numeric vector derived from CGC label metadata
         - reference_texts: optional CGC grading PDFs (text) when include_reference_texts is True
         - reference_embedding: hashed bag-of-words embedding over CGC PDFs (optional)
+        - convention_features: signer-level features from convention listings (if signer_name provided)
         """
         image = Image.open(io.BytesIO(image_bytes))
         image_features = self._preprocess_image(image)
         label_features = self._label_features(label_slug)
+        convention_features = self.conventions.signer_features(signer_name)
         reference_texts = None
         reference_embedding = None
         if include_reference_texts:
@@ -128,6 +134,7 @@ class GradeEstimatorService:
         return {
             "image": image_features,
             "label_features": label_features,
+            "convention_features": convention_features,
             "reference_texts": reference_texts,
             "reference_embedding": reference_embedding,
         }

@@ -24,6 +24,7 @@ from app.ml.grade_estimator import GradeEstimatorService
 class Sample:
     image_path: Path
     label_slug: Optional[str] = None
+    signer_name: Optional[str] = None
 
 
 class GradingDataset:
@@ -54,6 +55,7 @@ class GradingDataset:
         features = self.estimator.build_features(
             image_bytes=image_bytes,
             label_slug=sample.label_slug,
+            signer_name=sample.signer_name,
             include_reference_texts=self.include_reference_texts,
             embed_reference_texts=self.embed_reference_texts,
             embedding_dim=self.embedding_dim,
@@ -61,9 +63,11 @@ class GradingDataset:
         return {
             "image": features["image"],  # numpy array placeholder
             "label_features": features["label_features"],
+            "convention_features": features.get("convention_features"),
             "reference_texts": features.get("reference_texts"),
             "reference_embedding": features.get("reference_embedding"),
             "label_slug": sample.label_slug,
+            "signer_name": sample.signer_name,
             "path": str(sample.image_path),
         }
 

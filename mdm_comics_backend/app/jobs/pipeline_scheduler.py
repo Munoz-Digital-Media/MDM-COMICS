@@ -92,6 +92,7 @@ from app.jobs.pricecharting_jobs import (
 # v1.24.0: Pipeline Instrumentation (Stall Detection & Metrics)
 from app.jobs.stall_detector import run_stall_detection_job
 from app.jobs.metrics_retention import run_metrics_retention_job
+from app.jobs.conventions_refresh import run_convention_refresh_job
 
 logger = logging.getLogger(__name__)
 
@@ -4368,6 +4369,8 @@ class PipelineScheduler:
             asyncio.create_task(self._run_job_loop("marvel_fandom", run_marvel_fandom_job, interval_minutes=60)),
             # v1.12.0: UPC Backfill - Recover missing UPCs from Metron/CBR
             asyncio.create_task(self._run_job_loop("upc_backfill", run_upc_backfill_job, interval_minutes=60)),
+            # v1.25.0: Convention refresh (GalaxyCon Columbus pages -> ML features)
+            asyncio.create_task(self._run_job_loop("convention_refresh", run_convention_refresh_job, interval_minutes=1440, initial_delay_minutes=30)),
             # v1.13.0: Sequential Exhaustive Enrichment - ONE row at a time, ALL sources exhausted
             asyncio.create_task(self._run_job_loop("sequential_enrichment", run_sequential_exhaustive_enrichment_job, interval_minutes=30)),
             # v1.21.0: Inbound cover processor - watches Inbound folder, queues to Match Review
@@ -4416,6 +4419,7 @@ class PipelineScheduler:
         print("[SCHEDULER]   - bcw_email_processing: every 15 minutes (parse BCW emails)")
         print("[SCHEDULER]   - bcw_quote_cleanup: every 60 minutes (cleanup expired quotes)")
         print("[SCHEDULER]   - bcw_selector_health: every 24 hours (validate DOM selectors)")
+        print("[SCHEDULER]   - convention_refresh: every 24 hours, delay=30min (GalaxyCon pages -> ML features)")
         print("[SCHEDULER]   - funko_pricecharting_match: every 60 minutes, delay=0min (match Funkos to PC IDs)")
         print("[SCHEDULER]   - comic_pricecharting_match: every 60 minutes, delay=15min (match Comics to PC IDs)")
         print("[SCHEDULER]   - funko_price_sync: every 60 minutes, delay=30min (sync Funko prices from PC)")

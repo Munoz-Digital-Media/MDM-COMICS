@@ -39,6 +39,21 @@ from app.adapters.mycomicshop_adapter import MyComicShopAdapter
 from app.core.adapter_registry import AdapterConfig, DataSourceType
 from app.core.http_client import ResilientHTTPClient, RateLimitConfig, RetryConfig
 
+# Pre-configured adapters for fallback sources
+COMICVINE_CONFIG = AdapterConfig(
+    name="comicvine",
+    source_type=DataSourceType.API,
+    requests_per_second=0.05,  # 200/hour = ~3/min
+    burst_limit=2,
+)
+
+MYCOMICSHOP_CONFIG = AdapterConfig(
+    name="mycomicshop",
+    source_type=DataSourceType.SCRAPER,
+    requests_per_second=0.15,  # ~10/min for scraping
+    burst_limit=2,
+)
+
 logger = logging.getLogger(__name__)
 
 # Publisher to Fandom wiki mapping
@@ -88,30 +103,20 @@ class MultiSourceSearchService:
                 logger.debug("[MULTI-SEARCH] ComicVine API key not configured")
                 return None
 
-            config = AdapterConfig(
-                name="comicvine",
-                source_type=DataSourceType.API,
-                base_url="https://comicvine.gamespot.com/api",
-                rate_limit=RateLimitConfig(requests_per_second=0.05),  # 200/hour = ~3/min = 0.05/sec
-                retry=RetryConfig(max_retries=2, base_delay=1.0),
-            )
-            self._comicvine_client = ResilientHTTPClient(config.rate_limit, config.retry)
-            self._comicvine_adapter = ComicVineAdapter(config, self._comicvine_client, api_key)
+            rate_limit = RateLimitConfig(requests_per_second=0.05)
+            retry = RetryConfig(max_retries=2, base_delay=1.0)
+            self._comicvine_client = ResilientHTTPClient(rate_limit, retry)
+            self._comicvine_adapter = ComicVineAdapter(COMICVINE_CONFIG, self._comicvine_client, api_key)
 
         return self._comicvine_adapter
 
     async def _get_mycomicshop_adapter(self) -> Optional[MyComicShopAdapter]:
         """Get or create MyComicShop adapter with HTTP client."""
         if self._mycomicshop_adapter is None:
-            config = AdapterConfig(
-                name="mycomicshop",
-                source_type=DataSourceType.SCRAPER,
-                base_url="https://www.mycomicshop.com",
-                rate_limit=RateLimitConfig(requests_per_second=0.15),  # ~10/min for scraping
-                retry=RetryConfig(max_retries=2, base_delay=2.0),
-            )
-            self._mycomicshop_client = ResilientHTTPClient(config.rate_limit, config.retry)
-            self._mycomicshop_adapter = MyComicShopAdapter(config, self._mycomicshop_client)
+            rate_limit = RateLimitConfig(requests_per_second=0.15)
+            retry = RetryConfig(max_retries=2, base_delay=2.0)
+            self._mycomicshop_client = ResilientHTTPClient(rate_limit, retry)
+            self._mycomicshop_adapter = MyComicShopAdapter(MYCOMICSHOP_CONFIG, self._mycomicshop_client)
 
         return self._mycomicshop_adapter
 
