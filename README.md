@@ -74,11 +74,11 @@ mdm_comics/
 | Railway Service | Root Directory | Config |
 | --- | --- | --- |
 | `MDM-COMICS-FRONTEND` | `mdm_comics_frontend/` | `mdm_comics_frontend/railway.json` |
-| `MDM-COMICS-BACKEND` | `mdm_comics_backend/` | `mdm_comics_backend/railway.json` |
+| `MDM-COMICS-BACKEND` | *(repo root)* | `mdm_comics_backend/railway.json` |
 | `MDM-COMICS-CRON-JOBS` | `mdm_comics_cron_jobs/` | `mdm_comics_cron_jobs/railway.json` |
-| `MDM-COMICS-MIDDLEWARE` | `mdm_comics_middleware/` | `mdm_comics_middleware/railway.json` |
+| `MDM-COMICS-MIDDLEWARE` | *(repo root)* | `mdm_comics_middleware/railway.json` |
 
-Update each Railway service to point at the listed root directory and set watch patterns to `<service_folder>/**` before redeploying.
+**Important:** Backend and Middleware services must have their Root Directory set to the **repository root** (leave blank or `/`), not their service folder. Their Dockerfiles use absolute paths from the repo root for build context. Frontend and Cron Jobs use their respective folders as Root Directory.
 
 ## Brand Colors
 
