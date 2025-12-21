@@ -53,8 +53,9 @@ export default function GCDIngestionPanel({ status, onRefresh, onTrigger }) {
       // Current phase is active
       return { isComplete: false, isActive: true, ...progress, total };
     } else if (phaseIdx === currentIdx && !isRunning && progress.processed > 0) {
-      // Current phase stopped mid-way
-      return { isComplete: false, isActive: false, ...progress, total };
+      // Current phase stopped - check if fully processed
+      const isComplete = total > 0 && progress.processed >= total;
+      return { isComplete, isActive: false, ...progress, total };
     } else {
       // Future phases are pending
       return { isComplete: false, isActive: false, processed: 0, errors: 0, total };
