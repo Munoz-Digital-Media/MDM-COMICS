@@ -7,7 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, BarChart3, Search,
-  X, Menu, ChevronLeft, ChevronDown, Palette, ClipboardList
+  X, Menu, ChevronLeft, ChevronDown, Palette, ClipboardList, CalendarClock
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import CatalogManager from './catalog/CatalogManager';
@@ -15,6 +15,7 @@ import ReportsManager from './reports/ReportsManager';
 import BrandAssets from './branding/BrandAssets';
 import IngestionManager from './ingestion/IngestionManager';
 import FulfillmentManager from './fulfillment/FulfillmentManager';
+import ConventionsManager from './conventions/ConventionsManager';
 
 // Navigation items
 const NAV_ITEMS = [
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { id: 'fulfillment', label: 'Fulfillment', icon: ClipboardList },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'branding', label: 'Branding', icon: Palette },
+  { id: 'conventions', label: 'Conventions', icon: CalendarClock },
 ];
 
 export default function AdminLayout({ onClose }) {
@@ -69,6 +71,8 @@ export default function AdminLayout({ onClose }) {
         return <BrandAssets />;
       case 'reports':
         return <ReportsManager />;
+      case 'conventions':
+        return <ConventionsManager />;
       default:
         return <AdminDashboard onNavigate={setActiveSection} />;
     }

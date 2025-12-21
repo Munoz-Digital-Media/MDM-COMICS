@@ -13,14 +13,23 @@ from typing import Dict, List, Optional
 class ConventionEvents:
     def __init__(self, base_dir: Optional[Path] = None) -> None:
         root = Path(__file__).resolve().parents[3]
-        self.base_dir = base_dir or (root / "assets" / "cgc")
+        self.base_dir = base_dir or (root / "assets")
         self.events = self._load_events()
 
     def _load_events(self) -> List[Dict]:
         events: List[Dict] = []
         if not self.base_dir.exists():
             return events
-        for path in sorted(self.base_dir.glob("galaxycon_*.json")):
+        # New convention JSONs
+        for path in sorted((self.base_dir / "conventions").glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload["_source_path"] = str(path)
+                events.append(payload)
+            except Exception:
+                continue
+        # Legacy fallback
+        for path in sorted((self.base_dir / "cgc").glob("galaxycon_*.json")):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 payload["_source_path"] = str(path)
