@@ -705,6 +705,47 @@ class GCDAdapter(DataSourceAdapter):
         conn.close()
         return count
 
+    def get_phase_totals(self, db_path: str) -> Dict[str, int]:
+        """
+        Get total record counts for each ingestion phase from GCD dump.
+
+        Returns dict mapping phase names to total counts.
+        Used for progress tracking UI.
+
+        v1.8.0: Added for granular progress tracking (IMP-20251221-GCD-GRANULAR-PROGRESS)
+        """
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Phase table mappings with safe table existence checks
+        phase_queries = {
+            "brands": "SELECT COUNT(*) FROM gcd_brand WHERE deleted = 0",
+            "indicia": "SELECT COUNT(*) FROM gcd_indicia_publisher WHERE deleted = 0",
+            "creators": "SELECT COUNT(*) FROM gcd_creator WHERE deleted = 0",
+            "characters": "SELECT COUNT(*) FROM gcd_character WHERE deleted = 0",
+            "issues": "SELECT COUNT(*) FROM gcd_issue WHERE deleted = 0",
+            "stories": "SELECT COUNT(*) FROM gcd_story WHERE deleted = 0",
+            "credits": "SELECT COUNT(*) FROM gcd_story_credit",
+            "reprints": "SELECT COUNT(*) FROM gcd_issue_reprint",
+        }
+
+        totals = {}
+
+        for phase, query in phase_queries.items():
+            try:
+                cursor.execute(query)
+                totals[phase] = cursor.fetchone()[0]
+            except sqlite3.OperationalError as e:
+                # Table may not exist in older dumps
+                logger.warning(f"[GCD] Could not count {phase}: {e}")
+                totals[phase] = 0
+
+        cursor.close()
+        conn.close()
+
+        logger.info(f"[GCD] Phase totals: {totals}")
+        return totals
+
     def validate_schema(self, db_path: str) -> Dict[str, Any]:
         """
         Validate that the SQLite dump has expected schema.
