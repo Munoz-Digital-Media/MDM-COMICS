@@ -1,15 +1,16 @@
 """
-Multi-Source Comic Search Service v1.0.0
+Multi-Source Comic Search Service v1.1.0
 
 Provides resilient comic search with automatic failover across multiple sources.
 Per constitution_cyberSec.json: No single point of failure.
+
+v1.1.0: Added ComicVine fallback, fixed error propagation for rate limits
 
 Search Priority:
 1. Local cache (GCD data) - always checked first
 2. Metron API - primary external source
 3. ComicVine API - secondary API fallback
 4. Fandom wikis - publisher-aware routing (DC, Marvel, Image)
-5. MyComicShop - scraper fallback
 
 Features:
 - Automatic failover on source failure/rate limit
@@ -19,6 +20,7 @@ Features:
 """
 import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +34,9 @@ from app.adapters.fandom_adapter import (
     FandomAdapter, FANDOM_WIKIS,
     create_dc_fandom_adapter, create_image_fandom_adapter
 )
+from app.adapters.comicvine_adapter import ComicVineAdapter
+from app.core.adapter_registry import AdapterConfig, DataSourceType
+from app.core.http_client import ResilientHTTPClient, RateLimitConfig, RetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +74,28 @@ class MultiSourceSearchService:
 
     def __init__(self):
         self._fandom_adapters: Dict[str, FandomAdapter] = {}
+        self._comicvine_adapter: Optional[ComicVineAdapter] = None
+        self._comicvine_client: Optional[ResilientHTTPClient] = None
+
+    async def _get_comicvine_adapter(self) -> Optional[ComicVineAdapter]:
+        """Get or create ComicVine adapter with HTTP client."""
+        if self._comicvine_adapter is None:
+            api_key = os.getenv("COMIC_VINE_API_KEY", "")
+            if not api_key:
+                logger.debug("[MULTI-SEARCH] ComicVine API key not configured")
+                return None
+
+            config = AdapterConfig(
+                name="comicvine",
+                source_type=DataSourceType.API,
+                base_url="https://comicvine.gamespot.com/api",
+                rate_limit=RateLimitConfig(requests_per_minute=3),  # 200/hour = 3.3/min
+                retry=RetryConfig(max_retries=2, base_delay=1.0),
+            )
+            self._comicvine_client = ResilientHTTPClient(config.rate_limit, config.retry)
+            self._comicvine_adapter = ComicVineAdapter(config, self._comicvine_client, api_key)
+
+        return self._comicvine_adapter
 
     def _get_fandom_adapter(self, wiki_key: str) -> Optional[FandomAdapter]:
         """Get or create a Fandom adapter for a wiki."""
@@ -191,6 +218,64 @@ class MultiSourceSearchService:
             logger.warning(f"[MULTI-SEARCH] Metron error: {e}")
             return {"results": [], "error": str(e)}
 
+    async def search_comicvine(
+        self,
+        series_name: Optional[str] = None,
+        number: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Search ComicVine API as fallback source.
+
+        ComicVine has good coverage but lower rate limit (200/hour).
+        """
+        adapter = await self._get_comicvine_adapter()
+        if adapter is None:
+            return {"results": [], "error": "not_configured"}
+
+        try:
+            # Build search query
+            query = series_name or ""
+            if number:
+                query = f"{query} {number}".strip()
+
+            if not query:
+                return {"results": [], "error": "no_query"}
+
+            result = await asyncio.wait_for(
+                adapter.search_issues(query, limit=10),
+                timeout=8.0
+            )
+
+            # Convert FetchResult to dict format
+            if result.success:
+                records = []
+                for item in result.records:
+                    records.append({
+                        "id": f"cv_{item.get('id', '')}",
+                        "issue": item.get("name") or f"{item.get('volume', {}).get('name', '')} #{item.get('issue_number', '')}",
+                        "series": {"name": item.get("volume", {}).get("name", "")},
+                        "number": item.get("issue_number", ""),
+                        "image": item.get("image", {}).get("medium_url") if isinstance(item.get("image"), dict) else None,
+                        "cover_date": item.get("cover_date"),
+                        "_source": "comicvine",
+                    })
+                logger.info(f"[MULTI-SEARCH] ComicVine returned {len(records)} results")
+                return {"results": records}
+            else:
+                error = result.errors[0].get("error", "unknown") if result.errors else "unknown"
+                return {"results": [], "error": error}
+
+        except asyncio.TimeoutError:
+            logger.warning("[MULTI-SEARCH] ComicVine timeout")
+            return {"results": [], "error": "timeout"}
+        except Exception as e:
+            error_str = str(e).lower()
+            if "420" in error_str or "rate" in error_str:
+                logger.warning("[MULTI-SEARCH] ComicVine rate limited")
+                return {"results": [], "error": "rate_limited"}
+            logger.warning(f"[MULTI-SEARCH] ComicVine error: {e}")
+            return {"results": [], "error": str(e)}
+
     async def search_fandom(
         self,
         series_name: str,
@@ -283,7 +368,8 @@ class MultiSourceSearchService:
         Search order:
         1. Local cache (always, fast)
         2. Metron API (primary)
-        3. Fandom wikis (if Metron fails/rate limited)
+        3. ComicVine API (if Metron fails/rate limited)
+        4. Fandom wikis (if ComicVine also fails)
 
         Returns aggregated results with source attribution.
         """
@@ -322,9 +408,26 @@ class MultiSourceSearchService:
         if metron_result.get("error"):
             sources_failed.append(f"metron:{metron_result['error']}")
 
-            # 3. Metron failed - try Fandom wikis as fallback
+            # 3. Metron failed - try ComicVine as first fallback
             if series_name:
-                logger.info("[MULTI-SEARCH] Metron failed, trying Fandom wikis")
+                logger.info("[MULTI-SEARCH] Metron failed, trying ComicVine")
+                cv_result = await self.search_comicvine(
+                    series_name=series_name,
+                    number=number
+                )
+                sources_tried.append("comicvine")
+
+                if cv_result.get("error"):
+                    sources_failed.append(f"comicvine:{cv_result['error']}")
+                else:
+                    cv_records = cv_result.get("results", [])
+                    if cv_records:
+                        all_results.extend(cv_records)
+                        logger.info(f"[MULTI-SEARCH] Found {len(cv_records)} from ComicVine")
+
+            # 4. Still no results? Try Fandom wikis
+            if not all_results and series_name:
+                logger.info("[MULTI-SEARCH] Trying Fandom wikis")
                 fandom_results = await self.search_fandom(
                     series_name=series_name,
                     number=number,
@@ -350,9 +453,9 @@ class MultiSourceSearchService:
         seen_ids = set()
         unique_results = []
 
-        # Sort by source priority (metron first, then cache, then fandom)
-        source_priority = {"metron": 0, "local_cache": 1}
-        all_results.sort(key=lambda x: source_priority.get(x.get("_source", ""), 2))
+        # Sort by source priority (metron first, then comicvine, then cache, then fandom)
+        source_priority = {"metron": 0, "comicvine": 1, "local_cache": 2}
+        all_results.sort(key=lambda x: source_priority.get(x.get("_source", ""), 3))
 
         for result in all_results:
             # Create a dedup key

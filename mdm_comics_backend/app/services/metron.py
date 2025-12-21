@@ -107,11 +107,21 @@ class MetronService:
             page=page
         )
         # Convert FetchResult to legacy dict format
-        return {
+        response = {
             "results": result.records if result.success else [],
             "next": None if not result.has_more else f"page={page + 1}",
             "count": result.total_count or len(result.records),
         }
+
+        # CRITICAL: Propagate errors so multi_source_search can trigger fallback
+        if not result.success and result.errors:
+            error_info = result.errors[0] if result.errors else {}
+            error_type = error_info.get("error", "unknown")
+            response["error"] = error_type
+            if "retry_after" in error_info:
+                response["retry_after"] = error_info["retry_after"]
+
+        return response
 
     async def get_issue(self, issue_id: int) -> Dict[str, Any]:
         """Get detailed information about a specific issue."""
