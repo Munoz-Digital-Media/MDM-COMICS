@@ -361,6 +361,7 @@ class GCDAdapter(DataSourceAdapter):
         batch_size: int = 1000,
         offset: int = 0,
         limit: int = 0,
+        import_mode: str = "issues",
     ) -> Generator[List[Dict[str, Any]], None, int]:
         """
         Import data from GCD SQLite database dump.
@@ -373,70 +374,190 @@ class GCDAdapter(DataSourceAdapter):
             batch_size: Number of records per batch (default 1000)
             offset: Starting record offset for resumable imports
             limit: Maximum records to import (0 = unlimited)
+            import_mode: "issues" (default), "stories", "brands", "indicia_publishers", "creators", "characters"
 
         Yields:
-            Batches of normalized comic issue records
+            Batches of normalized records
 
         Returns:
             Total count of records processed
-
-        Example:
-            adapter = GCDAdapter()
-            for batch in adapter.import_from_sqlite('/data/gcd/2025-12-01.db'):
-                for record in batch:
-                    # Process record
-                    pass
         """
-        logger.info(f"[{self.name}] Opening SQLite database: {db_path}")
+        logger.info(f"[{self.name}] Opening SQLite database: {db_path} (mode: {import_mode})")
 
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row  # Enable column access by name
         cursor = conn.cursor()
 
+        query = ""
+        count_query = ""
+
+        if import_mode == "issues":
+            count_query = "SELECT COUNT(*) FROM gcd_issue WHERE deleted = 0"
+            query = """
+                SELECT
+                    i.id as gcd_id,
+                    i.number as issue_number,
+                    i.volume,
+                    i.title as story_title,
+                    i.isbn,
+                    i.valid_isbn,
+                    i.barcode,
+                    i.publication_date,
+                    i.key_date,
+                    i.on_sale_date,
+                    i.page_count,
+                    i.price as cover_price,
+                    i.variant_of_id as variant_of_gcd_id,
+                    i.variant_name,
+                    i.variant_cover_status,
+                    i.series_id as gcd_series_id,
+                    i.brand_id as gcd_brand_id,
+                    i.indicia_publisher_id as gcd_indicia_publisher_id,
+                    s.name as series_name,
+                    s.sort_name as series_sort_name,
+                    s.year_began as series_year_began,
+                    s.year_ended as series_year_ended,
+                    s.publisher_id as gcd_publisher_id,
+                    p.name as publisher_name
+                FROM gcd_issue i
+                LEFT JOIN gcd_series s ON i.series_id = s.id
+                LEFT JOIN gcd_publisher p ON s.publisher_id = p.id
+                WHERE i.deleted = 0
+                ORDER BY i.id
+            """
+        elif import_mode == "stories":
+            count_query = "SELECT COUNT(*) FROM gcd_story WHERE deleted = 0"
+            query = """
+                SELECT
+                    s.id as gcd_story_id,
+                    s.issue_id as gcd_issue_id,
+                    s.title,
+                    s.feature,
+                    s.sequence_number as story_number,
+                    s.page_count,
+                    s.script,
+                    s.pencils,
+                    s.inks,
+                    s.colors,
+                    s.letters,
+                    s.editing,
+                    s.genre,
+                    s.synopsis,
+                    s.reprint_notes,
+                    s.notes,
+                    st.name as story_type
+                FROM gcd_story s
+                LEFT JOIN gcd_story_type st ON s.type_id = st.id
+                WHERE s.deleted = 0
+                ORDER BY s.id
+            """
+        elif import_mode == "brands":
+            count_query = "SELECT COUNT(*) FROM gcd_brand WHERE deleted = 0"
+            query = """
+                SELECT
+                    id as gcd_id,
+                    name,
+                    publisher_id as gcd_publisher_id,
+                    year_began,
+                    year_ended,
+                    notes,
+                    url
+                FROM gcd_brand
+                WHERE deleted = 0
+                ORDER BY id
+            """
+        elif import_mode == "indicia_publishers":
+            count_query = "SELECT COUNT(*) FROM gcd_indicia_publisher WHERE deleted = 0"
+            query = """
+                SELECT
+                    id as gcd_id,
+                    name,
+                    parent_id as gcd_publisher_id,
+                    year_began,
+                    year_ended,
+                    is_surrogate,
+                    notes,
+                    url
+                FROM gcd_indicia_publisher
+                WHERE deleted = 0
+                ORDER BY id
+            """
+        elif import_mode == "creators":
+            count_query = "SELECT COUNT(*) FROM gcd_creator WHERE deleted = 0"
+            query = """
+                SELECT
+                    c.id as gcd_id,
+                    c.gcd_official_name as name,
+                    c.notes,
+                    c.birth_city,
+                    c.birth_province,
+                    c.death_city,
+                    c.death_province,
+                    -- Dates are linked tables in GCD
+                    bd.year || '-' || bd.month || '-' || bd.day as birth_date_str,
+                    dd.year || '-' || dd.month || '-' || dd.day as death_date_str,
+                    bc.name as birth_country,
+                    dc.name as death_country
+                FROM gcd_creator c
+                LEFT JOIN stddata_date bd ON c.birth_date_id = bd.id
+                LEFT JOIN stddata_date dd ON c.death_date_id = dd.id
+                LEFT JOIN stddata_country bc ON c.birth_country_id = bc.id
+                LEFT JOIN stddata_country dc ON c.death_country_id = dc.id
+                WHERE c.deleted = 0
+                ORDER BY c.id
+            """
+        elif import_mode == "characters":
+            count_query = "SELECT COUNT(*) FROM gcd_character WHERE deleted = 0"
+            query = """
+                SELECT
+                    id as gcd_id,
+                    name,
+                    description,
+                    notes,
+                    year_first_published,
+                    universe_id
+                FROM gcd_character
+                WHERE deleted = 0
+                ORDER BY id
+            """
+        elif import_mode == "story_credits":
+            count_query = "SELECT COUNT(*) FROM gcd_story_credit WHERE deleted = 0"
+            query = """
+                SELECT
+                    sc.story_id as gcd_story_id,
+                    sc.creator_id as gcd_creator_id,
+                    ct.name as role,
+                    sc.credited_as
+                FROM gcd_story_credit sc
+                LEFT JOIN gcd_credit_type ct ON sc.credit_type_id = ct.id
+                WHERE sc.deleted = 0
+                ORDER BY sc.id
+            """
+        elif import_mode == "story_characters":
+            count_query = "SELECT COUNT(*) FROM gcd_story_character WHERE deleted = 0"
+            query = """
+                SELECT
+                    story_id as gcd_story_id,
+                    character_id as gcd_character_id,
+                    is_origin,
+                    is_death,
+                    is_flashback
+                FROM gcd_story_character
+                WHERE deleted = 0
+                ORDER BY id
+            """
+        else:
+            raise ValueError(f"Unknown import mode: {import_mode}")
+
         # Get total count for progress reporting
-        cursor.execute("SELECT COUNT(*) FROM gcd_issue WHERE deleted = 0")
+        cursor.execute(count_query)
         total_available = cursor.fetchone()[0]
-        logger.info(f"[{self.name}] Total non-deleted issues in GCD: {total_available:,}")
+        logger.info(f"[{self.name}] Total non-deleted {import_mode} in GCD: {total_available:,}")
 
-        # Build query with JOINs for series and publisher data
-        # Explicitly exclude image-related columns
-        query = """
-            SELECT
-                i.id as gcd_id,
-                i.number as issue_number,
-                i.volume,
-                i.title as story_title,
-                i.isbn,
-                i.valid_isbn,
-                i.barcode,
-                i.publication_date,
-                i.key_date,
-                i.on_sale_date,
-                i.page_count,
-                i.price as cover_price,
-                i.variant_of_id,
-                i.variant_name,
-                i.series_id as gcd_series_id,
-                s.name as series_name,
-                s.sort_name as series_sort_name,
-                s.year_began as series_year_began,
-                s.year_ended as series_year_ended,
-                s.publisher_id as gcd_publisher_id,
-                p.name as publisher_name
-            FROM gcd_issue i
-            LEFT JOIN gcd_series s ON i.series_id = s.id
-            LEFT JOIN gcd_publisher p ON s.publisher_id = p.id
-            WHERE i.deleted = 0
-            ORDER BY i.id
-        """
-
-        # Add LIMIT/OFFSET if specified
-        # Note: SQLite requires LIMIT when using OFFSET
         if limit > 0:
             query += f" LIMIT {limit}"
         elif offset > 0:
-            # No limit but has offset - use very large number to get all remaining
-            query += f" LIMIT -1"  # SQLite: -1 means unlimited
+            query += f" LIMIT -1"
         if offset > 0:
             query += f" OFFSET {offset}"
 
@@ -452,7 +573,23 @@ class GCDAdapter(DataSourceAdapter):
                 break
 
             for row in rows:
-                record = self._normalize_sqlite_row(dict(row))
+                record = dict(row)
+                if import_mode == "issues":
+                    record = self._normalize_sqlite_row(record)
+                elif import_mode == "creators":
+                    # Parse dates
+                    from dateutil import parser
+                    for date_key in ['birth_date_str', 'death_date_str']:
+                        val = record.pop(date_key, None)
+                        if val and val != '--':
+                            try:
+                                # Handle partial dates like '1950--'
+                                clean_val = val.strip('-')
+                                if clean_val:
+                                    record[date_key.replace('_str', '')] = parser.parse(clean_val).date()
+                            except:
+                                pass
+                
                 batch.append(record)
                 records_processed += 1
 
@@ -461,7 +598,6 @@ class GCDAdapter(DataSourceAdapter):
                 yield batch
                 batch = []
 
-        # Yield any remaining records
         if batch:
             yield batch
 
@@ -480,7 +616,6 @@ class GCDAdapter(DataSourceAdapter):
         # Parse cover price - GCD stores as text like "$2.99"
         cover_price = row.get("cover_price")
         if cover_price and isinstance(cover_price, str):
-            # Extract numeric value from price string
             price_match = re.search(r'[\d.]+', cover_price)
             if price_match:
                 try:
@@ -489,31 +624,49 @@ class GCDAdapter(DataSourceAdapter):
                     cover_price = None
 
         # Parse key_date to release_date (YYYY-MM-DD format)
-        release_date = row.get("key_date")
-        if release_date and len(release_date) < 4:
-            release_date = None  # Invalid date
+        key_date = row.get("key_date")
+        release_date = None
+        if key_date and len(key_date) >= 4:
+            try:
+                # Try to extract valid date part
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', key_date)
+                if date_match:
+                    release_date = date_match.group(1)
+                else:
+                    # Year only?
+                    year_match = re.search(r'(\d{4})', key_date)
+                    if year_match:
+                        release_date = f"{year_match.group(1)}-01-01"
+            except:
+                pass
 
         return {
             # GCD identifiers
             "gcd_id": row.get("gcd_id"),
             "gcd_series_id": row.get("gcd_series_id"),
             "gcd_publisher_id": row.get("gcd_publisher_id"),
+            "gcd_brand_id": row.get("gcd_brand_id"),
+            "gcd_indicia_publisher_id": row.get("gcd_indicia_publisher_id"),
 
             # Cross-reference fields for matching
             "isbn": row.get("isbn") or row.get("valid_isbn"),
             "upc": row.get("barcode"),  # Map barcode to upc
 
             # Issue metadata
-            "issue_number": row.get("issue_number"),
+            "number": row.get("issue_number"),
             "volume": row.get("volume"),
             "story_title": row.get("story_title"),
             "page_count": row.get("page_count"),
-            "cover_price": cover_price,
-            "release_date": release_date,
+            "price": cover_price,
+            "gcd_price": row.get("cover_price"),
+            "publication_date": row.get("publication_date"),
+            "key_date": row.get("key_date"),
+            "store_date": release_date, # Mapped from key_date
 
             # Variant tracking
-            "variant_of_gcd_id": row.get("variant_of_id"),
+            "variant_of_gcd_id": row.get("variant_of_gcd_id"),
             "variant_name": row.get("variant_name"),
+            "variant_cover_status": row.get("variant_cover_status"),
 
             # Series info (denormalized for convenience)
             "series_name": row.get("series_name"),

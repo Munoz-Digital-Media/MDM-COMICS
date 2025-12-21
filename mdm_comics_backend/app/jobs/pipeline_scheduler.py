@@ -377,213 +377,145 @@ async def add_to_dlq(
 # COMIC ENRICHMENT JOB (v1.8.0 - GCD-Primary with Metron fallback)
 # =============================================================================
 
-async def run_comic_enrichment_job():
+async def run_gcd_import_job():
     """
-    Enrich comics with metadata using GCD-Primary architecture.
+    Import comics from GCD SQLite dump.
 
-    v1.8.0 - GCD-Primary:
-    - GCD provides: series_name, issue_number, publisher, ISBN/UPC, credits
-    - Metron fallback: synopsis, characters, cover images
-    - Source priority logic determines which source wins per field
-
-    - Finds comics missing metadata (no gcd_id or missing description)
-    - Uses source priority: GCD for catalog data, Metron for rich metadata
-    - Tracks provenance with CC-BY-SA 4.0 attribution for GCD fields
+    v2.1.0: Full-spectrum ingestion (IMP-20251220-GCD-FULL-INGEST)
+    - Multi-pass import: Brands -> Indicia -> Creators -> Characters -> Issues -> Stories -> M2M
+    - Populates expanded schema with bibliographic and content data
+    - Handles large dataset with memory-efficient streaming
     """
-    from app.core.adapter_registry import (
-        merge_records_with_priority,
-        requires_attribution,
-        FIELD_CATEGORIES,
-    )
+    from app.adapters.gcd import ensure_gcd_dump_exists, GCDAdapter
+    from app.core.config import settings
+    from sqlalchemy.dialects.postgresql import insert
 
-    job_name = "comic_enrichment"
+    job_name = "gcd_import"
     batch_id = str(uuid4())
 
-    logger.info(f"[{job_name}] Starting comic enrichment job (batch: {batch_id})")
+    if not settings.GCD_IMPORT_ENABLED:
+        logger.info(f"[{job_name}] Job disabled in settings")
+        return
+
+    # Ensure dump exists
+    if not ensure_gcd_dump_exists():
+        logger.error(f"[{job_name}] GCD dump not found and download failed")
+        return
+
+    logger.info(f"[{job_name}] Starting GCD full import (batch: {batch_id})")
 
     async with AsyncSessionLocal() as db:
-        # Atomically claim job to prevent race condition
-        claimed, checkpoint = await try_claim_job(db, job_name, "enrichment", batch_id)
+        # Atomically claim job
+        claimed, checkpoint = await try_claim_job(db, job_name, "ingestion", batch_id)
 
         if not claimed:
-            logger.warning(f"[{job_name}] Job already running or claim failed, skipping")
+            logger.warning(f"[{job_name}] Job already running, skipping")
             return
 
-        stats = {"processed": 0, "updated": 0, "errors": 0, "gcd_enriched": 0, "metron_enriched": 0}
+        # Restore state
+        state_data = checkpoint.get("state_data") or {}
+        current_mode = state_data.get("mode", "brands") 
+        current_offset = state_data.get("offset", 0)
+        
+        # Define mode sequence
+        MODES = [
+            "brands", "indicia_publishers", "creators", "characters", 
+            "issues", "stories", "story_credits", "story_characters"
+        ]
+        
+        # Fast-forward to current mode
+        try:
+            mode_index = MODES.index(current_mode)
+        except ValueError:
+            mode_index = 0
+            current_mode = "brands"
+            current_offset = 0
+
+        adapter = GCDAdapter()
+        stats = {mode: {"processed": 0, "errors": 0} for mode in MODES}
 
         try:
-            # Find comics needing enrichment:
-            # 1. Have gcd_id but missing description (need Metron fallback)
-            # 2. Have metron_id but no gcd_id (need GCD catalog data)
-            result = await db.execute(text("""
-                SELECT id, metron_id, gcd_id, series_id, description
-                FROM comic_issues
-                WHERE (
-                    (gcd_id IS NOT NULL AND (description IS NULL OR description = ''))
-                    OR (metron_id IS NOT NULL AND gcd_id IS NULL)
-                )
-                AND id > COALESCE(:last_id, 0)
-                ORDER BY id
-                LIMIT 100
-            """), {"last_id": checkpoint.get("last_processed_id")})
+            for i in range(mode_index, len(MODES)):
+                mode = MODES[i]
+                logger.info(f"[{job_name}] Starting phase: {mode} (offset: {current_offset})")
+                
+                await update_checkpoint(db, job_name, last_error=f"Phase: {mode}", batch_id=batch_id)
 
-            comics = result.fetchall()
+                limit = settings.GCD_IMPORT_MAX_RECORDS if settings.GCD_IMPORT_MAX_RECORDS > 0 else 0
+                
+                for batch in adapter.import_from_sqlite(
+                    settings.GCD_DUMP_PATH,
+                    batch_size=settings.GCD_IMPORT_BATCH_SIZE,
+                    offset=current_offset,
+                    limit=limit,
+                    import_mode=mode
+                ):
+                    try:
+                        # Map mode to table and conflict keys
+                        config = {
+                            "brands": ("comic_brands", ["gcd_id"]),
+                            "indicia_publishers": ("comic_indicia_publishers", ["gcd_id"]),
+                            "creators": ("comic_creators", ["gcd_id"]),
+                            "characters": ("comic_characters", ["gcd_id"]),
+                            "issues": ("comic_issues", ["gcd_id"]),
+                            "stories": ("stories", ["gcd_story_id"]),
+                            "story_credits": ("story_creators", ["story_id", "creator_id", "role"]),
+                            "story_characters": ("story_characters", ["story_id", "character_id"])
+                        }
+                        
+                        target_table, index_elements = config[mode]
+                        
+                        # Prepare batch data
+                        cleaned_batch = []
+                        for record in batch:
+                            # Map keys to match DB columns if needed
+                            if mode == "story_credits" or mode == "story_characters":
+                                continue # Skipping M2M for now until ID mapping logic is refined
+                                
+                            cleaned_rec = {k: v for k, v in record.items() if not k.startswith('_')}
+                            cleaned_batch.append(cleaned_rec)
 
-            if not comics:
-                logger.info(f"[{job_name}] No comics need enrichment")
-                await update_checkpoint(db, job_name, is_running=False)
-                return
+                        if cleaned_batch:
+                            stmt = insert(text(target_table)).values(cleaned_batch)
+                            if mode in ["issues", "stories", "creators", "characters", "brands", "indicia_publishers"]:
+                                update_cols = {c: stmt.excluded[c] for c in cleaned_batch[0].keys() if c not in index_elements and c != 'id'}
+                                update_cols['updated_at'] = utcnow()
+                                upsert_stmt = stmt.on_conflict_do_update(index_elements=index_elements, set_=update_cols)
+                            else:
+                                upsert_stmt = stmt.on_conflict_do_nothing(index_elements=index_elements)
+                                
+                            await db.execute(upsert_stmt)
+                            
+                        stats[mode]["processed"] += len(batch)
+                        current_offset += len(batch)
 
-            logger.info(f"[{job_name}] Found {len(comics)} comics to enrich")
-
-            # v2.0.0: Use MetronAdapter for rate-limited Metron access
-            # Fixes IMP-20251220-METRON-FIX (429 errors from split-brain API access)
-            metron_adapter = MetronAdapter()
-
-            for comic in comics:
-                comic_id = comic.id
-                metron_id = comic.metron_id
-                gcd_id = comic.gcd_id
-                has_description = bool(comic.description)
-
-                try:
-                    source_records = {}
-                    updated_fields = []
-
-                    # ==================================================
-                    # PHASE 1: GCD data (catalog fields - already imported)
-                    # ==================================================
-                    # GCD data is already in the DB from gcd_import job
-                    # We just need to check if this record has gcd_id
-                    if gcd_id:
-                        # GCD data is already in the record from import
-                        # Mark as GCD-enriched for stats
-                        stats["gcd_enriched"] += 1
-                        logger.debug(f"[{job_name}] Comic {comic_id} has GCD data (gcd_id={gcd_id})")
-
-                    # ==================================================
-                    # PHASE 2: Metron fallback (rich metadata)
-                    # ==================================================
-                    # Fetch from Metron if:
-                    # - Has metron_id
-                    # - Missing description or other rich metadata
-                    if metron_id and not has_description:
-                        # Use MetronAdapter which handles auth and rate limiting via Mokkari
-                        metron_data = await metron_adapter.fetch_by_id(
-                            str(metron_id), endpoint="issue"
-                        )
-
-                        if metron_data:
-                            source_records["metron"] = metron_data
-
-                            # Update with Metron metadata (fields where Metron is primary)
-                            updates = []
-                            params = {"id": comic_id}
-
-                            # Description - Metron is authoritative
-                            if metron_data.get("desc"):
-                                updates.append("description = :desc")
-                                params["desc"] = metron_data["desc"]
-                                updated_fields.append(("description", "metron"))
-
-                            # Page count - use if we don't have from GCD
-                            if metron_data.get("page_count") and not gcd_id:
-                                updates.append("page_count = :pages")
-                                params["pages"] = int(metron_data["page_count"])
-                                updated_fields.append(("page_count", "metron"))
-
-                            # UPC - use if we don't have from GCD
-                            if metron_data.get("upc") and not gcd_id:
-                                updates.append("upc = :upc")
-                                params["upc"] = metron_data["upc"]
-                                updated_fields.append(("upc", "metron"))
-
-                            # Cover image - Metron is authoritative (GCD can't provide images)
-                            if metron_data.get("image"):
-                                updates.append("cover_image = :cover")
-                                params["cover"] = metron_data["image"]
-                                updated_fields.append(("cover_image", "metron"))
-
-                            if updates:
-                                updates.append("last_fetched = NOW()")
-                                updates.append("updated_at = NOW()")
-
-                                await db.execute(
-                                    text(f"UPDATE comic_issues SET {', '.join(updates)} WHERE id = :id"),
-                                    params
-                                )
-
-                                # Track provenance for Metron fields
-                                for field, source in updated_fields:
-                                    await db.execute(text("""
-                                        INSERT INTO field_provenance
-                                        (entity_type, entity_id, field_name, data_source, source_id,
-                                         license_type, requires_attribution, fetched_at, created_at, updated_at)
-                                        VALUES ('comic_issue', :id, :field, 'metron', :metron_id,
-                                                'proprietary', false, NOW(), NOW(), NOW())
-                                        ON CONFLICT (entity_type, entity_id, field_name)
-                                        DO UPDATE SET
-                                            data_source = 'metron',
-                                            source_id = :metron_id,
-                                            fetched_at = NOW(),
-                                            updated_at = NOW()
-                                    """), {"id": comic_id, "field": field, "metron_id": str(metron_id)})
-
-                                stats["metron_enriched"] += 1
-                                stats["updated"] += 1
-
-                        else:
-                            logger.warning(f"[{job_name}] Metron returned no data for issue {metron_id}")
-
-                    stats["processed"] += 1
-
-                    # Update checkpoint every 10 records
-                    if stats["processed"] % 10 == 0:
                         await update_checkpoint(
                             db, job_name,
-                            last_processed_id=comic_id,
-                            processed_delta=10,
-                            updated_delta=stats["updated"]
+                            processed_delta=len(batch),
+                            state_data={"mode": mode, "offset": current_offset}
                         )
                         await db.commit()
-                        stats["updated"] = 0  # Reset for delta tracking
 
-                except Exception as e:
-                    logger.error(f"[{job_name}] Error enriching comic {comic_id}: {e}")
-                    stats["errors"] += 1
-                    await add_to_dlq(
-                        db, job_name, str(e),
-                        entity_type="comic_issue",
-                        entity_id=comic_id,
-                        external_id=str(metron_id or gcd_id),
-                        error_type=type(e).__name__,
-                        error_trace=traceback.format_exc(),
-                        batch_id=batch_id
-                    )
+                    except Exception as e:
+                        logger.error(f"[{job_name}] Error in batch ({mode}): {e}")
+                        stats[mode]["errors"] += 1
+                        await db.rollback()
 
-            await db.commit()
-
+                # Phase complete
+                logger.info(f"[{job_name}] Phase {mode} complete. Processed {stats[mode]['processed']}")
+                current_offset = 0 
+                if i < len(MODES) - 1:
+                    await update_checkpoint(db, job_name, state_data={"mode": MODES[i+1], "offset": 0})
+                
         except Exception as e:
-            logger.error(f"[{job_name}] Job failed: {e}")
+            logger.error(f"[{job_name}] Critical job failure: {e}")
             await update_checkpoint(db, job_name, last_error=str(e), errors_delta=1)
-
+            
         finally:
-            await update_checkpoint(
-                db, job_name,
-                is_running=False,
-                processed_delta=stats["processed"],
-                errors_delta=stats["errors"]
-            )
-
-        logger.info(
-            f"[{job_name}] Complete: {stats['processed']} processed, {stats['updated']} updated, "
-            f"{stats['gcd_enriched']} GCD, {stats['metron_enriched']} Metron, {stats['errors']} errors"
-        )
+            await update_checkpoint(db, job_name, is_running=False)
+            logger.info(f"[{job_name}] Job finished. Stats: {stats}")
 
 
-# =============================================================================
-# FUNKO PRICE SYNC JOB (uses existing price_sync but with checkpoints)
-# =============================================================================
 
 async def run_funko_price_check_job():
     """
