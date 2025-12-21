@@ -378,6 +378,7 @@ class MultiSourceSearchService:
                     "issue": f"{issue.series.name} #{issue.number}" if issue.series else f"#{issue.number}",
                     "series": {"name": issue.series.name if issue.series else ""},
                     "number": issue.number,
+                    "volume": issue.volume,  # Added volume field
                     "image": issue.image,
                     "cover_date": str(issue.cover_date) if issue.cover_date else None,
                     "_source": "local_cache",
@@ -738,6 +739,13 @@ class MultiSourceSearchService:
 
         # Add Metron results if any
         if metron_records:
+            # Normalize Metron records to have top-level fields needed by frontend
+            for rec in metron_records:
+                if "series" in rec and isinstance(rec["series"], dict):
+                    # Flatten volume if present in series but not top-level
+                    if "volume" in rec["series"] and "volume" not in rec:
+                        rec["volume"] = rec["series"]["volume"]
+
             all_results.extend(metron_records)
             logger.info(f"[MULTI-SEARCH] Found {len(metron_records)} from Metron")
 

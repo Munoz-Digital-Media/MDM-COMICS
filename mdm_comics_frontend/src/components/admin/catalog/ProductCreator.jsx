@@ -701,7 +701,12 @@ export default function ProductCreator() {
                   className="bg-zinc-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-orange-500 transition-all group"
                 >
                   <div className="aspect-[2/3] bg-zinc-700 relative">
-                    {comic.image && <img src={comic.image} alt="" className="w-full h-full object-contain" />}
+                    <img 
+                      src={comic.image || '/assets/no-cover.png'} 
+                      alt="" 
+                      className="w-full h-full object-contain"
+                      onError={(e) => { e.target.onerror = null; e.target.src = '/assets/no-cover.png'; }}
+                    />
                     <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <span className="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm font-medium flex items-center gap-1">
                         <Plus className="w-4 h-4" />
@@ -710,8 +715,12 @@ export default function ProductCreator() {
                     </div>
                   </div>
                   <div className="p-2">
-                    <p className="text-xs text-orange-500 truncate">{comic.series?.name}</p>
-                    <p className="text-sm font-medium text-white truncate">#{comic.number}</p>
+                    <p className="text-xs text-orange-500 truncate">{comic.publisher?.name || comic.series?.publisher?.name}</p>
+                    <p className="text-sm font-medium text-white truncate" title={comic.series?.name}>{comic.series?.name}</p>
+                    <div className="flex justify-between items-center text-xs text-zinc-400">
+                      <span>#{comic.number}</span>
+                      {(comic.volume || comic.series?.volume) && <span>Vol {comic.volume || comic.series?.volume}</span>}
+                    </div>
                     <p className="text-xs text-zinc-500">{comic.cover_date}</p>
                   </div>
                 </div>
