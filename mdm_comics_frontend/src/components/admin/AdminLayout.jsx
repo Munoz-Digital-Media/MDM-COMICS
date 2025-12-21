@@ -16,6 +16,7 @@ import BrandAssets from './branding/BrandAssets';
 import IngestionManager from './ingestion/IngestionManager';
 import FulfillmentManager from './fulfillment/FulfillmentManager';
 import ConventionsManager from './conventions/ConventionsManager';
+import ConventionShowcase from '../ConventionShowcase';
 
 // Navigation items
 const NAV_ITEMS = [
@@ -72,7 +73,17 @@ export default function AdminLayout({ onClose }) {
       case 'reports':
         return <ReportsManager />;
       case 'conventions':
-        return <ConventionsManager />;
+        return (
+          <div className="space-y-6">
+            <ConventionsManager />
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+              <div className="border-b border-zinc-800 px-4 py-3 text-sm text-zinc-400">
+                Preview
+              </div>
+              <ConventionShowcase />
+            </div>
+          </div>
+        );
       default:
         return <AdminDashboard onNavigate={setActiveSection} />;
     }

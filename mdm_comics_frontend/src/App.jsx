@@ -20,6 +20,7 @@ const ScannerApp = lazy(() => import("./components/admin/ingestion/ScannerApp"))
   import ComingSoon from "./components/ComingSoon";
   import AuthModal from "./components/AuthModal";
 import AboutContact from "./components/AboutContact";
+import ConventionShowcase from "./components/ConventionShowcase";
 import MyOrders from "./components/MyOrders";
 import RefundPolicy from "./components/RefundPolicy";
 import AccountDashboard from "./components/AccountDashboard";
@@ -1011,6 +1012,9 @@ import './styles/animations.css';
             onLogout={handleLogout}
           />
         )}
+
+        {/* Conventions Showcase */}
+        <ConventionShowcase />
 
         {/* Footer */}
         <footer className="bg-zinc-900 border-t border-zinc-800">

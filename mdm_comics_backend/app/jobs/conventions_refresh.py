@@ -77,7 +77,7 @@ async def run_convention_refresh_job() -> None:
             print(f"[conventions] skipping invalid event entry: {event}")
             continue
         html_map = fetch_pages(slug, pages)
-        payload = parse_event(slug=slug, parser=parser, pages=html_map, name=name)
+        payload = parse_event(slug=slug, parser=parser, pages=html_map, name=name, event_config=event)
         write_event_json(slug, payload)
         total += 1
     print(f"[conventions] refresh complete for {total} event(s)")

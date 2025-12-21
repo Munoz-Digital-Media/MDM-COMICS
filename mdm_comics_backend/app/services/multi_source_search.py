@@ -24,6 +24,7 @@ Features:
 import asyncio
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -588,32 +589,68 @@ class MultiSourceSearchService:
                 if not adapter:
                     return []
 
-                query = series_name
-                if number:
-                    query += f" {number}"
-
-                search_results = await asyncio.wait_for(
-                    adapter.search(query, limit=10),
-                    timeout=8.0
-                )
-
                 wiki_results = []
-                for item in search_results[:5]:  # Limit per wiki
-                    title = item.get("title", "")
-                    # Format issue field properly: "Series #Number" or just "Series"
-                    issue_display = f"{title} #{number}" if number else title
-                    wiki_results.append({
-                        "id": f"fandom_{wiki_key}_{item.get('pageid', '')}",
-                        "issue": issue_display,
-                        "series": {"name": title},  # Use wiki title as series name
-                        "number": number or "",
-                        "image": None,  # Would need additional fetch
-                        "cover_date": None,
-                        "_source": wiki_key,
-                        "_wiki_title": title,
-                    })
 
-                return wiki_results
+                # Strategy 1: If we have an issue number, try direct fetch first
+                if number:
+                    # Try fetching specific issue page (e.g., Spawn_Vol_1_1)
+                    for vol in [1, 2, 3]:  # Try first 3 volumes
+                        issue_data = await asyncio.wait_for(
+                            adapter.fetch_issue_data(series_name, vol, number),
+                            timeout=5.0
+                        )
+                        if issue_data and issue_data.get("page_title"):
+                            title = issue_data["page_title"].replace("_", " ")
+                            wiki_results.append({
+                                "id": f"fandom_{wiki_key}_{title}",
+                                "issue": f"{series_name} #{number}",
+                                "series": {"name": series_name.title()},
+                                "number": number,
+                                "image": issue_data.get("image"),
+                                "cover_date": issue_data.get("cover_date"),
+                                "_source": wiki_key,
+                                "_wiki_title": title,
+                                "_description": issue_data.get("description"),
+                            })
+                            break  # Found it, stop trying volumes
+
+                # Strategy 2: Search for issue pages with "Vol" in query
+                if len(wiki_results) < 5:
+                    # Search for issue pages specifically
+                    query = f"{series_name} Vol 1"
+                    if number:
+                        query = f"{series_name} Vol 1 {number}"
+
+                    search_results = await asyncio.wait_for(
+                        adapter.search(query, limit=10),
+                        timeout=8.0
+                    )
+
+                    for item in search_results[:5]:
+                        title = item.get("title", "")
+                        # Skip if we already have this result
+                        if any(r.get("_wiki_title") == title for r in wiki_results):
+                            continue
+                        # Prefer titles that look like issue pages (contain Vol or #)
+                        is_issue_page = "Vol" in title or "_" in title
+                        # Extract issue number from title if present
+                        issue_match = re.search(r'_(\d+)$', title)
+                        extracted_number = issue_match.group(1) if issue_match else (number or "")
+
+                        issue_display = title.replace("_", " ")
+                        wiki_results.append({
+                            "id": f"fandom_{wiki_key}_{item.get('pageid', '')}",
+                            "issue": issue_display,
+                            "series": {"name": series_name.title()},
+                            "number": extracted_number,
+                            "image": None,  # Would need fetch_issue_data for image
+                            "cover_date": None,
+                            "_source": wiki_key,
+                            "_wiki_title": title,
+                            "_is_issue_page": is_issue_page,
+                        })
+
+                return wiki_results[:5]
             except asyncio.TimeoutError:
                 logger.debug(f"[MULTI-SEARCH] {wiki_key} timeout")
                 return []
