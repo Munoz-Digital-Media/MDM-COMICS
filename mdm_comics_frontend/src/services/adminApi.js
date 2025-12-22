@@ -569,6 +569,13 @@ export const adminAPI = {
     });
   },
 
+  // Reset stale PriceCharting checkpoints (fixes 409 conflicts)
+  resetPriceChartingCheckpoints: async () => {
+    return fetchAPI('/admin/pipeline/pricecharting/reset', {
+      method: 'POST',
+    });
+  },
+
   // Trigger GCD import
   triggerGCDImport: async (options = {}) => {
     return fetchAPI('/admin/pipeline/gcd/import', {

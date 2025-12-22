@@ -154,11 +154,15 @@ export default function PipelineStatus({ compact = false }) {
 
   const handleTriggerPriceCharting = async () => {
     setActionLoading(true);
+    setError(null);
     try {
+      // Reset stale checkpoints first to avoid 409 conflicts
+      await adminAPI.resetPriceChartingCheckpoints();
       await adminAPI.triggerPriceChartingMatch({ batch_size: 500, max_records: 0 });
       await fetchStatus();
     } catch (err) {
-      setError(err.message);
+      console.error('PriceCharting trigger failed:', err);
+      setError(err.message || 'Failed to start PriceCharting matching');
     } finally {
       setActionLoading(false);
     }
