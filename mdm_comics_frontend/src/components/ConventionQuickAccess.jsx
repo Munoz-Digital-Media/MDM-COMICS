@@ -117,11 +117,8 @@ export default function ConventionQuickAccess({ onViewAll }) {
     ? visibleEvents.find((e) => e.id === expandedEventId)
     : null;
 
-  // Calculate height needed for the popup card (approx 140px)
-  const popupSpacing = expandedEvent ? 'mt-36' : '';
-
   return (
-    <section className={`relative max-w-7xl mx-auto px-4 pt-6 pb-4 transition-all duration-200 ${popupSpacing}`}>
+    <section className="relative max-w-7xl mx-auto px-4 pt-6 pb-4">
       <style>{keyframesStyle}</style>
 
       {/* Section Label */}
@@ -134,66 +131,11 @@ export default function ConventionQuickAccess({ onViewAll }) {
         </p>
       </div>
 
-      {/* Button Row - inline-flex so it doesn't reflow */}
-      <div className="overflow-x-auto pb-2">
-        <div
-          className="inline-flex items-center gap-2"
-          role="tablist"
-          aria-label="Convention events"
-        >
-          {visibleEvents.map((event) => {
-            const isSelected = expandedEventId === event.id;
-
-            return (
-              <button
-                key={event.id}
-                type="button"
-                onClick={() => handleButtonClick(event.id)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border whitespace-nowrap transition-colors
-                  ${isSelected
-                    ? 'bg-orange-500/20 text-orange-400 border-orange-500/50'
-                    : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600'
-                  }
-                `}
-                style={isSelected ? { animation: 'subtleGlow 2s ease-in-out infinite' } : undefined}
-                role="tab"
-                aria-selected={isSelected}
-              >
-                <Calendar className="w-4 h-4 flex-shrink-0" />
-                <div className="flex flex-col items-start leading-tight">
-                  <span className={`text-xs ${isSelected ? 'text-orange-300/70' : 'text-zinc-500'}`}>
-                    {event.conventionName}
-                  </span>
-                  <span className="text-sm font-medium">{event.city}</span>
-                </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full
-                  ${isSelected ? 'bg-orange-500/20 text-orange-300' : 'bg-zinc-900/80 text-zinc-400'}
-                `}>
-                  {formatDateShort(event.dateText)}
-                </span>
-              </button>
-            );
-          })}
-
-          {/* More events indicator */}
-          {hiddenEventCount > 0 && onViewAll && (
-            <button
-              type="button"
-              onClick={onViewAll}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap bg-zinc-800/50 text-orange-400 hover:bg-zinc-700 border border-zinc-700 hover:border-orange-500/30 transition-colors"
-            >
-              <span className="text-sm font-medium">+{hiddenEventCount} more</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Detail Card - Floating overlay that pops UP */}
+      {/* Detail Card - sits between label and buttons */}
       {expandedEvent && (
         <div
           key={expandedEvent.id}
-          className="absolute bottom-full left-0 right-0 mb-2 mx-4 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-2xl shadow-black/50 z-50"
+          className="mb-3 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-2xl shadow-black/50"
           style={{ animation: 'conventionFadeSlide 0.15s ease-out both' }}
         >
           {/* Row 1: Convention Name | Date | Time | Actions */}
@@ -269,6 +211,61 @@ export default function ConventionQuickAccess({ onViewAll }) {
           </div>
         </div>
       )}
+
+      {/* Button Row - inline-flex so it doesn't reflow */}
+      <div className="overflow-x-auto pb-2">
+        <div
+          className="inline-flex items-center gap-2"
+          role="tablist"
+          aria-label="Convention events"
+        >
+          {visibleEvents.map((event) => {
+            const isSelected = expandedEventId === event.id;
+
+            return (
+              <button
+                key={event.id}
+                type="button"
+                onClick={() => handleButtonClick(event.id)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border whitespace-nowrap transition-colors
+                  ${isSelected
+                    ? 'bg-orange-500/20 text-orange-400 border-orange-500/50'
+                    : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600'
+                  }
+                `}
+                style={isSelected ? { animation: 'subtleGlow 2s ease-in-out infinite' } : undefined}
+                role="tab"
+                aria-selected={isSelected}
+              >
+                <Calendar className="w-4 h-4 flex-shrink-0" />
+                <div className="flex flex-col items-start leading-tight">
+                  <span className={`text-xs ${isSelected ? 'text-orange-300/70' : 'text-zinc-500'}`}>
+                    {event.conventionName}
+                  </span>
+                  <span className="text-sm font-medium">{event.city}</span>
+                </div>
+                <span className={`text-xs px-2 py-0.5 rounded-full
+                  ${isSelected ? 'bg-orange-500/20 text-orange-300' : 'bg-zinc-900/80 text-zinc-400'}
+                `}>
+                  {formatDateShort(event.dateText)}
+                </span>
+              </button>
+            );
+          })}
+
+          {/* More events indicator */}
+          {hiddenEventCount > 0 && onViewAll && (
+            <button
+              type="button"
+              onClick={onViewAll}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap bg-zinc-800/50 text-orange-400 hover:bg-zinc-700 border border-zinc-700 hover:border-orange-500/30 transition-colors"
+            >
+              <span className="text-sm font-medium">+{hiddenEventCount} more</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
