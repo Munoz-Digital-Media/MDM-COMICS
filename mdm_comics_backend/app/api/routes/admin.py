@@ -2535,6 +2535,80 @@ async def migrate_matched_funkos_to_review(
     }
 
 
+@router.post("/pipeline/funkos/clear-review-queue")
+async def clear_funko_review_queue(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Clear all Funko entries from the match review queue.
+
+    Use before restarting the matching job from offset 0.
+    """
+    result = await db.execute(text("""
+        DELETE FROM match_review_queue
+        WHERE entity_type = 'funko'
+          AND candidate_source = 'pricecharting'
+        RETURNING id
+    """))
+    deleted_ids = result.fetchall()
+    deleted_count = len(deleted_ids)
+
+    await db.commit()
+
+    logger.info(f"[ADMIN] Cleared {deleted_count} Funko entries from review queue")
+
+    return {
+        "status": "success",
+        "deleted": deleted_count,
+        "message": f"Cleared {deleted_count} Funko match review entries"
+    }
+
+
+@router.post("/pipeline/funkos/reset-matching")
+async def reset_funko_matching(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reset Funko matching: clear review queue AND reset checkpoint to offset 0.
+
+    Combined operation for restarting the matching job from scratch.
+    """
+    # 1. Clear the review queue
+    queue_result = await db.execute(text("""
+        DELETE FROM match_review_queue
+        WHERE entity_type = 'funko'
+          AND candidate_source = 'pricecharting'
+        RETURNING id
+    """))
+    queue_deleted = len(queue_result.fetchall())
+
+    # 2. Reset the checkpoint
+    await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET is_running = false,
+            state_data = jsonb_set(COALESCE(state_data, '{}'), ARRAY['last_id'], '0'::jsonb),
+            total_processed = 0,
+            total_updated = 0,
+            total_errors = 0,
+            last_error = NULL,
+            updated_at = NOW()
+        WHERE job_name = 'funko_pricecharting_match'
+    """))
+
+    await db.commit()
+
+    logger.info(f"[ADMIN] Reset Funko matching: cleared {queue_deleted} queue entries, reset checkpoint to offset 0")
+
+    return {
+        "status": "success",
+        "queue_cleared": queue_deleted,
+        "checkpoint_reset": True,
+        "message": f"Cleared {queue_deleted} queue entries and reset checkpoint to offset 0"
+    }
+
+
 @router.get("/pipeline/pricecharting/status")
 async def get_pricecharting_matching_status(
     current_user: User = Depends(get_current_admin),
