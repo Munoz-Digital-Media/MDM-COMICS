@@ -16,6 +16,23 @@ import { parseDateText, isFutureEvent, sortEventsByDate, formatDateShort } from 
 
 const MAX_TOTAL_ITEMS = 5; // Total items including "+more" button (4 events + 1 more)
 
+const detailCardStyle = {
+  animation: 'conventionFadeSlide 0.25s ease-out both',
+};
+
+const keyframesStyle = `
+  @keyframes conventionFadeSlide {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+`;
+
 export default function ConventionQuickAccess({ onViewAll }) {
   const [expandedEventId, setExpandedEventId] = useState(null);
   const uniqueId = useId();
@@ -154,7 +171,13 @@ export default function ConventionQuickAccess({ onViewAll }) {
 
       {/* Detail Card - completely separate block below */}
       {expandedEvent && (
-        <div className="mt-3 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-lg">
+        <>
+        <style>{keyframesStyle}</style>
+        <div
+          key={expandedEvent.id}
+          className="mt-3 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-lg"
+          style={detailCardStyle}
+        >
           {/* Row 1: Convention Name | Date | Time | Actions */}
           <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
             <div className="flex items-center gap-4 flex-wrap">
@@ -221,6 +244,7 @@ export default function ConventionQuickAccess({ onViewAll }) {
             )}
           </div>
         </div>
+        </>
       )}
     </section>
   );
