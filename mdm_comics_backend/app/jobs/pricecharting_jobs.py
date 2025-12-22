@@ -330,8 +330,8 @@ async def update_independent_checkpoint(
     if last_id is not None:
         # Note: state_data is json type (not jsonb), so we can't use jsonb_set()
         # Instead, we rebuild the entire JSON object with the updated last_id
-        # The ::bigint cast is needed for asyncpg to determine parameter type
-        updates.append("state_data = jsonb_build_object('last_id', :last_id::bigint)::json")
+        # Use CAST() syntax to avoid asyncpg issues with :: after parameter placeholder
+        updates.append("state_data = jsonb_build_object('last_id', CAST(:last_id AS bigint))::json")
         params["last_id"] = last_id
 
     if processed_delta:
