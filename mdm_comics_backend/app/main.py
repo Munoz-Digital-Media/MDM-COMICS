@@ -137,25 +137,24 @@ async def ensure_schema_migrations():
     Adds missing columns without blocking startup.
     """
     async with AsyncSessionLocal() as db:
+        # Add UPC column to funkos if not exists (for PriceCharting matching)
         try:
-            # Add UPC column to funkos if not exists (for PriceCharting matching)
-            await db.execute(text("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'funkos' AND column_name = 'upc'
-                    ) THEN
-                        ALTER TABLE funkos ADD COLUMN upc VARCHAR(50);
-                        CREATE INDEX IF NOT EXISTS idx_funkos_upc ON funkos(upc) WHERE upc IS NOT NULL;
-                        RAISE NOTICE 'Added upc column to funkos table';
-                    END IF;
-                END $$;
+            # Check if column exists first
+            result = await db.execute(text("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'funkos' AND column_name = 'upc'
             """))
-            await db.commit()
-            logger.info("Schema migrations checked/applied")
+            if not result.fetchone():
+                # Column doesn't exist, add it
+                await db.execute(text("ALTER TABLE funkos ADD COLUMN upc VARCHAR(50)"))
+                await db.execute(text("CREATE INDEX IF NOT EXISTS idx_funkos_upc ON funkos(upc) WHERE upc IS NOT NULL"))
+                await db.commit()
+                logger.info("Added upc column to funkos table")
+            else:
+                logger.info("Schema migrations: upc column already exists")
         except Exception as e:
-            logger.warning(f"Schema migration check failed (non-fatal): {e}")
+            logger.warning(f"Schema migration for upc column failed: {e}")
+            await db.rollback()
 
 
 async def import_funkos_if_needed():
