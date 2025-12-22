@@ -1,17 +1,16 @@
 /**
- * ConventionQuickAccess - Tab-style convention buttons with expandable details
- * v1.2.0
+ * ConventionQuickAccess - Tab-style convention buttons with morphing detail cards
+ * v1.3.0
  *
  * Features:
- * - Horizontal button row matching admin pipeline pattern (GCD Import, PriceCharting, etc.)
- * - Future events only (past events filtered out)
- * - Date-sorted ASC (nearest to TODAY shown first)
+ * - Horizontal button row matching admin pipeline pattern
+ * - Future events only, date-sorted ASC
  * - Capped at 4 buttons + "+N more" button (5 total)
- * - Expandable detail card with rich venue/ticket info
- * - Collapse button on expanded card
+ * - Morphing card animation: button expands into detail view
+ * - Rich venue/ticket info in expanded state
  */
 import React, { useState, useMemo, useCallback, useId } from 'react';
-import { Calendar, ExternalLink, MapPin, ChevronDown, ChevronUp, ChevronRight, Clock, Ticket, X } from 'lucide-react';
+import { Calendar, MapPin, ChevronRight, Clock, Ticket, X } from 'lucide-react';
 import { DEFAULT_CONVENTIONS } from '../config/conventions.config';
 import { parseDateText, isFutureEvent, sortEventsByDate, formatDateShort } from '../utils/dateUtils';
 
@@ -20,6 +19,50 @@ const MAX_TOTAL_ITEMS = 5; // Total items including "+more" button (4 events + 1
 export default function ConventionQuickAccess({ onViewAll }) {
   const [expandedEventId, setExpandedEventId] = useState(null);
   const uniqueId = useId();
+
+  // Inline styles for morphing animation (CSS-in-JS for the spring effect)
+  const morphStyles = `
+    .convention-card {
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .convention-card.collapsed {
+      flex: 0 0 auto;
+    }
+    .convention-card.expanded {
+      flex: 1 1 100%;
+    }
+    .convention-card .collapsed-content {
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+    }
+    .convention-card.expanded .collapsed-content {
+      opacity: 0;
+      transform: scale(0.95);
+      position: absolute;
+      pointer-events: none;
+    }
+    .convention-card .expanded-content {
+      transition: opacity 0.2s ease-in 0.1s, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s;
+      opacity: 0;
+      transform: scale(0.98);
+    }
+    .convention-card.expanded .expanded-content {
+      opacity: 1;
+      transform: scale(1);
+    }
+    .convention-card:not(.expanded) .expanded-content {
+      position: absolute;
+      pointer-events: none;
+      height: 0;
+      overflow: hidden;
+    }
+    .other-cards-fade {
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .other-cards-fade.faded {
+      opacity: 0.4;
+      transform: scale(0.95);
+    }
+  `;
 
   // Process events: flatten, parse dates, filter future, sort ASC
   const processedEvents = useMemo(() => {
@@ -64,11 +107,6 @@ export default function ConventionQuickAccess({ onViewAll }) {
     setExpandedEventId((prev) => (prev === eventId ? null : eventId));
   }, []);
 
-  const expandedEvent = useMemo(() => {
-    if (!expandedEventId) return null;
-    return processedEvents.find((e) => e.id === expandedEventId);
-  }, [expandedEventId, processedEvents]);
-
   // Calculate how many event buttons to show
   // If we have more events than MAX_TOTAL_ITEMS, reserve 1 slot for "+more" button
   const hasMoreEvents = processedEvents.length > MAX_TOTAL_ITEMS;
@@ -88,6 +126,8 @@ export default function ConventionQuickAccess({ onViewAll }) {
 
   return (
     <section className="max-w-7xl mx-auto px-4 pt-6 pb-4">
+      <style>{morphStyles}</style>
+
       {/* Section Label */}
       <div className="mb-3">
         <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
@@ -98,138 +138,135 @@ export default function ConventionQuickAccess({ onViewAll }) {
         </p>
       </div>
 
-      {/* Button Row - No scroll, max 5 items */}
+      {/* Morphing Card Row */}
       <div
-        className="flex items-center gap-2 flex-wrap"
+        className="flex items-stretch gap-2 flex-wrap"
         role="tablist"
         aria-label="Convention events"
       >
         {visibleEvents.map((event) => {
           const isExpanded = expandedEventId === event.id;
-          const cardId = `${uniqueId}-card-${event.id}`;
+          const hasExpanded = expandedEventId !== null;
+          const isFaded = hasExpanded && !isExpanded;
 
           return (
-            <button
+            <div
               key={event.id}
-              onClick={() => handleButtonClick(event.id)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors flex-shrink-0
+              className={`convention-card relative rounded-xl overflow-hidden
+                ${isExpanded ? 'expanded' : 'collapsed'}
                 ${isExpanded
-                  ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-600'
-                }`}
+                  ? 'bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 shadow-xl shadow-orange-500/10'
+                  : 'bg-zinc-800 border border-zinc-700 hover:border-zinc-600 cursor-pointer'
+                }
+                ${isFaded ? 'other-cards-fade faded' : 'other-cards-fade'}
+              `}
               role="tab"
               aria-selected={isExpanded}
               aria-expanded={isExpanded}
-              aria-controls={isExpanded ? cardId : undefined}
+              onClick={() => !isExpanded && handleButtonClick(event.id)}
+              onKeyDown={(e) => e.key === 'Enter' && !isExpanded && handleButtonClick(event.id)}
+              tabIndex={isExpanded ? -1 : 0}
             >
-              <Calendar className="w-4 h-4 flex-shrink-0" />
-              <div className="flex flex-col items-start leading-tight">
-                <span className="text-xs text-zinc-500">{event.conventionName}</span>
-                <span className="text-sm font-medium">{event.city}</span>
+              {/* Collapsed State (Button) */}
+              <div className="collapsed-content flex items-center gap-2 px-3 py-2">
+                <Calendar className="w-4 h-4 flex-shrink-0 text-zinc-400" />
+                <div className="flex flex-col items-start leading-tight">
+                  <span className="text-xs text-zinc-500">{event.conventionName}</span>
+                  <span className="text-sm font-medium text-zinc-300">{event.city}</span>
+                </div>
+                <span className="text-xs px-2 py-0.5 bg-zinc-900/80 rounded-full whitespace-nowrap text-zinc-400">
+                  {formatDateShort(event.dateText)}
+                </span>
               </div>
-              <span className="text-xs px-2 py-0.5 bg-zinc-900/80 rounded-full whitespace-nowrap">
-                {formatDateShort(event.dateText)}
-              </span>
-              {isExpanded ? (
-                <ChevronUp className="w-3 h-3 ml-1" />
-              ) : (
-                <ChevronDown className="w-3 h-3 ml-1" />
-              )}
-            </button>
+
+              {/* Expanded State (Detail Card) */}
+              <div className="expanded-content p-4">
+                {/* Row 1: Convention Name | Date | Time | Actions */}
+                <div className="flex items-center justify-between gap-4 mb-3">
+                  <div className="flex items-center gap-4 flex-wrap min-w-0">
+                    <h3 className="text-lg font-semibold text-white">
+                      {event.conventionName}
+                    </h3>
+                    <span className="flex items-center gap-1.5 text-sm text-zinc-400">
+                      <Calendar className="w-4 h-4 text-orange-400" />
+                      {event.dateText}
+                    </span>
+                    {event.showHours && (
+                      <span className="flex items-center gap-1.5 text-sm text-zinc-400">
+                        <Clock className="w-4 h-4 text-orange-400" />
+                        {event.showHours}
+                        {event.vipEntry && (
+                          <span className="text-zinc-500">(VIP: {event.vipEntry})</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <a
+                      href={event.ticketUrl || event.eventUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Ticket className="w-4 h-4" />
+                      Get Tickets
+                    </a>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedEventId(null);
+                      }}
+                      className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-700 rounded-lg transition-colors"
+                      aria-label="Close details"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Row 2: Location | Table Count | Grading */}
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-zinc-400">
+                  {(event.venue || event.address) && (
+                    <span className="flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 text-orange-400 flex-shrink-0" />
+                      <span>
+                        {event.venue}
+                        {event.venue && event.address && ' · '}
+                        {event.address}
+                      </span>
+                    </span>
+                  )}
+                  {event.tableCount && (
+                    <span className="text-zinc-500">
+                      {event.tableCount} tables
+                    </span>
+                  )}
+                  {event.grading?.length > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-zinc-500">Grading:</span>
+                      <span className="text-zinc-300">{event.grading.join(', ')}</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
           );
         })}
 
-        {/* More events indicator - only if there are hidden events */}
+        {/* More events indicator */}
         {hiddenEventCount > 0 && onViewAll && (
           <button
             onClick={onViewAll}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap flex-shrink-0 bg-zinc-800/50 text-orange-400 hover:bg-zinc-700 border border-zinc-700 hover:border-orange-500/30"
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all whitespace-nowrap flex-shrink-0 bg-zinc-800/50 text-orange-400 hover:bg-zinc-700 border border-zinc-700 hover:border-orange-500/30
+              ${expandedEventId ? 'other-cards-fade faded' : 'other-cards-fade'}
+            `}
           >
             <span className="text-sm font-medium">+{hiddenEventCount} more</span>
             <ChevronRight className="w-4 h-4" />
           </button>
         )}
       </div>
-
-      {/* Expanded Detail Card */}
-      {expandedEvent && (
-        <div
-          id={`${uniqueId}-card-${expandedEvent.id}`}
-          role="tabpanel"
-          aria-labelledby={expandedEvent.id}
-          className="mt-3 bg-zinc-900/90 border border-orange-500/20 rounded-xl p-4 shadow-lg animate-fadeIn"
-        >
-          {/* Row 1: Convention Name | Date Range | Time | Get Tickets | Close */}
-          <div className="flex items-center justify-between gap-4 mb-3">
-            <div className="flex items-center gap-4 flex-wrap min-w-0">
-              <h3 className="text-lg font-semibold text-white truncate">
-                {expandedEvent.conventionName}
-              </h3>
-              <span className="flex items-center gap-1.5 text-sm text-zinc-400">
-                <Calendar className="w-4 h-4 text-orange-400" />
-                {expandedEvent.dateText}
-              </span>
-              {expandedEvent.showHours && (
-                <span className="flex items-center gap-1.5 text-sm text-zinc-400">
-                  <Clock className="w-4 h-4 text-orange-400" />
-                  {expandedEvent.showHours}
-                  {expandedEvent.vipEntry && (
-                    <span className="text-zinc-500">(VIP: {expandedEvent.vipEntry})</span>
-                  )}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <a
-                href={expandedEvent.ticketUrl || expandedEvent.eventUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <Ticket className="w-4 h-4" />
-                Get Tickets
-              </a>
-              <button
-                onClick={() => setExpandedEventId(null)}
-                className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
-                aria-label="Close details"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          {/* Row 2: Location | Table Count | Grading */}
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-zinc-400">
-            {/* Venue & Address */}
-            {(expandedEvent.venue || expandedEvent.address) && (
-              <span className="flex items-center gap-1.5">
-                <MapPin className="w-4 h-4 text-orange-400 flex-shrink-0" />
-                <span>
-                  {expandedEvent.venue}
-                  {expandedEvent.venue && expandedEvent.address && ' · '}
-                  {expandedEvent.address}
-                </span>
-              </span>
-            )}
-
-            {/* Table Count */}
-            {expandedEvent.tableCount && (
-              <span className="text-zinc-500">
-                {expandedEvent.tableCount} tables
-              </span>
-            )}
-
-            {/* Grading Companies */}
-            {expandedEvent.grading?.length > 0 && (
-              <span className="flex items-center gap-1.5">
-                <span className="text-zinc-500">Grading:</span>
-                <span className="text-zinc-300">{expandedEvent.grading.join(', ')}</span>
-              </span>
-            )}
-          </div>
-        </div>
-      )}
     </section>
   );
 }
