@@ -121,21 +121,11 @@ export default function ConventionQuickAccess({ onViewAll }) {
     <section className="relative max-w-7xl mx-auto px-4 pt-6 pb-4">
       <style>{keyframesStyle}</style>
 
-      {/* Section Label */}
-      <div className="mb-3">
-        <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
-          Upcoming Conventions
-          {totalEventCount > 0 && (
-            <span className="ml-2 text-zinc-600">({totalEventCount})</span>
-          )}
-        </p>
-      </div>
-
-      {/* Detail Card - sits between label and buttons */}
+      {/* Detail Card - floating just above the label */}
       {expandedEvent && (
         <div
           key={expandedEvent.id}
-          className="mb-3 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-2xl shadow-black/50"
+          className="absolute bottom-full left-4 right-4 mb-1 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-2xl shadow-black/50 z-50"
           style={{ animation: 'conventionFadeSlide 0.15s ease-out both' }}
         >
           {/* Row 1: Convention Name | Date | Time | Actions */}
@@ -211,6 +201,16 @@ export default function ConventionQuickAccess({ onViewAll }) {
           </div>
         </div>
       )}
+
+      {/* Section Label */}
+      <div className="mb-3">
+        <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
+          Upcoming Conventions
+          {totalEventCount > 0 && (
+            <span className="ml-2 text-zinc-600">({totalEventCount})</span>
+          )}
+        </p>
+      </div>
 
       {/* Button Row - inline-flex so it doesn't reflow */}
       <div className="overflow-x-auto pb-2">
