@@ -16,15 +16,29 @@ import { parseDateText, isFutureEvent, sortEventsByDate, formatDateShort } from 
 
 const MAX_TOTAL_ITEMS = 5; // Total items including "+more" button (4 events + 1 more)
 
-const detailCardStyle = {
-  animation: 'conventionFadeSlide 0.25s ease-out both',
-};
-
 const keyframesStyle = `
   @keyframes conventionFadeSlide {
     from {
       opacity: 0;
       transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes subtleGlow {
+    0%, 100% {
+      box-shadow: 0 0 8px 0 rgba(249, 115, 22, 0.3);
+    }
+    50% {
+      box-shadow: 0 0 16px 4px rgba(249, 115, 22, 0.5);
+    }
+  }
+  @keyframes staggerFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
     }
     to {
       opacity: 1;
@@ -105,6 +119,8 @@ export default function ConventionQuickAccess({ onViewAll }) {
 
   return (
     <section className="max-w-7xl mx-auto px-4 pt-6 pb-4">
+      <style>{keyframesStyle}</style>
+
       {/* Section Label */}
       <div className="mb-3">
         <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
@@ -136,6 +152,7 @@ export default function ConventionQuickAccess({ onViewAll }) {
                     : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600'
                   }
                 `}
+                style={isSelected ? { animation: 'subtleGlow 2s ease-in-out infinite' } : undefined}
                 role="tab"
                 aria-selected={isSelected}
               >
@@ -171,15 +188,16 @@ export default function ConventionQuickAccess({ onViewAll }) {
 
       {/* Detail Card - completely separate block below */}
       {expandedEvent && (
-        <>
-        <style>{keyframesStyle}</style>
         <div
           key={expandedEvent.id}
           className="mt-3 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-lg"
-          style={detailCardStyle}
+          style={{ animation: 'conventionFadeSlide 0.15s ease-out both' }}
         >
           {/* Row 1: Convention Name | Date | Time | Actions */}
-          <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
+          <div
+            className="flex items-center justify-between gap-4 mb-3 flex-wrap"
+            style={{ animation: 'staggerFadeIn 0.2s ease-out 0.05s both' }}
+          >
             <div className="flex items-center gap-4 flex-wrap">
               <h3 className="text-lg font-semibold text-white">
                 {expandedEvent.conventionName}
@@ -220,7 +238,10 @@ export default function ConventionQuickAccess({ onViewAll }) {
           </div>
 
           {/* Row 2: Location | Table Count | Grading */}
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-zinc-400">
+          <div
+            className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-zinc-400"
+            style={{ animation: 'staggerFadeIn 0.2s ease-out 0.12s both' }}
+          >
             {(expandedEvent.venue || expandedEvent.address) && (
               <span className="flex items-center gap-1.5">
                 <MapPin className="w-4 h-4 text-orange-400 flex-shrink-0" />
@@ -244,7 +265,6 @@ export default function ConventionQuickAccess({ onViewAll }) {
             )}
           </div>
         </div>
-        </>
       )}
     </section>
   );
