@@ -93,9 +93,13 @@ PC_DAILY_QUOTA_LIMIT = int(os.getenv("PRICECHARTING_DAILY_QUOTA", "10000"))
 # Price change threshold for alerts (percentage, default: 20%)
 PC_PRICE_ALERT_THRESHOLD = float(os.getenv("PRICECHARTING_PRICE_ALERT_PCT", "20.0"))
 
+# PHASE 2 (IMPL-2025-12-21-PC-REFACTOR): Force sync bypasses staleness check
+PC_FORCE_SYNC = os.getenv("PRICECHARTING_FORCE_SYNC", "false").lower() in ("true", "1", "yes")
+
 logger.info(
     f"[pricecharting_jobs] Config loaded: batch_size={PC_BATCH_SIZE}, "
-    f"staleness_hours={PC_STALENESS_HOURS}, daily_quota={PC_DAILY_QUOTA_LIMIT}"
+    f"staleness_hours={PC_STALENESS_HOURS}, daily_quota={PC_DAILY_QUOTA_LIMIT}, "
+    f"force_sync={PC_FORCE_SYNC}"
 )
 
 
@@ -1096,35 +1100,60 @@ async def run_funko_price_sync_job(
                     # Fetch Funkos with pricecharting_id that need price update
                     # v1.1.0: Incremental sync - only fetch stale records
                     # Phase 2: Use configurable staleness threshold (PC_STALENESS_HOURS)
-                    result = await db.execute(text("""
-                        SELECT
-                          f.id,
-                          f.pricecharting_id,
-                          f.price_loose,
-                          f.price_cib,
-                          f.price_new,
-                          f.title,
-                          f.box_number,
-                          f.category,
-                          f.license,
-                          string_agg(DISTINCT fsn.name, ', ') AS series_names
-                        FROM funkos f
-                        LEFT JOIN funko_series fs ON fs.funko_id = f.id
-                        LEFT JOIN funko_series_names fsn ON fsn.id = fs.series_id
-                        WHERE f.pricecharting_id IS NOT NULL
-                          AND f.id > :last_id
-                          AND (f.pricecharting_synced_at IS NULL
-                               OR f.pricecharting_synced_at < NOW() - make_interval(hours => :staleness_hours))
-                        GROUP BY f.id, f.pricecharting_id, f.price_loose, f.price_cib, f.price_new,
-                                 f.title, f.box_number, f.category, f.license
-                        ORDER BY f.id
-                        LIMIT :limit
-                    """), {"last_id": last_id, "limit": batch_size, "staleness_hours": PC_STALENESS_HOURS})
+                    # IMPL-2025-12-21-PC-REFACTOR: PRICECHARTING_FORCE_SYNC bypasses staleness
+                    if PC_FORCE_SYNC:
+                        result = await db.execute(text("""
+                            SELECT
+                              f.id,
+                              f.pricecharting_id,
+                              f.price_loose,
+                              f.price_cib,
+                              f.price_new,
+                              f.title,
+                              f.box_number,
+                              f.category,
+                              f.license,
+                              string_agg(DISTINCT fsn.name, ', ') AS series_names
+                            FROM funkos f
+                            LEFT JOIN funko_series fs ON fs.funko_id = f.id
+                            LEFT JOIN funko_series_names fsn ON fsn.id = fs.series_id
+                            WHERE f.pricecharting_id IS NOT NULL
+                              AND f.id > :last_id
+                            GROUP BY f.id, f.pricecharting_id, f.price_loose, f.price_cib, f.price_new,
+                                     f.title, f.box_number, f.category, f.license
+                            ORDER BY f.id
+                            LIMIT :limit
+                        """), {"last_id": last_id, "limit": batch_size})
+                    else:
+                        result = await db.execute(text("""
+                            SELECT
+                              f.id,
+                              f.pricecharting_id,
+                              f.price_loose,
+                              f.price_cib,
+                              f.price_new,
+                              f.title,
+                              f.box_number,
+                              f.category,
+                              f.license,
+                              string_agg(DISTINCT fsn.name, ', ') AS series_names
+                            FROM funkos f
+                            LEFT JOIN funko_series fs ON fs.funko_id = f.id
+                            LEFT JOIN funko_series_names fsn ON fsn.id = fs.series_id
+                            WHERE f.pricecharting_id IS NOT NULL
+                              AND f.id > :last_id
+                              AND (f.pricecharting_synced_at IS NULL
+                                   OR f.pricecharting_synced_at < NOW() - make_interval(hours => :staleness_hours))
+                            GROUP BY f.id, f.pricecharting_id, f.price_loose, f.price_cib, f.price_new,
+                                     f.title, f.box_number, f.category, f.license
+                            ORDER BY f.id
+                            LIMIT :limit
+                        """), {"last_id": last_id, "limit": batch_size, "staleness_hours": PC_STALENESS_HOURS})
 
                     funkos = result.fetchall()
 
                     if not funkos:
-                        logger.info(f"[{job_name}] No stale Funkos to sync, cycle complete")
+                        logger.info(f"[{job_name}] No {'Funkos' if PC_FORCE_SYNC else 'stale Funkos'} to sync (Force Mode: {PC_FORCE_SYNC}), cycle complete")
                         last_id = 0  # Reset for next run
                         break
 
@@ -1253,6 +1282,50 @@ async def run_funko_price_sync_job(
                                     params
                                 )
                                 stats["updated"] += 1
+
+                                # IMPL-2025-12-21-PC-REFACTOR PHASE 1: Record to price_changelog
+                                changelog_entries = []
+                                if "loose" in params and funko.price_loose != params["loose"]:
+                                    old_val = float(funko.price_loose) if funko.price_loose else None
+                                    new_val = params["loose"]
+                                    pct = ((new_val - old_val) / old_val * 100) if old_val else None
+                                    changelog_entries.append(("price_loose", old_val, new_val, pct))
+                                if "cib" in params and funko.price_cib != params["cib"]:
+                                    old_val = float(funko.price_cib) if funko.price_cib else None
+                                    new_val = params["cib"]
+                                    pct = ((new_val - old_val) / old_val * 100) if old_val else None
+                                    changelog_entries.append(("price_cib", old_val, new_val, pct))
+                                if "new" in params and funko.price_new != params["new"]:
+                                    old_val = float(funko.price_new) if funko.price_new else None
+                                    new_val = params["new"]
+                                    pct = ((new_val - old_val) / old_val * 100) if old_val else None
+                                    changelog_entries.append(("price_new", old_val, new_val, pct))
+
+                                for field_name, old_val, new_val, pct in changelog_entries:
+                                    await db.execute(text("""
+                                        INSERT INTO price_changelog
+                                        (entity_type, entity_id, entity_name, field_name,
+                                         old_value, new_value, change_pct, data_source, reason, sync_batch_id)
+                                        VALUES ('funko', :entity_id, :entity_name, :field_name,
+                                                :old_value, :new_value, :change_pct, 'pricecharting', 'price_sync', :batch_id::uuid)
+                                        ON CONFLICT (entity_type, entity_id, field_name, sync_batch_id)
+                                            WHERE sync_batch_id IS NOT NULL
+                                        DO NOTHING
+                                    """), {
+                                        "entity_id": funko_id,
+                                        "entity_name": funko.title[:500] if funko.title else None,
+                                        "field_name": field_name,
+                                        "old_value": old_val,
+                                        "new_value": new_val,
+                                        "change_pct": round(pct, 2) if pct else None,
+                                        "batch_id": batch_id,
+                                    })
+
+                                if changelog_entries:
+                                    if "changelog_recorded" not in stats:
+                                        stats["changelog_recorded"] = 0
+                                    stats["changelog_recorded"] += len(changelog_entries)
+
                                 logger.debug(
                                     f"[{job_name}] Updated Funko {funko_id} prices (pc_id={resolved_pc_id})"
                                 )
@@ -1425,16 +1498,29 @@ async def run_comic_price_sync_job(
 
                     # v1.1.0: Incremental sync - only fetch stale records
                     # Phase 2: Use configurable staleness threshold (PC_STALENESS_HOURS)
-                    result = await db.execute(text("""
-                        SELECT id, pricecharting_id, price_guide_value
-                        FROM comic_issues
-                        WHERE pricecharting_id IS NOT NULL
-                          AND id > :last_id
-                          AND (pricecharting_synced_at IS NULL
-                               OR pricecharting_synced_at < NOW() - make_interval(hours => :staleness_hours))
-                        ORDER BY id
-                        LIMIT :limit
-                    """), {"last_id": last_id, "limit": batch_size, "staleness_hours": PC_STALENESS_HOURS})
+                    # IMPL-2025-12-21-PC-REFACTOR PHASE 2: Force sync bypasses staleness check
+                    if PC_FORCE_SYNC:
+                        result = await db.execute(text("""
+                            SELECT id, pricecharting_id, price_guide_value
+                            FROM comic_issues
+                            WHERE pricecharting_id IS NOT NULL
+                              AND id > :last_id
+                            ORDER BY id
+                            LIMIT :limit
+                        """), {"last_id": last_id, "limit": batch_size})
+                        if stats["processed"] == 0:
+                            logger.info(f"[{job_name}] FORCE_SYNC mode enabled - bypassing staleness check")
+                    else:
+                        result = await db.execute(text("""
+                            SELECT id, pricecharting_id, price_guide_value
+                            FROM comic_issues
+                            WHERE pricecharting_id IS NOT NULL
+                              AND id > :last_id
+                              AND (pricecharting_synced_at IS NULL
+                                   OR pricecharting_synced_at < NOW() - make_interval(hours => :staleness_hours))
+                            ORDER BY id
+                            LIMIT :limit
+                        """), {"last_id": last_id, "limit": batch_size, "staleness_hours": PC_STALENESS_HOURS})
 
                     comics = result.fetchall()
 
@@ -1502,6 +1588,31 @@ async def run_comic_price_sync_job(
                                                     f"${old_price:.2f} -> ${price_dollars:.2f} "
                                                     f"({direction} {abs(pct_change):.1f}%)"
                                                 )
+
+                                        # IMPL-2025-12-21-PC-REFACTOR PHASE 1: Record to price_changelog
+                                        # Only record if price actually changed
+                                        if old_price != price_dollars:
+                                            change_pct = ((price_dollars - old_price) / old_price * 100) if old_price > 0 else None
+                                            try:
+                                                await db.execute(text("""
+                                                    INSERT INTO price_changelog
+                                                    (entity_type, entity_id, entity_name, field_name,
+                                                     old_value, new_value, change_pct, data_source, reason, sync_batch_id)
+                                                    VALUES ('comic', :entity_id, :entity_name, 'price_guide_value',
+                                                            :old_value, :new_value, :change_pct, 'pricecharting', 'price_sync', :batch_id::uuid)
+                                                    ON CONFLICT (entity_type, entity_id, field_name, sync_batch_id)
+                                                        WHERE sync_batch_id IS NOT NULL
+                                                    DO NOTHING
+                                                """), {
+                                                    "entity_id": comic_id,
+                                                    "entity_name": f"Comic #{comic_id}",
+                                                    "old_value": old_price,
+                                                    "new_value": price_dollars,
+                                                    "change_pct": change_pct,
+                                                    "batch_id": batch_id
+                                                })
+                                            except Exception as cl_err:
+                                                logger.warning(f"[{job_name}] Failed to log price change for Comic {comic_id}: {cl_err}")
 
                                         # v1.1.0: Track sync timestamp for incremental sync
                                         await db.execute(text("""
