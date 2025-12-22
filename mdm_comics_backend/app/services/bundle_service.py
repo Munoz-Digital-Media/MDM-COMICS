@@ -501,14 +501,11 @@ class BundleService:
     @staticmethod
     async def _recalculate_bundle(db: AsyncSession, bundle: Bundle) -> None:
         """Recalculate bundle totals from items."""
-        # Reload items if needed
-        if not bundle.items:
-            result = await db.execute(
-                select(BundleItem).where(BundleItem.bundle_id == bundle.id)
-            )
-            items = result.scalars().all()
-        else:
-            items = bundle.items
+        # Always query items explicitly to avoid lazy loading issues in async context
+        result = await db.execute(
+            select(BundleItem).where(BundleItem.bundle_id == bundle.id)
+        )
+        items = result.scalars().all()
 
         # Calculate totals
         total_cost = Decimal("0")
