@@ -465,11 +465,14 @@ async def run_funko_pricecharting_match_job(
                         stats["circuit_opens"] += 1
                         break
 
-                    # Fetch batch of Funkos without pricecharting_id
+                    # Fetch batch of Funkos not yet in review queue
+                    # Includes all data needed for matching: upc, title, product_type, box_number, category, license, series
                     result = await db.execute(text("""
                         SELECT
                           f.id,
                           f.title,
+                          f.upc,
+                          f.product_type,
                           f.box_number,
                           f.category,
                           f.license,
@@ -477,10 +480,16 @@ async def run_funko_pricecharting_match_job(
                         FROM funkos f
                         LEFT JOIN funko_series fs ON fs.funko_id = f.id
                         LEFT JOIN funko_series_names fsn ON fsn.id = fs.series_id
-                        WHERE f.pricecharting_id IS NULL
-                          AND f.id > :last_id
-                        GROUP BY f.id, f.title, f.box_number, f.category, f.license
+                        WHERE f.id > :last_id
+                          AND NOT EXISTS (
+                            SELECT 1 FROM match_review_queue mrq
+                            WHERE mrq.entity_type = 'funko'
+                              AND mrq.entity_id = f.id
+                              AND mrq.candidate_source = 'pricecharting'
+                          )
+                        GROUP BY f.id, f.title, f.upc, f.product_type, f.box_number, f.category, f.license
                         ORDER BY
+                          CASE WHEN f.upc IS NOT NULL THEN 0 ELSE 1 END,
                           CASE WHEN f.box_number IS NOT NULL THEN 0 ELSE 1 END,
                           f.id
                         LIMIT :limit
@@ -508,13 +517,54 @@ async def run_funko_pricecharting_match_job(
 
                         try:
                             pc_id = None
+                            match_result = None
+                            match_method = "none"
 
-                            # Search by title (v1.1.0: cached search, v1.2.0: multi-factor scoring)
-                            if funko.title:
-                                search_query = f"Funko Pop {funko.title}"[:100]
+                            # === STEP 1: Try UPC match first (highest confidence) ===
+                            if funko.upc:
+                                try:
+                                    products = await cached_pricecharting_search(
+                                        client=client,
+                                        pc_token=pc_token,
+                                        query=funko.upc,
+                                        use_upc=True,
+                                        circuit_breaker=circuit_breaker,
+                                    )
+                                    if products:
+                                        # UPC match is exact - take first result
+                                        pc_id = int(products[0].get("id"))
+                                        match_method = "upc_exact"
+                                        match_result = MatchResult(
+                                            matched=True,
+                                            pricecharting_id=pc_id,
+                                            score=1.0,
+                                            factors={"upc_exact": 1.0},
+                                            confidence="high",
+                                            product_name=products[0].get("product-name"),
+                                        )
+                                        logger.info(
+                                            f"[{job_name}] UPC match Funko {funko_id} '{funko.title[:40]}': "
+                                            f"UPC {funko.upc} -> PC:{pc_id}"
+                                        )
+                                        if "upc_matches" not in stats:
+                                            stats["upc_matches"] = 0
+                                        stats["upc_matches"] += 1
+                                except CircuitOpenError:
+                                    logger.warning(f"[{job_name}] Circuit opened during UPC search")
+                                    stats["circuit_opens"] += 1
+                                    break
+
+                            # === STEP 2: Fall back to fuzzy matching ===
+                            if not pc_id and funko.title:
+                                # Build search query from available fields
+                                search_parts = ["Funko Pop"]
+                                if funko.title:
+                                    search_parts.append(funko.title)
+                                if funko.box_number:
+                                    search_parts.append(f"#{funko.box_number}")
+                                search_query = " ".join(search_parts)[:100]
 
                                 try:
-                                    # Use cached search to reduce API calls
                                     products = await cached_pricecharting_search(
                                         client=client,
                                         pc_token=pc_token,
@@ -522,9 +572,10 @@ async def run_funko_pricecharting_match_job(
                                         circuit_breaker=circuit_breaker,
                                     )
 
-                                    # v1.2.0: Use multi-factor match scoring
+                                    # Build funko dict with all matching fields
                                     funko_dict = {
                                         "title": funko.title,
+                                        "product_type": funko.product_type,
                                         "box_number": funko.box_number,
                                         "category": funko.category,
                                         "license": funko.license,
@@ -536,50 +587,26 @@ async def run_funko_pricecharting_match_job(
                                         item_type="funko",
                                     )
 
-                                    # Log match attempt for debugging
-                                    if match_result:
-                                        logger.info(
-                                            f"[{job_name}] Funko {funko_id} '{funko.title[:50]}': "
-                                            f"score={match_result.score:.2f}, matched={match_result.matched}, "
-                                            f"products_checked={len(products)}"
-                                        )
-                                    elif products:
-                                        logger.info(
-                                            f"[{job_name}] Funko {funko_id} '{funko.title[:50]}': "
-                                            f"no match result, {len(products)} products checked"
-                                        )
-
                                     if match_result and match_result.matched:
                                         pc_id = match_result.pricecharting_id
+                                        match_method = f"fuzzy_score_{int(match_result.score * 10)}"
 
-                                        # Phase 3: Track match quality metrics
-                                        if "match_scores" not in stats:
-                                            stats["match_scores"] = []
-                                            stats["low_confidence_matches"] = 0
-                                        stats["match_scores"].append(match_result.score)
-
-                                        # Flag low-confidence matches for potential review
-                                        if match_result.confidence == "low":
-                                            stats["low_confidence_matches"] += 1
-                                            logger.warning(
-                                                f"[{job_name}] LOW CONFIDENCE match: Funko {funko_id} "
-                                                f"'{funko.title}' -> PC:{pc_id} (score={match_result.score:.2f}) "
-                                                f"- may need manual review"
-                                            )
-                                        else:
-                                            logger.info(
-                                                f"[{job_name}] Matched Funko {funko_id}: "
-                                                f"'{funko.title}' -> PC:{pc_id} "
-                                                f"(score={match_result.score:.2f}, "
-                                                f"confidence={match_result.confidence})"
-                                            )
+                                        logger.info(
+                                            f"[{job_name}] Fuzzy match Funko {funko_id} '{funko.title[:40]}': "
+                                            f"score={match_result.score:.2f}, PC:{pc_id}"
+                                        )
+                                    elif products:
+                                        logger.debug(
+                                            f"[{job_name}] No fuzzy match for Funko {funko_id} '{funko.title[:40]}': "
+                                            f"{len(products)} products checked"
+                                        )
 
                                 except CircuitOpenError:
-                                    logger.warning(f"[{job_name}] Circuit opened during processing")
+                                    logger.warning(f"[{job_name}] Circuit opened during fuzzy search")
                                     stats["circuit_opens"] += 1
                                     break
 
-                            if pc_id:
+                            if pc_id and match_result:
                                 # Insert into match review queue instead of direct update
                                 # Convert score (0.0-1.0) to integer (0-10) for queue
                                 int_score = int(match_result.score * 10)
@@ -598,17 +625,18 @@ async def run_funko_pricecharting_match_job(
                                     DO UPDATE SET
                                         match_score = EXCLUDED.match_score,
                                         match_details = EXCLUDED.match_details,
+                                        match_method = EXCLUDED.match_method,
                                         updated_at = NOW()
                                 """), {
                                     "entity_id": funko_id,
                                     "pc_id": pc_id,
                                     "candidate_name": match_result.product_name,
-                                    "match_method": f"fuzzy_score_{int_score}",
+                                    "match_method": match_method,  # Uses upc_exact or fuzzy_score_N
                                     "match_score": int_score,
                                     "match_details": json.dumps(match_result.factors),
                                 })
                                 stats["matched"] += 1
-                                logger.info(f"[{job_name}] Queued Funko {funko_id} for review -> PC:{pc_id} (score={int_score})")
+                                logger.info(f"[{job_name}] Queued Funko {funko_id} for review -> PC:{pc_id} ({match_method}, score={int_score})")
 
                         except Exception as e:
                             stats["errors"] += 1

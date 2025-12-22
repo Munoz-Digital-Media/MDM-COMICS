@@ -244,72 +244,98 @@ def _score_funko_match(
     product: Dict,
     normalized_product: str,
 ) -> MatchResult:
-    """Score a funko match. Uses lower threshold than comics due to sparser metadata."""
+    """
+    Score a funko match using multi-factor matching.
+
+    Matching factors (in priority order):
+    1. Title match (max 0.35)
+    2. Product type match (max 0.15) - e.g., "Pop!", "Pop! & Buddy"
+    3. Box number match (max 0.35)
+    4. Category/Series/License overlap (max 0.15 combined)
+
+    Total possible: 1.0
+    Threshold: 0.4 (FUNKO_MATCH_THRESHOLD)
+    """
     score = 0.0
     factors = {}
-    threshold = FUNKO_MATCH_THRESHOLD  # Use lower threshold for Funkos
+    threshold = FUNKO_MATCH_THRESHOLD
 
+    # Extract funko fields
     title = funko.get("title", "")
     normalized_title = normalize_title(title)
+    product_type = normalize_title(funko.get("product_type", ""))  # e.g., "pop", "pop buddy"
     category = normalize_title(funko.get("category", ""))
     license_name = normalize_title(funko.get("license", ""))
-
-    # PriceCharting puts franchise info in console-name and genre, not product-name
-    console_name = normalize_title(product.get("console-name", ""))
-    genre = normalize_title(product.get("genre", ""))
-    # Combine product fields for better matching
-    full_product_text = f"{normalized_product} {console_name} {genre}"
-
     series_names = funko.get("series_names") or ""
     normalized_series = normalize_title(series_names)
 
-    # === Title matching (max 0.5) - check against full product text ===
+    # Extract PriceCharting fields
+    # PC puts franchise info in console-name and genre, not product-name
+    console_name = normalize_title(product.get("console-name", ""))
+    genre = normalize_title(product.get("genre", ""))
+    full_product_text = f"{normalized_product} {console_name} {genre}"
+
+    # === FACTOR 1: Title matching (max 0.35) ===
     if normalized_title and full_product_text:
         if normalized_title == normalized_product:
             factors["title_exact"] = 0.35
             score += 0.35
         elif normalized_title in full_product_text:
-            # Title found in product name, console, or genre
             factors["title_substring"] = 0.25
             score += 0.25
         elif normalized_product in normalized_title:
             factors["title_reverse_substring"] = 0.2
             score += 0.2
         else:
-            # Word overlap against full product text
+            # Word overlap
             title_words = set(normalized_title.split())
             product_words = set(full_product_text.split())
             if title_words and product_words:
                 overlap = len(title_words & product_words)
                 overlap_ratio = overlap / len(title_words)
                 if overlap_ratio >= 0.8:
-                    factors["title_word_overlap"] = 0.3
-                    score += 0.3
+                    factors["title_word_overlap"] = 0.25
+                    score += 0.25
                 elif overlap_ratio >= 0.5:
                     factors["title_partial_overlap"] = 0.15
                     score += 0.15
 
-    # === Box number match (max 0.45) ===
+    # === FACTOR 2: Product type match (max 0.15) ===
+    # Check if product_type (e.g., "Pop!", "Pop! Vinyl") matches PC console-name
+    if product_type:
+        if "pop" in product_type and "pop" in console_name:
+            factors["product_type_pop"] = 0.15
+            score += 0.15
+        elif product_type in console_name:
+            factors["product_type_match"] = 0.1
+            score += 0.1
+    elif "funko pop" in console_name or "funko" in console_name:
+        # Fallback: PC product is a Funko even if we don't have product_type
+        factors["console_funko"] = 0.1
+        score += 0.1
+
+    # === FACTOR 3: Box number match (max 0.35) ===
     box_number = funko.get("box_number", "")
     if box_number:
         box_num_str = str(box_number).strip()
-        # Check box number in product name (e.g., "Shuri #1174")
-        if box_num_str and (f"#{box_num_str}" in normalized_product or box_num_str == normalized_product.split()[-1] if normalized_product else False):
-            factors["box_number"] = 0.45
-            score += 0.45
+        # Check for box number in product name (e.g., "Shuri #1174" or "Shuri 1174")
+        if box_num_str:
+            if f"#{box_num_str}" in normalized_product:
+                factors["box_number_hash"] = 0.35
+                score += 0.35
+            elif normalized_product.endswith(box_num_str):
+                factors["box_number_suffix"] = 0.3
+                score += 0.3
+            elif f" {box_num_str} " in f" {normalized_product} ":
+                factors["box_number_contains"] = 0.25
+                score += 0.25
 
-    # === Category / series / license cues (max ~0.25 combined) ===
-    # Check console-name for "funko pop" (strong indicator)
-    if "funko pop" in console_name or "funko" in console_name:
-        factors["category_funko"] = 0.15
-        score += 0.15
-    elif "pop" in console_name:
-        factors["category_pop"] = 0.1
-        score += 0.1
+    # === FACTOR 4: Category / Series / License (max 0.15 combined) ===
+    context_score = 0.0
 
     if category and category in full_product_text:
-        factors["category_match"] = 0.1
-        score += 0.1
+        factors["category_match"] = 0.05
+        context_score += 0.05
 
     if normalized_series:
         series_tokens = set(normalized_series.split())
@@ -317,12 +343,15 @@ def _score_funko_match(
         if series_tokens and product_tokens:
             overlap = len(series_tokens & product_tokens)
             if overlap > 0:
-                factors["series_overlap"] = 0.1
-                score += 0.1
+                factors["series_overlap"] = 0.05
+                context_score += 0.05
 
     if license_name and license_name in full_product_text:
         factors["license_match"] = 0.05
-        score += 0.05
+        context_score += 0.05
+
+    # Cap context score at 0.15
+    score += min(context_score, 0.15)
 
     # Determine confidence (using Funko-specific threshold)
     if score >= HIGH_CONFIDENCE_THRESHOLD:
