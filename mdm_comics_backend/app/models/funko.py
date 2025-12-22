@@ -46,6 +46,7 @@ class Funko(Base):
     license = Column(String(255), nullable=True, index=True)   # e.g., "Star Trek", "Disney"
     product_type = Column(String(100), nullable=True, index=True)  # e.g., "Pop!", "Pop! & Buddy"
     box_number = Column(String(50), nullable=True, index=True)  # e.g., "1755"
+    upc = Column(String(50), nullable=True, index=True)  # UPC barcode for PriceCharting lookup
     funko_url = Column(Text, nullable=True)  # URL to Funko.com product page
 
     # BLOCK-002: PriceCharting integration
