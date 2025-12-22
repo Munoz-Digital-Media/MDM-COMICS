@@ -254,24 +254,31 @@ def _score_funko_match(
     category = normalize_title(funko.get("category", ""))
     license_name = normalize_title(funko.get("license", ""))
 
+    # PriceCharting puts franchise info in console-name and genre, not product-name
+    console_name = normalize_title(product.get("console-name", ""))
+    genre = normalize_title(product.get("genre", ""))
+    # Combine product fields for better matching
+    full_product_text = f"{normalized_product} {console_name} {genre}"
+
     series_names = funko.get("series_names") or ""
     normalized_series = normalize_title(series_names)
 
-    # === Title matching (max 0.5) ===
-    if normalized_title and normalized_product:
+    # === Title matching (max 0.5) - check against full product text ===
+    if normalized_title and full_product_text:
         if normalized_title == normalized_product:
             factors["title_exact"] = 0.35
             score += 0.35
-        elif normalized_title in normalized_product:
+        elif normalized_title in full_product_text:
+            # Title found in product name, console, or genre
             factors["title_substring"] = 0.25
             score += 0.25
         elif normalized_product in normalized_title:
             factors["title_reverse_substring"] = 0.2
             score += 0.2
         else:
-            # Word overlap
+            # Word overlap against full product text
             title_words = set(normalized_title.split())
-            product_words = set(normalized_product.split())
+            product_words = set(full_product_text.split())
             if title_words and product_words:
                 overlap = len(title_words & product_words)
                 overlap_ratio = overlap / len(title_words)
@@ -286,29 +293,34 @@ def _score_funko_match(
     box_number = funko.get("box_number", "")
     if box_number:
         box_num_str = str(box_number).strip()
-        if box_num_str and (box_num_str in normalized_product or f"#{box_num_str}" in normalized_product):
+        # Check box number in product name (e.g., "Shuri #1174")
+        if box_num_str and (f"#{box_num_str}" in normalized_product or box_num_str == normalized_product.split()[-1] if normalized_product else False):
             factors["box_number"] = 0.45
             score += 0.45
 
     # === Category / series / license cues (max ~0.25 combined) ===
-    if "funko" in normalized_product or "pop" in normalized_product:
-        factors["category_funko"] = 0.1
+    # Check console-name for "funko pop" (strong indicator)
+    if "funko pop" in console_name or "funko" in console_name:
+        factors["category_funko"] = 0.15
+        score += 0.15
+    elif "pop" in console_name:
+        factors["category_pop"] = 0.1
         score += 0.1
 
-    if category and category in normalized_product:
+    if category and category in full_product_text:
         factors["category_match"] = 0.1
         score += 0.1
 
     if normalized_series:
         series_tokens = set(normalized_series.split())
-        product_tokens = set(normalized_product.split())
+        product_tokens = set(full_product_text.split())
         if series_tokens and product_tokens:
             overlap = len(series_tokens & product_tokens)
             if overlap > 0:
                 factors["series_overlap"] = 0.1
                 score += 0.1
 
-    if license_name and license_name in normalized_product:
+    if license_name and license_name in full_product_text:
         factors["license_match"] = 0.05
         score += 0.05
 
