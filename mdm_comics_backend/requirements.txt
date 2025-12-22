@@ -1,5 +1,6 @@
 # MDM Comics Backend
 # FastAPI Stack
+# Deploy trigger: 2025-12-21
 
 # Core
 fastapi==0.109.0

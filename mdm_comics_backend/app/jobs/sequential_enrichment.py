@@ -145,6 +145,50 @@ logger = logging.getLogger(__name__)
 # Type variable for retry decorator
 T = TypeVar('T')
 
+# =============================================================================
+# ARCH-01: METRON SERIALIZATION QUEUE
+# =============================================================================
+# Global queue for Metron requests to ensure strict serialization
+# Tuple: (function, args, kwargs, future)
+metron_request_queue: asyncio.Queue = asyncio.Queue()
+
+async def metron_worker():
+    """
+    Dedicated worker to process Metron requests serially.
+    Ensures exactly 1 request per second, regardless of concurrency.
+    """
+    logger.info("[MetronWorker] Started serial request processor")
+    while True:
+        try:
+            func, args, kwargs, future = await metron_request_queue.get()
+            
+            # Check if future was already cancelled (caller gave up)
+            if future.done():
+                metron_request_queue.task_done()
+                continue
+                
+            try:
+                # Execute the actual query
+                result = await func(*args, **kwargs)
+                if not future.done():
+                    future.set_result(result)
+            except Exception as e:
+                if not future.done():
+                    future.set_exception(e)
+            finally:
+                metron_request_queue.task_done()
+                
+                # Strict 1.0s spacing between requests
+                # This is the "heartbeat" of the rate limiter
+                await asyncio.sleep(1.0)
+                
+        except asyncio.CancelledError:
+            logger.info("[MetronWorker] Worker cancelled")
+            break
+        except Exception as e:
+            logger.error(f"[MetronWorker] Unexpected error: {e}")
+            await asyncio.sleep(1.0)  # Sleep on error to prevent spin loops
+
 
 # =============================================================================
 # v2.3.1: DATE PARSING HELPER
@@ -606,7 +650,7 @@ class SourceRateLimiter:
     # Adaptive limits (learned from responses)
     requests_this_minute: int = 0
     minute_start: float = 0.0
-    rate_limit_ceiling: Optional[int] = None  # From X-RateLimit-Limit header
+    rate_limit_ceiling: Optional[int] = 30  # Default to 30/min (Metron safe) to prevent startup bursts
 
     def can_make_request(self) -> bool:
         """Check if we can make a request to this source."""
@@ -723,6 +767,7 @@ class RateLimitManager:
 
     def __init__(self):
         self.limiters: Dict[str, SourceRateLimiter] = {}
+        self._lock = asyncio.Lock()  # RL-FIX-01: Global lock for atomic checks
 
         # Configure base delays per source (known limits)
         self._base_delays = {
@@ -758,21 +803,33 @@ class RateLimitManager:
         IMPORTANT: Healthy sources (no rate limit issues) get minimal delay.
         This prevents unhealthy sources from slowing down healthy ones.
         """
-        limiter = self.get_limiter(source_name)
+        # RL-FIX-01: Critical section - must hold lock to prevent race conditions
+        # where multiple tasks pass the check simultaneously before updating state.
+        async with self._lock:
+            limiter = self.get_limiter(source_name)
 
-        # If source is blocked, don't wait - return False so caller can try others
-        if not limiter.can_make_request():
-            logger.debug(f"[RateLimit] {source_name} blocked, skipping for now")
-            return False
+            # If source is blocked, don't wait - return False so caller can try others
+            if not limiter.can_make_request():
+                logger.debug(f"[RateLimit] {source_name} blocked, skipping for now")
+                return False
 
-        delay = limiter.get_required_delay()
+            delay = limiter.get_required_delay()
+            if delay > 0:
+                # Release lock while sleeping so others aren't blocked from *checking*
+                # BUT this re-introduces a race condition if we sleep!
+                # Better approach: update state immediately, then sleep outside lock.
+                pass
+
+            # Update state immediately inside lock
+            limiter.record_request()
+        
+        # Now sleep outside the lock if needed
         if delay > 0:
             # Only log delays > 1 second to reduce noise
             if delay > 1.0:
                 logger.debug(f"[RateLimit] Waiting {delay:.1f}s for {source_name}")
             await asyncio.sleep(delay)
 
-        limiter.record_request()
         return True
 
     def get_available_sources(self, sources: List[str]) -> List[str]:
@@ -972,6 +1029,40 @@ def get_sources_for_fields(missing_fields: Set[str]) -> Set[str]:
 # =============================================================================
 
 async def query_metron(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Wrapper for Metron queries to enforce serial execution via metron_request_queue.
+    ARCH-01: All Metron requests now go through the single-threaded worker.
+    """
+    updates = {}
+    
+    # Create a future to receive the result
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    
+    # Enqueue the request
+    # Tuple: (function, args, kwargs, future)
+    await metron_request_queue.put((_query_metron_impl, (comic, missing_fields, rate_mgr), {}, future))
+    
+    try:
+        # Await the result with timeout
+        # Using 60s timeout to allow for queue backlog
+        result = await asyncio.wait_for(future, timeout=60.0)
+        return result
+    except asyncio.TimeoutError:
+        logger.warning(f"[metron] Queue timeout for comic {comic.get('id')}")
+        # Try to cancel the future so the worker doesn't waste time
+        future.cancel()
+        return updates
+    except Exception as e:
+        logger.error(f"[metron] Queue error: {e}")
+        return updates
+
+
+async def _query_metron_impl(
     comic: Dict[str, Any],
     missing_fields: Set[str],
     rate_mgr: RateLimitManager
@@ -2307,6 +2398,9 @@ async def run_sequential_exhaustive_enrichment_job(
     BATCH_WRITE_SIZE = 50
     CHECKPOINT_INTERVAL = 50
 
+    # ARCH-01: Start Metron serial worker
+    metron_task = asyncio.create_task(metron_worker())
+
     try:
         async with AsyncSessionLocal() as db:
             # Initialize checkpoint
@@ -2846,6 +2940,14 @@ async def run_sequential_exhaustive_enrichment_job(
                 stats["errors"] += 1  # Increment errors counter, not overwrite
 
     finally:
+        # ARCH-01: Stop Metron serial worker
+        if not metron_task.done():
+            metron_task.cancel()
+            try:
+                await metron_task
+            except asyncio.CancelledError:
+                pass
+
         # E-H01 FIX: Always cleanup HTTP connections
         await cleanup_http_pool()
         logger.info(f"[{job_name}] HTTP connection pool cleaned up")
