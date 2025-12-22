@@ -4447,3 +4447,34 @@ async def update_funko(
         "title": funko_title,
         "fields_updated": [k for k in params.keys() if k != "id"]
     }
+
+
+@router.post("/funkos/migrate-upc")
+async def migrate_funkos_upc(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manually add UPC column to funkos table if it doesn't exist.
+    This is a one-time migration endpoint.
+    """
+    try:
+        # Check if column exists
+        result = await db.execute(text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'funkos' AND column_name = 'upc'
+        """))
+        if result.fetchone():
+            return {"status": "exists", "message": "upc column already exists"}
+
+        # Add column and index
+        await db.execute(text("ALTER TABLE funkos ADD COLUMN upc VARCHAR(50)"))
+        await db.execute(text("CREATE INDEX IF NOT EXISTS idx_funkos_upc ON funkos(upc) WHERE upc IS NOT NULL"))
+        await db.commit()
+
+        logger.info(f"[Admin] User {current_user.id} ran UPC column migration")
+        return {"status": "created", "message": "upc column added to funkos table"}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"UPC migration failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
