@@ -15,7 +15,7 @@ import { Calendar, ExternalLink, MapPin, ChevronDown, ChevronUp, ChevronRight } 
 import { DEFAULT_CONVENTIONS } from '../config/conventions.config';
 import { parseDateText, isFutureEvent, sortEventsByDate, formatDateShort } from '../utils/dateUtils';
 
-const MAX_VISIBLE_BUTTONS = 5;
+const MAX_TOTAL_ITEMS = 5; // Total items including "+more" button
 
 export default function ConventionQuickAccess({ onViewAll }) {
   const [expandedEventId, setExpandedEventId] = useState(null);
@@ -61,13 +61,17 @@ export default function ConventionQuickAccess({ onViewAll }) {
     return processedEvents.find((e) => e.id === expandedEventId);
   }, [expandedEventId, processedEvents]);
 
-  // Visible events (capped at MAX_VISIBLE_BUTTONS)
-  const visibleEvents = useMemo(() => {
-    return processedEvents.slice(0, MAX_VISIBLE_BUTTONS);
-  }, [processedEvents]);
+  // Calculate how many event buttons to show
+  // If we have more events than MAX_TOTAL_ITEMS, reserve 1 slot for "+more" button
+  const hasMoreEvents = processedEvents.length > MAX_TOTAL_ITEMS;
+  const maxEventButtons = hasMoreEvents ? MAX_TOTAL_ITEMS - 1 : MAX_TOTAL_ITEMS;
 
-  const hasMoreEvents = processedEvents.length > MAX_VISIBLE_BUTTONS;
+  const visibleEvents = useMemo(() => {
+    return processedEvents.slice(0, maxEventButtons);
+  }, [processedEvents, maxEventButtons]);
+
   const totalEventCount = processedEvents.length;
+  const hiddenEventCount = totalEventCount - visibleEvents.length;
 
   // Don't render if no future events
   if (processedEvents.length === 0) {
@@ -95,9 +99,9 @@ export default function ConventionQuickAccess({ onViewAll }) {
         )}
       </div>
 
-      {/* Button Row - Horizontal scroll on mobile */}
+      {/* Button Row - No scroll, max 5 items */}
       <div
-        className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent"
+        className="flex items-center gap-2 flex-wrap"
         role="tablist"
         aria-label="Convention events"
       >
@@ -133,13 +137,13 @@ export default function ConventionQuickAccess({ onViewAll }) {
           );
         })}
 
-        {/* More events indicator */}
-        {hasMoreEvents && onViewAll && (
+        {/* More events indicator - only if there are hidden events */}
+        {hiddenEventCount > 0 && onViewAll && (
           <button
             onClick={onViewAll}
             className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap flex-shrink-0 bg-zinc-800/50 text-orange-400 hover:bg-zinc-700 border border-zinc-700 hover:border-orange-500/30"
           >
-            <span className="text-sm font-medium">+{totalEventCount - MAX_VISIBLE_BUTTONS} more</span>
+            <span className="text-sm font-medium">+{hiddenEventCount} more</span>
             <ChevronRight className="w-4 h-4" />
           </button>
         )}
