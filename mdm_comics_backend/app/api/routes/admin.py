@@ -2615,30 +2615,58 @@ async def get_pricecharting_matching_status(
     db: AsyncSession = Depends(get_db)
 ):
     """Get PriceCharting matching job status for both Funkos and Comics."""
-    # Get checkpoint - v1.20.0: Include control_signal for pause/stop state
+    # Get checkpoints for BOTH actual job names (not legacy 'pricecharting_matching')
     result = await db.execute(text("""
         SELECT job_name, is_running, total_processed, total_updated, total_errors,
                last_run_started, last_run_completed, last_error, state_data,
                control_signal, paused_at
         FROM pipeline_checkpoints
-        WHERE job_name = 'pricecharting_matching'
+        WHERE job_name IN ('funko_pricecharting_match', 'comic_pricecharting_match')
     """))
-    row = result.fetchone()
+    rows = result.fetchall()
 
-    checkpoint = None
-    if row:
-        checkpoint = {
-            "is_running": row[1],
-            "total_processed": row[2],
-            "total_matched": row[3],
-            "total_errors": row[4],
-            "last_run_started": row[5].isoformat() if row[5] else None,
-            "last_run_completed": row[6].isoformat() if row[6] else None,
-            "last_error": row[7],
-            "state_data": row[8],
-            "control_signal": row[9] if len(row) > 9 else "run",
-            "paused_at": row[10].isoformat() if len(row) > 10 and row[10] else None,
-        }
+    # Aggregate checkpoint data from both jobs
+    is_running = any(row[1] for row in rows)
+    total_processed = sum(row[2] or 0 for row in rows)
+    total_updated = sum(row[3] or 0 for row in rows)
+    total_errors = sum(row[4] or 0 for row in rows)
+
+    # Get most recent timestamps
+    last_started = None
+    last_completed = None
+    last_error = None
+    state_data = {}
+    control_signal = "run"
+
+    for row in rows:
+        job_name = row[0]
+        if row[5] and (last_started is None or row[5] > last_started):
+            last_started = row[5]
+        if row[6] and (last_completed is None or row[6] > last_completed):
+            last_completed = row[6]
+        if row[7]:
+            last_error = row[7]
+        if row[8]:
+            # Merge state_data from both jobs
+            if job_name == 'funko_pricecharting_match':
+                state_data['funko_last_id'] = row[8].get('last_id', 0)
+            elif job_name == 'comic_pricecharting_match':
+                state_data['comic_last_id'] = row[8].get('last_id', 0)
+        if row[9] and row[9] != 'run':
+            control_signal = row[9]
+
+    checkpoint = {
+        "is_running": is_running,
+        "total_processed": total_processed,
+        "total_matched": total_updated,
+        "total_errors": total_errors,
+        "last_run_started": last_started.isoformat() if last_started else None,
+        "last_run_completed": last_completed.isoformat() if last_completed else None,
+        "last_error": last_error,
+        "state_data": state_data,
+        "control_signal": control_signal,
+        "paused_at": None,
+    }
 
     # Get matching stats for BOTH entity types
     comics_matched = await db.execute(text(
