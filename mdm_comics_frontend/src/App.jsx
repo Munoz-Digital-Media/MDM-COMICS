@@ -555,9 +555,6 @@ import './styles/animations.css';
         {/* Main Content */}
         {currentView === "shop" && (
           <main className="hero-gradient">
-            {/* Convention Quick Access - Above Hero */}
-            <ConventionQuickAccess onViewAll={() => setIsConventionsOpen(true)} />
-
             {/* Hero Section */}
             <section className="max-w-7xl mx-auto px-4 py-12">
               <div className="text-center mb-8 sm:mb-12 fade-up" style={{ animationDelay: "0.1s" }}>
@@ -994,6 +991,11 @@ import './styles/animations.css';
           <div className="fixed inset-0 z-50 overflow-y-auto">
             <ConventionsPage onBack={() => setIsConventionsOpen(false)} />
           </div>
+        )}
+
+        {/* Convention Quick Access - Above Shipping Banner */}
+        {currentView === "shop" && (
+          <ConventionQuickAccess onViewAll={() => setIsConventionsOpen(true)} />
         )}
 
         {/* Shipping Banner - Fixed above footer */}

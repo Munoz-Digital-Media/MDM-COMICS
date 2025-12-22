@@ -20,7 +20,7 @@ const keyframesStyle = `
   @keyframes conventionFadeSlide {
     from {
       opacity: 0;
-      transform: translateY(-8px);
+      transform: translateY(8px);
     }
     to {
       opacity: 1;
@@ -118,7 +118,7 @@ export default function ConventionQuickAccess({ onViewAll }) {
     : null;
 
   return (
-    <section className="max-w-7xl mx-auto px-4 pt-6 pb-4">
+    <section className="relative max-w-7xl mx-auto px-4 pt-6 pb-4">
       <style>{keyframesStyle}</style>
 
       {/* Section Label */}
@@ -186,11 +186,11 @@ export default function ConventionQuickAccess({ onViewAll }) {
         </div>
       </div>
 
-      {/* Detail Card - completely separate block below */}
+      {/* Detail Card - Floating overlay that pops UP */}
       {expandedEvent && (
         <div
           key={expandedEvent.id}
-          className="mt-3 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-lg"
+          className="absolute bottom-full left-0 right-0 mb-2 mx-4 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-2xl shadow-black/50 z-50"
           style={{ animation: 'conventionFadeSlide 0.15s ease-out both' }}
         >
           {/* Row 1: Convention Name | Date | Time | Actions */}
