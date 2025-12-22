@@ -328,7 +328,9 @@ async def update_independent_checkpoint(
     params = {"name": job_name}
 
     if last_id is not None:
-        updates.append("state_data = jsonb_set(COALESCE(state_data, '{}'), ARRAY['last_id'], to_jsonb(:last_id))")
+        # Note: state_data is json type (not jsonb), so we can't use jsonb_set()
+        # Instead, we rebuild the entire JSON object with the updated last_id
+        updates.append("state_data = jsonb_build_object('last_id', :last_id)::json")
         params["last_id"] = last_id
 
     if processed_delta:
