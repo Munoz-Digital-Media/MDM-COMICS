@@ -4250,7 +4250,6 @@ class FunkoUpdateRequest(BaseModel):
     price_loose: Optional[float] = Field(None, ge=0, description="Loose price in dollars")
     price_cib: Optional[float] = Field(None, ge=0, description="Complete in box price")
     price_new: Optional[float] = Field(None, ge=0, description="New/sealed price")
-    upc: Optional[str] = Field(None, max_length=50, description="UPC barcode")
 
 
 @router.get("/funkos")
@@ -4302,7 +4301,7 @@ async def list_funkos(
 
     # Get records
     result = await db.execute(text(f"""
-        SELECT id, title, category, license, box_number, upc,
+        SELECT id, title, category, license, box_number,
                pricecharting_id, price_loose, price_cib, price_new,
                pricecharting_synced_at, updated_at
         FROM funkos
@@ -4321,13 +4320,12 @@ async def list_funkos(
             "category": row[2],
             "license": row[3],
             "box_number": row[4],
-            "upc": row[5],
-            "pricecharting_id": row[6],
-            "price_loose": float(row[7]) if row[7] else None,
-            "price_cib": float(row[8]) if row[8] else None,
-            "price_new": float(row[9]) if row[9] else None,
-            "pricecharting_synced_at": row[10].isoformat() if row[10] else None,
-            "updated_at": row[11].isoformat() if row[11] else None,
+            "pricecharting_id": row[5],
+            "price_loose": float(row[6]) if row[6] else None,
+            "price_cib": float(row[7]) if row[7] else None,
+            "price_new": float(row[8]) if row[8] else None,
+            "pricecharting_synced_at": row[9].isoformat() if row[9] else None,
+            "updated_at": row[10].isoformat() if row[10] else None,
         })
 
     return {
@@ -4352,7 +4350,7 @@ async def get_funko(
 ):
     """Get single Funko record with all details."""
     result = await db.execute(text("""
-        SELECT id, title, category, license, box_number, upc,
+        SELECT id, title, category, license, box_number,
                pricecharting_id, price_loose, price_cib, price_new,
                pricecharting_synced_at, created_at, updated_at,
                image_url, exclusive_to
@@ -4370,17 +4368,16 @@ async def get_funko(
         "category": row[2],
         "license": row[3],
         "box_number": row[4],
-        "upc": row[5],
-        "pricecharting_id": row[6],
-        "price_loose": float(row[7]) if row[7] else None,
-        "price_cib": float(row[8]) if row[8] else None,
-        "price_new": float(row[9]) if row[9] else None,
-        "pricecharting_synced_at": row[10].isoformat() if row[10] else None,
-        "created_at": row[11].isoformat() if row[11] else None,
-        "updated_at": row[12].isoformat() if row[12] else None,
-        "image_url": row[13],
-        "exclusive_to": row[14],
-        "pricecharting_url": f"https://www.pricecharting.com/game/funko/{row[6]}" if row[6] else None
+        "pricecharting_id": row[5],
+        "price_loose": float(row[6]) if row[6] else None,
+        "price_cib": float(row[7]) if row[7] else None,
+        "price_new": float(row[8]) if row[8] else None,
+        "pricecharting_synced_at": row[9].isoformat() if row[9] else None,
+        "created_at": row[10].isoformat() if row[10] else None,
+        "updated_at": row[11].isoformat() if row[11] else None,
+        "image_url": row[12],
+        "exclusive_to": row[13],
+        "pricecharting_url": f"https://www.pricecharting.com/game/funko/{row[5]}" if row[5] else None
     }
 
 
@@ -4424,10 +4421,6 @@ async def update_funko(
     if request.price_new is not None:
         updates.append("price_new = :price_new")
         params["price_new"] = request.price_new
-
-    if request.upc is not None:
-        updates.append("upc = :upc")
-        params["upc"] = request.upc
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
