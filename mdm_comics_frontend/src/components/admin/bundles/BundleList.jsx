@@ -424,18 +424,18 @@ export default function BundleList() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-sm text-white font-medium">
-                        ${bundle.bundle_price?.toFixed(2)}
+                        ${bundle.bundle_price != null ? Number(bundle.bundle_price).toFixed(2) : '0.00'}
                       </span>
-                      {bundle.compare_at_price && (
+                      {bundle.compare_at_price != null && (
                         <span className="text-xs text-zinc-500 line-through ml-2">
-                          ${bundle.compare_at_price?.toFixed(2)}
+                          ${Number(bundle.compare_at_price).toFixed(2)}
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {bundle.savings_percent ? (
+                      {bundle.savings_percent != null && Number(bundle.savings_percent) > 0 ? (
                         <span className="text-sm text-green-400">
-                          {bundle.savings_percent.toFixed(0)}% off
+                          {Number(bundle.savings_percent).toFixed(0)}% off
                         </span>
                       ) : (
                         <span className="text-sm text-zinc-500">-</span>
