@@ -291,6 +291,10 @@ async def lifespan(app: FastAPI):
     # Import Funkos if database is empty
     await import_funkos_if_needed()
 
+    # ARCH-01: Start global Metron worker
+    from app.adapters.metron_adapter import start_metron_worker, stop_metron_worker
+    await start_metron_worker()
+
     # P0-1: Start stock cleanup scheduler if enabled
     if settings.STOCK_CLEANUP_ENABLED:
         _stock_cleanup_task = asyncio.create_task(stock_cleanup_scheduler())
@@ -330,6 +334,7 @@ async def lifespan(app: FastAPI):
 
     # P2-11: Close HTTP clients to prevent connection leaks
     await metron_service.close()
+    await stop_metron_worker()
     logger.info("Metron HTTP client closed")
 
 

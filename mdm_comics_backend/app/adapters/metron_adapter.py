@@ -116,6 +116,72 @@ def _get_mokkari_client():
     return _mokkari_client
 
 
+# Global request queue and worker task
+_metron_request_queue: asyncio.Queue = asyncio.Queue()
+_metron_worker_task: Optional[asyncio.Task] = None
+
+
+async def metron_worker():
+    """
+    Dedicated worker to process Metron requests serially.
+    Ensures exactly 1 request per second across the entire application.
+    """
+    logger.info("[MetronWorker] Started serial request processor")
+    while True:
+        try:
+            sync_func, args, kwargs, future = await _metron_request_queue.get()
+            
+            # Check if caller cancelled
+            if future.done():
+                _metron_request_queue.task_done()
+                continue
+
+            try:
+                # Log request start
+                _request_logger.log_request()
+                
+                # Execute sync function in thread pool
+                result = await asyncio.to_thread(sync_func, *args, **kwargs)
+                
+                if not future.done():
+                    future.set_result(result)
+            except Exception as e:
+                if not future.done():
+                    future.set_exception(e)
+            finally:
+                _metron_request_queue.task_done()
+                # Strict rate limiting spacing
+                await asyncio.sleep(1.0)
+                
+        except asyncio.CancelledError:
+            logger.info("[MetronWorker] Worker cancelled")
+            break
+        except Exception as e:
+            logger.error(f"[MetronWorker] Unexpected error: {e}")
+            await asyncio.sleep(1.0)
+
+
+async def start_metron_worker():
+    """Start the global Metron worker if not running."""
+    global _metron_worker_task
+    if _metron_worker_task is None or _metron_worker_task.done():
+        _metron_worker_task = asyncio.create_task(metron_worker())
+        logger.info("[MetronAdapter] Global worker started")
+
+
+async def stop_metron_worker():
+    """Stop the global Metron worker."""
+    global _metron_worker_task
+    if _metron_worker_task and not _metron_worker_task.done():
+        _metron_worker_task.cancel()
+        try:
+            await _metron_worker_task
+        except asyncio.CancelledError:
+            pass
+        _metron_worker_task = None
+        logger.info("[MetronAdapter] Global worker stopped")
+
+
 class MetronAdapter(DataSourceAdapter):
     """
     Adapter for Metron comic database API using official Mokkari library.
@@ -210,29 +276,40 @@ class MetronAdapter(DataSourceAdapter):
                     errors=[{"error": f"Unknown endpoint: {endpoint}"}]
                 )
 
-            # Log the request
-            _request_logger.log_request()
+            # Enqueue request to global worker
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            
+            # Ensure worker is running (lazy start if needed, though explicit start preferred)
+            if _metron_worker_task is None:
+                 await start_metron_worker()
 
-            # Run sync mokkari in thread pool
-            results = await asyncio.to_thread(method, params)
+            await _metron_request_queue.put((method, (params,), {}, future))
 
-            # Convert Mokkari objects to dicts
-            records = []
-            for item in results:
-                if hasattr(item, '__dict__'):
-                    records.append(self._mokkari_obj_to_dict(item))
-                else:
-                    records.append(item)
+            try:
+                # Wait for result with timeout (allow queue backlog)
+                results = await asyncio.wait_for(future, timeout=120.0)
+                
+                # Convert Mokkari objects to dicts
+                records = []
+                for item in results:
+                    if hasattr(item, '__dict__'):
+                        records.append(self._mokkari_obj_to_dict(item))
+                    else:
+                        records.append(item)
 
-            # Log success
-            _request_logger.log_success(endpoint, len(records))
+                # Log success (worker logs request start)
+                _request_logger.log_success(endpoint, len(records))
 
-            return FetchResult(
-                success=True,
-                records=records,
-                has_more=len(records) >= 20,  # Metron default page size
-                total_count=len(records),
-            )
+                return FetchResult(
+                    success=True,
+                    records=records,
+                    has_more=len(records) >= 20,  # Metron default page size
+                    total_count=len(records),
+                )
+            except asyncio.TimeoutError:
+                future.cancel()
+                return FetchResult(success=False, errors=[{"error": "Queue timeout"}])
 
         except Exception as e:
             # Check for rate limit error
@@ -274,16 +351,26 @@ class MetronAdapter(DataSourceAdapter):
                 logger.error(f"[{self.name}] Unknown endpoint: {endpoint}")
                 return None
 
-            # Log the request
-            _request_logger.log_request()
+            # Enqueue request
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            
+            if _metron_worker_task is None:
+                 await start_metron_worker()
 
-            # Run sync mokkari in thread pool
-            result = await asyncio.to_thread(method, int(external_id))
+            await _metron_request_queue.put((method, (int(external_id),), {}, future))
 
-            if result:
-                _request_logger.log_success(f"{endpoint}/{external_id}", 1)
-                return self._mokkari_obj_to_dict(result)
-            return None
+            try:
+                result = await asyncio.wait_for(future, timeout=120.0)
+                
+                if result:
+                    _request_logger.log_success(f"{endpoint}/{external_id}", 1)
+                    return self._mokkari_obj_to_dict(result)
+                return None
+            except asyncio.TimeoutError:
+                future.cancel()
+                logger.warning(f"[{self.name}] Queue timeout fetching {external_id}")
+                return None
 
         except Exception as e:
             error_str = str(e).lower()

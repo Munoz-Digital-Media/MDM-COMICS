@@ -76,6 +76,10 @@ async def main():
     signal.signal(signal.SIGINT, handle_shutdown)
 
     try:
+        # Start global Metron worker
+        from app.adapters.metron_adapter import start_metron_worker, stop_metron_worker
+        await start_metron_worker()
+
         # Start the pipeline scheduler
         await pipeline_scheduler.start()
 
@@ -90,6 +94,7 @@ async def main():
     finally:
         logger.info("Stopping pipeline scheduler...")
         await pipeline_scheduler.stop()
+        await stop_metron_worker()
         logger.info("Cron service stopped.")
 
 
