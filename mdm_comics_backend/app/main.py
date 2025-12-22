@@ -131,6 +131,33 @@ _cleanup_heartbeat: dict = {
 }
 
 
+async def ensure_schema_migrations():
+    """
+    Run lightweight schema migrations on startup.
+    Adds missing columns without blocking startup.
+    """
+    async with AsyncSessionLocal() as db:
+        try:
+            # Add UPC column to funkos if not exists (for PriceCharting matching)
+            await db.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'funkos' AND column_name = 'upc'
+                    ) THEN
+                        ALTER TABLE funkos ADD COLUMN upc VARCHAR(50);
+                        CREATE INDEX IF NOT EXISTS idx_funkos_upc ON funkos(upc) WHERE upc IS NOT NULL;
+                        RAISE NOTICE 'Added upc column to funkos table';
+                    END IF;
+                END $$;
+            """))
+            await db.commit()
+            logger.info("Schema migrations checked/applied")
+        except Exception as e:
+            logger.warning(f"Schema migration check failed (non-fatal): {e}")
+
+
 async def import_funkos_if_needed():
     """
     Import Funko data using handle-based reconciliation (BE-007 fix).
@@ -287,6 +314,9 @@ async def lifespan(app: FastAPI):
     v1.7.0: Auto-create price_snapshots table for ML/AI training
     """
     global _stock_cleanup_task
+
+    # Run schema migrations first (adds missing columns like upc)
+    await ensure_schema_migrations()
 
     # Import Funkos if database is empty
     await import_funkos_if_needed()
