@@ -2468,6 +2468,27 @@ async def trigger_pricecharting_matching(
     }
 
 
+@router.post("/pipeline/pricecharting/reset")
+async def reset_pricecharting_checkpoints(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reset stale PriceCharting job checkpoints.
+    Use this if jobs are stuck showing 'already running'.
+    """
+    await db.execute(text("""
+        UPDATE pipeline_checkpoints
+        SET is_running = false,
+            last_error = 'Manual reset by admin at ' || NOW()
+        WHERE job_name IN ('funko_pricecharting_match', 'comic_pricecharting_match')
+          AND is_running = true
+    """))
+    await db.commit()
+    logger.info(f"[Admin] User {current_user.id} reset PriceCharting job checkpoints")
+    return {"status": "reset", "message": "PriceCharting job checkpoints reset"}
+
+
 @router.get("/pipeline/pricecharting/status")
 async def get_pricecharting_matching_status(
     current_user: User = Depends(get_current_admin),
