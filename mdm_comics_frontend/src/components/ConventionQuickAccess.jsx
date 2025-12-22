@@ -117,8 +117,11 @@ export default function ConventionQuickAccess({ onViewAll }) {
     ? visibleEvents.find((e) => e.id === expandedEventId)
     : null;
 
+  // Calculate height needed for the popup card (approx 140px)
+  const popupSpacing = expandedEvent ? 'mt-36' : '';
+
   return (
-    <section className="relative max-w-7xl mx-auto px-4 pt-6 pb-4">
+    <section className={`relative max-w-7xl mx-auto px-4 pt-6 pb-4 transition-all duration-200 ${popupSpacing}`}>
       <style>{keyframesStyle}</style>
 
       {/* Section Label */}
