@@ -580,13 +580,35 @@ async def run_funko_pricecharting_match_job(
                                     break
 
                             if pc_id:
+                                # Insert into match review queue instead of direct update
+                                # Convert score (0.0-1.0) to integer (0-10) for queue
+                                int_score = int(match_result.score * 10)
                                 await db.execute(text("""
-                                    UPDATE funkos
-                                    SET pricecharting_id = :pc_id, updated_at = NOW()
-                                    WHERE id = :id
-                                """), {"id": funko_id, "pc_id": pc_id})
+                                    INSERT INTO match_review_queue (
+                                        entity_type, entity_id, candidate_source, candidate_id,
+                                        candidate_name, match_method, match_score, match_details,
+                                        status, created_at, updated_at, expires_at
+                                    ) VALUES (
+                                        'funko', :entity_id, 'pricecharting', :pc_id::text,
+                                        :candidate_name, :match_method, :match_score,
+                                        :match_details::jsonb,
+                                        'pending', NOW(), NOW(), NOW() + INTERVAL '30 days'
+                                    )
+                                    ON CONFLICT (entity_type, entity_id, candidate_source, candidate_id)
+                                    DO UPDATE SET
+                                        match_score = EXCLUDED.match_score,
+                                        match_details = EXCLUDED.match_details,
+                                        updated_at = NOW()
+                                """), {
+                                    "entity_id": funko_id,
+                                    "pc_id": pc_id,
+                                    "candidate_name": match_result.product_name,
+                                    "match_method": f"fuzzy_score_{int_score}",
+                                    "match_score": int_score,
+                                    "match_details": json.dumps(match_result.factors),
+                                })
                                 stats["matched"] += 1
-                                logger.debug(f"[{job_name}] Matched Funko {funko_id} -> PC:{pc_id}")
+                                logger.info(f"[{job_name}] Queued Funko {funko_id} for review -> PC:{pc_id} (score={int_score})")
 
                         except Exception as e:
                             stats["errors"] += 1
