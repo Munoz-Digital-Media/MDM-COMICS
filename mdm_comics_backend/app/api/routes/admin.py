@@ -2397,58 +2397,73 @@ async def trigger_pricecharting_matching(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Trigger PriceCharting matching job manually.
+    Trigger PriceCharting matching jobs manually.
 
-    Matches BOTH comics AND funkos to PriceCharting IDs using:
+    Runs BOTH independent matching jobs in parallel:
+    - run_funko_pricecharting_match_job: Matches Funkos using fuzzy title matching
+    - run_comic_pricecharting_match_job: Matches Comics using ISBN/UPC/fuzzy matching
+
+    Matching methods:
     - ISBN lookup (highest confidence for comics)
     - UPC lookup (works for both)
-    - Fuzzy title matching (fallback)
+    - Fuzzy title matching with scoring (fallback)
 
-    This job runs daily to:
-    1. Discover new matches for unmatched records
-    2. Enable price tracking via full_price_sync job
-    3. Feed price_changelog for AI/ML model training
-
-    High-confidence matches (score >= 9) auto-link.
-    Lower confidence matches queue for human review.
+    High-confidence matches auto-link; lower scores queue for review.
     """
     import asyncio
-    from app.jobs.pipeline_scheduler import run_pricecharting_matching_job
+    from app.jobs.pricecharting_jobs import (
+        run_funko_pricecharting_match_job,
+        run_comic_pricecharting_match_job
+    )
 
-    # Check if already running
+    # Check if either job is already running
     result = await db.execute(text("""
-        SELECT is_running FROM pipeline_checkpoints
-        WHERE job_name = 'pricecharting_matching'
+        SELECT job_name, is_running FROM pipeline_checkpoints
+        WHERE job_name IN ('funko_pricecharting_match', 'comic_pricecharting_match')
+          AND is_running = true
     """))
-    row = result.fetchone()
-    if row and row[0]:
+    running_jobs = result.fetchall()
+    if running_jobs:
+        running_names = [r[0] for r in running_jobs]
         raise HTTPException(
             status_code=409,
-            detail="PriceCharting matching job is already running"
+            detail=f"PriceCharting jobs already running: {', '.join(running_names)}"
         )
 
     logger.info(f"PriceCharting matching triggered by admin {current_user.id}")
 
-    # Run in background
-    async def run_job():
+    # Run both jobs in parallel
+    async def run_funko_job():
         try:
-            await run_pricecharting_matching_job(
+            await run_funko_pricecharting_match_job(
                 batch_size=request.batch_size,
                 max_records=request.max_records,
             )
         except Exception as e:
-            logger.error(f"PriceCharting matching job failed: {e}")
+            logger.error(f"Funko PriceCharting matching job failed: {e}")
 
-    # Keep task reference to prevent GC
+    async def run_comic_job():
+        try:
+            await run_comic_pricecharting_match_job(
+                batch_size=request.batch_size,
+                max_records=request.max_records,
+            )
+        except Exception as e:
+            logger.error(f"Comic PriceCharting matching job failed: {e}")
+
+    # Keep task references to prevent GC
     if not hasattr(trigger_pricecharting_matching, '_tasks'):
         trigger_pricecharting_matching._tasks = set()
     trigger_pricecharting_matching._tasks = {t for t in trigger_pricecharting_matching._tasks if not t.done()}
-    task = asyncio.create_task(run_job())
-    trigger_pricecharting_matching._tasks.add(task)
+
+    funko_task = asyncio.create_task(run_funko_job())
+    comic_task = asyncio.create_task(run_comic_job())
+    trigger_pricecharting_matching._tasks.add(funko_task)
+    trigger_pricecharting_matching._tasks.add(comic_task)
 
     return {
         "status": "started",
-        "message": f"PriceCharting matching started for Funkos + Comics (batch_size={request.batch_size})",
+        "message": f"PriceCharting matching started for Funkos + Comics in parallel (batch_size={request.batch_size})",
         "check_status": "/api/admin/pipeline/pricecharting/status"
     }
 
@@ -4223,3 +4238,212 @@ async def get_metron_rate_limit_status(
             "status": "error",
             "error": str(e)
         }
+
+
+# =============================================================================
+# FUNKO DATA MANAGEMENT (Manual PriceCharting ID entry)
+# =============================================================================
+
+class FunkoUpdateRequest(BaseModel):
+    """Request to update Funko record with manual data."""
+    pricecharting_id: Optional[int] = Field(None, description="PriceCharting product ID")
+    price_loose: Optional[float] = Field(None, ge=0, description="Loose price in dollars")
+    price_cib: Optional[float] = Field(None, ge=0, description="Complete in box price")
+    price_new: Optional[float] = Field(None, ge=0, description="New/sealed price")
+    upc: Optional[str] = Field(None, max_length=50, description="UPC barcode")
+
+
+@router.get("/funkos")
+async def list_funkos(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(50, ge=10, le=200, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search by title"),
+    has_pc_id: Optional[bool] = Query(None, description="Filter by has pricecharting_id"),
+    needs_price: Optional[bool] = Query(None, description="Filter by missing prices")
+):
+    """
+    List Funkos with filtering for manual data entry.
+
+    Filters:
+    - search: Search by title (case-insensitive)
+    - has_pc_id: true=has pricecharting_id, false=missing
+    - needs_price: true=has pc_id but no prices
+    """
+    offset = (page - 1) * per_page
+
+    # Build query
+    where_clauses = []
+    params = {"limit": per_page, "offset": offset}
+
+    if search:
+        where_clauses.append("title ILIKE :search")
+        params["search"] = f"%{search}%"
+
+    if has_pc_id is True:
+        where_clauses.append("pricecharting_id IS NOT NULL")
+    elif has_pc_id is False:
+        where_clauses.append("pricecharting_id IS NULL")
+
+    if needs_price is True:
+        where_clauses.append("""
+            pricecharting_id IS NOT NULL
+            AND (price_loose IS NULL AND price_cib IS NULL AND price_new IS NULL)
+        """)
+
+    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+    # Get total count
+    count_result = await db.execute(text(f"""
+        SELECT COUNT(*) FROM funkos WHERE {where_sql}
+    """), params)
+    total = count_result.scalar()
+
+    # Get records
+    result = await db.execute(text(f"""
+        SELECT id, title, category, license, box_number, upc,
+               pricecharting_id, price_loose, price_cib, price_new,
+               pricecharting_synced_at, updated_at
+        FROM funkos
+        WHERE {where_sql}
+        ORDER BY
+            CASE WHEN pricecharting_id IS NULL THEN 0 ELSE 1 END,
+            title
+        LIMIT :limit OFFSET :offset
+    """), params)
+
+    funkos = []
+    for row in result.fetchall():
+        funkos.append({
+            "id": row[0],
+            "title": row[1],
+            "category": row[2],
+            "license": row[3],
+            "box_number": row[4],
+            "upc": row[5],
+            "pricecharting_id": row[6],
+            "price_loose": float(row[7]) if row[7] else None,
+            "price_cib": float(row[8]) if row[8] else None,
+            "price_new": float(row[9]) if row[9] else None,
+            "pricecharting_synced_at": row[10].isoformat() if row[10] else None,
+            "updated_at": row[11].isoformat() if row[11] else None,
+        })
+
+    return {
+        "items": funkos,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page,
+        "filters": {
+            "search": search,
+            "has_pc_id": has_pc_id,
+            "needs_price": needs_price
+        }
+    }
+
+
+@router.get("/funkos/{funko_id}")
+async def get_funko(
+    funko_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get single Funko record with all details."""
+    result = await db.execute(text("""
+        SELECT id, title, category, license, box_number, upc,
+               pricecharting_id, price_loose, price_cib, price_new,
+               pricecharting_synced_at, created_at, updated_at,
+               image_url, exclusive_to
+        FROM funkos
+        WHERE id = :id
+    """), {"id": funko_id})
+    row = result.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Funko not found")
+
+    return {
+        "id": row[0],
+        "title": row[1],
+        "category": row[2],
+        "license": row[3],
+        "box_number": row[4],
+        "upc": row[5],
+        "pricecharting_id": row[6],
+        "price_loose": float(row[7]) if row[7] else None,
+        "price_cib": float(row[8]) if row[8] else None,
+        "price_new": float(row[9]) if row[9] else None,
+        "pricecharting_synced_at": row[10].isoformat() if row[10] else None,
+        "created_at": row[11].isoformat() if row[11] else None,
+        "updated_at": row[12].isoformat() if row[12] else None,
+        "image_url": row[13],
+        "exclusive_to": row[14],
+        "pricecharting_url": f"https://www.pricecharting.com/game/funko/{row[6]}" if row[6] else None
+    }
+
+
+@router.patch("/funkos/{funko_id}")
+async def update_funko(
+    funko_id: int,
+    request: FunkoUpdateRequest,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update Funko record with manual data.
+
+    Use this to manually set pricecharting_id or prices for records
+    that couldn't be auto-matched.
+    """
+    # Verify funko exists
+    result = await db.execute(text("SELECT id, title FROM funkos WHERE id = :id"), {"id": funko_id})
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Funko not found")
+
+    funko_title = row[1]
+
+    # Build update
+    updates = []
+    params = {"id": funko_id}
+
+    if request.pricecharting_id is not None:
+        updates.append("pricecharting_id = :pc_id")
+        params["pc_id"] = request.pricecharting_id
+
+    if request.price_loose is not None:
+        updates.append("price_loose = :price_loose")
+        params["price_loose"] = request.price_loose
+
+    if request.price_cib is not None:
+        updates.append("price_cib = :price_cib")
+        params["price_cib"] = request.price_cib
+
+    if request.price_new is not None:
+        updates.append("price_new = :price_new")
+        params["price_new"] = request.price_new
+
+    if request.upc is not None:
+        updates.append("upc = :upc")
+        params["upc"] = request.upc
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    updates.append("updated_at = NOW()")
+
+    await db.execute(text(f"""
+        UPDATE funkos SET {', '.join(updates)} WHERE id = :id
+    """), params)
+    await db.commit()
+
+    logger.info(f"[Admin] User {current_user.id} updated Funko {funko_id} ({funko_title}): {list(params.keys())}")
+
+    return {
+        "status": "updated",
+        "funko_id": funko_id,
+        "title": funko_title,
+        "fields_updated": [k for k in params.keys() if k != "id"]
+    }
