@@ -2489,6 +2489,52 @@ async def reset_pricecharting_checkpoints(
     return {"status": "reset", "message": "PriceCharting job checkpoints reset"}
 
 
+@router.post("/pipeline/funkos/migrate-to-review")
+async def migrate_matched_funkos_to_review(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Move already-matched Funkos to the review queue.
+    Clears their pricecharting_id so they require approval.
+    """
+    # Insert matched funkos into review queue
+    result = await db.execute(text("""
+        INSERT INTO match_review_queue (
+            entity_type, entity_id, candidate_source, candidate_id,
+            candidate_name, match_method, match_score,
+            status, created_at, updated_at, expires_at
+        )
+        SELECT
+            'funko', f.id, 'pricecharting', f.pricecharting_id::text,
+            f.title, 'auto_matched', 5,
+            'pending', NOW(), NOW(), NOW() + INTERVAL '30 days'
+        FROM funkos f
+        WHERE f.pricecharting_id IS NOT NULL
+        ON CONFLICT (entity_type, entity_id, candidate_source, candidate_id)
+        DO NOTHING
+        RETURNING id
+    """))
+    inserted = len(result.fetchall())
+
+    # Clear pricecharting_id so they go through review
+    clear_result = await db.execute(text("""
+        UPDATE funkos
+        SET pricecharting_id = NULL, updated_at = NOW()
+        WHERE pricecharting_id IS NOT NULL
+    """))
+    cleared = clear_result.rowcount
+
+    await db.commit()
+    logger.info(f"[Admin] User {current_user.id} migrated {inserted} Funkos to review queue, cleared {cleared}")
+    return {
+        "status": "success",
+        "queued": inserted,
+        "cleared": cleared,
+        "message": f"Moved {inserted} Funkos to review queue and cleared {cleared} pricecharting_ids"
+    }
+
+
 @router.get("/pipeline/pricecharting/status")
 async def get_pricecharting_matching_status(
     current_user: User = Depends(get_current_admin),
