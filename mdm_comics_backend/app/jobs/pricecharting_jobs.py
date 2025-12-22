@@ -505,7 +505,7 @@ async def run_funko_pricecharting_match_job(
 
                     logger.info(f"[{job_name}] Processing {len(funkos)} Funkos")
 
-                    # Heartbeat for stall detection
+                    # Heartbeat for stall detection (called at batch start)
                     if metrics_batch_id:
                         try:
                             await pipeline_metrics.heartbeat(batch_id, db)
@@ -516,6 +516,13 @@ async def run_funko_pricecharting_match_job(
                         funko_id = funko.id
                         last_id = funko_id
                         stats["processed"] += 1
+
+                        # Heartbeat every 5 records to prevent stall detection during long batches
+                        if metrics_batch_id and stats["processed"] % 5 == 0:
+                            try:
+                                await pipeline_metrics.heartbeat(batch_id, db)
+                            except Exception:
+                                pass  # Non-critical
 
                         try:
                             pc_id = None
@@ -826,7 +833,7 @@ async def run_comic_pricecharting_match_job(
 
                     logger.info(f"[{job_name}] Processing {len(comics)} Comics")
 
-                    # Heartbeat for stall detection
+                    # Heartbeat for stall detection (called at batch start)
                     if metrics_batch_id:
                         try:
                             await pipeline_metrics.heartbeat(batch_id, db)
@@ -837,6 +844,13 @@ async def run_comic_pricecharting_match_job(
                         comic_id = comic.id
                         last_id = comic_id
                         stats["processed"] += 1
+
+                        # Heartbeat every 5 records to prevent stall detection during long batches
+                        if metrics_batch_id and stats["processed"] % 5 == 0:
+                            try:
+                                await pipeline_metrics.heartbeat(batch_id, db)
+                            except Exception:
+                                pass  # Non-critical
 
                         try:
                             pc_id = None
