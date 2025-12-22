@@ -36,6 +36,7 @@ function BundleModal({ bundle, onClose, onSave }) {
     bundle_price: bundle?.bundle_price || '',
     category: bundle?.category || '',
     badge_text: bundle?.badge_text || '',
+    image_url: bundle?.image_url || '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -164,6 +165,27 @@ function BundleModal({ bundle, onClose, onSave }) {
               placeholder="e.g., Best Value, New, Limited"
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1">Image URL</label>
+            <input
+              type="url"
+              value={formData.image_url}
+              onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
+              placeholder="https://example.com/bundle-image.jpg"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500"
+            />
+            {formData.image_url && (
+              <div className="mt-2 p-2 bg-zinc-800 rounded-lg border border-zinc-700">
+                <img
+                  src={formData.image_url}
+                  alt="Bundle preview"
+                  className="w-20 h-20 object-contain mx-auto rounded"
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex gap-3 pt-4">
