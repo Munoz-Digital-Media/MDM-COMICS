@@ -113,7 +113,7 @@ export default function ConventionQuickAccess({ onViewAll }) {
             <button
               key={event.id}
               onClick={() => handleButtonClick(event.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap flex-shrink-0
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors flex-shrink-0
                 ${isExpanded
                   ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
                   : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-600'
@@ -124,8 +124,11 @@ export default function ConventionQuickAccess({ onViewAll }) {
               aria-controls={isExpanded ? cardId : undefined}
             >
               <Calendar className="w-4 h-4 flex-shrink-0" />
-              <span className="text-sm font-medium">{event.city}</span>
-              <span className="text-xs px-2 py-0.5 bg-zinc-900/80 rounded-full">
+              <div className="flex flex-col items-start leading-tight">
+                <span className="text-xs text-zinc-500">{event.conventionName}</span>
+                <span className="text-sm font-medium">{event.city}</span>
+              </div>
+              <span className="text-xs px-2 py-0.5 bg-zinc-900/80 rounded-full whitespace-nowrap">
                 {formatDateShort(event.dateText)}
               </span>
               {isExpanded ? (
