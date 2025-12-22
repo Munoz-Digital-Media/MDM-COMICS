@@ -21,6 +21,7 @@ const ScannerApp = lazy(() => import("./components/admin/ingestion/ScannerApp"))
   import AuthModal from "./components/AuthModal";
 import AboutContact from "./components/AboutContact";
 import ConventionQuickAccess from "./components/ConventionQuickAccess";
+import ConventionsPage from "./components/ConventionsPage";
 import MyOrders from "./components/MyOrders";
 import RefundPolicy from "./components/RefundPolicy";
 import AccountDashboard from "./components/AccountDashboard";
@@ -86,6 +87,7 @@ import './styles/animations.css';
     const [isAboutContactOpen, setIsAboutContactOpen] = useState(false);
     const [isMyOrdersOpen, setIsMyOrdersOpen] = useState(false);
     const [isRefundPolicyOpen, setIsRefundPolicyOpen] = useState(false);
+    const [isConventionsOpen, setIsConventionsOpen] = useState(false);
     const [isAccountOpen, setIsAccountOpen] = useState(false);
     const [authMode, setAuthMode] = useState("login");
     const [authLoading, setAuthLoading] = useState(true);
@@ -554,7 +556,7 @@ import './styles/animations.css';
         {currentView === "shop" && (
           <main className="hero-gradient">
             {/* Convention Quick Access - Above Hero */}
-            <ConventionQuickAccess />
+            <ConventionQuickAccess onViewAll={() => setIsConventionsOpen(true)} />
 
             {/* Hero Section */}
             <section className="max-w-7xl mx-auto px-4 py-12">
@@ -985,6 +987,13 @@ import './styles/animations.css';
             onClose={() => setIsAccountOpen(false)}
             onLogout={handleLogout}
           />
+        )}
+
+        {/* Conventions Page - Full page view */}
+        {isConventionsOpen && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <ConventionsPage onBack={() => setIsConventionsOpen(false)} />
+          </div>
         )}
 
         {/* Shipping Banner - Fixed above footer */}

@@ -1,20 +1,23 @@
 /**
  * ConventionQuickAccess - Tab-style convention buttons with expandable details
- * v1.0.0
+ * v1.1.0
  *
  * Features:
  * - Horizontal button row matching admin pipeline pattern (GCD Import, PriceCharting, etc.)
  * - Future events only (past events filtered out)
- * - Date-sorted ASC (earliest = leftmost)
+ * - Date-sorted ASC (nearest to TODAY shown first)
+ * - Capped at 5 buttons with "View All" link
  * - Expandable detail card on click
  * - Title links to convention website
  */
 import React, { useState, useMemo, useCallback, useId } from 'react';
-import { Calendar, ExternalLink, MapPin, ChevronDown, ChevronUp } from 'lucide-react';
+import { Calendar, ExternalLink, MapPin, ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
 import { DEFAULT_CONVENTIONS } from '../config/conventions.config';
 import { parseDateText, isFutureEvent, sortEventsByDate, formatDateShort } from '../utils/dateUtils';
 
-export default function ConventionQuickAccess() {
+const MAX_VISIBLE_BUTTONS = 5;
+
+export default function ConventionQuickAccess({ onViewAll }) {
   const [expandedEventId, setExpandedEventId] = useState(null);
   const uniqueId = useId();
 
@@ -58,6 +61,14 @@ export default function ConventionQuickAccess() {
     return processedEvents.find((e) => e.id === expandedEventId);
   }, [expandedEventId, processedEvents]);
 
+  // Visible events (capped at MAX_VISIBLE_BUTTONS)
+  const visibleEvents = useMemo(() => {
+    return processedEvents.slice(0, MAX_VISIBLE_BUTTONS);
+  }, [processedEvents]);
+
+  const hasMoreEvents = processedEvents.length > MAX_VISIBLE_BUTTONS;
+  const totalEventCount = processedEvents.length;
+
   // Don't render if no future events
   if (processedEvents.length === 0) {
     return null;
@@ -65,10 +76,24 @@ export default function ConventionQuickAccess() {
 
   return (
     <section className="max-w-7xl mx-auto px-4 pt-6 pb-4">
-      {/* Section Label */}
-      <p className="text-xs uppercase tracking-[0.15em] text-zinc-500 mb-3">
-        Upcoming Conventions
-      </p>
+      {/* Section Label with View All link */}
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
+          Upcoming Conventions
+          {totalEventCount > 0 && (
+            <span className="ml-2 text-zinc-600">({totalEventCount})</span>
+          )}
+        </p>
+        {onViewAll && (
+          <button
+            onClick={onViewAll}
+            className="text-xs text-orange-400 hover:text-orange-300 transition-colors flex items-center gap-1"
+          >
+            View All
+            <ChevronRight className="w-3 h-3" />
+          </button>
+        )}
+      </div>
 
       {/* Button Row - Horizontal scroll on mobile */}
       <div
@@ -76,7 +101,7 @@ export default function ConventionQuickAccess() {
         role="tablist"
         aria-label="Convention events"
       >
-        {processedEvents.map((event) => {
+        {visibleEvents.map((event) => {
           const isExpanded = expandedEventId === event.id;
           const cardId = `${uniqueId}-card-${event.id}`;
 
@@ -107,6 +132,17 @@ export default function ConventionQuickAccess() {
             </button>
           );
         })}
+
+        {/* More events indicator */}
+        {hasMoreEvents && onViewAll && (
+          <button
+            onClick={onViewAll}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap flex-shrink-0 bg-zinc-800/50 text-orange-400 hover:bg-zinc-700 border border-zinc-700 hover:border-orange-500/30"
+          >
+            <span className="text-sm font-medium">+{totalEventCount - MAX_VISIBLE_BUTTONS} more</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Expanded Detail Card */}
