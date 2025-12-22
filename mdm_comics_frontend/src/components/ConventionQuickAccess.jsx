@@ -159,7 +159,7 @@ export default function ConventionQuickAccess({ onViewAll }) {
           aria-labelledby={expandedEvent.id}
           className="mt-3 bg-zinc-900/90 border border-orange-500/20 rounded-xl p-4 shadow-lg animate-fadeIn"
         >
-          {/* Row 1: Convention Name | Date Range | View Details | Close */}
+          {/* Row 1: Convention Name | Date Range | Time | Get Tickets | Close */}
           <div className="flex items-center justify-between gap-4 mb-3">
             <div className="flex items-center gap-4 flex-wrap min-w-0">
               <h3 className="text-lg font-semibold text-white truncate">
@@ -169,6 +169,15 @@ export default function ConventionQuickAccess({ onViewAll }) {
                 <Calendar className="w-4 h-4 text-orange-400" />
                 {expandedEvent.dateText}
               </span>
+              {expandedEvent.showHours && (
+                <span className="flex items-center gap-1.5 text-sm text-zinc-400">
+                  <Clock className="w-4 h-4 text-orange-400" />
+                  {expandedEvent.showHours}
+                  {expandedEvent.vipEntry && (
+                    <span className="text-zinc-500">(VIP: {expandedEvent.vipEntry})</span>
+                  )}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <a
@@ -190,7 +199,7 @@ export default function ConventionQuickAccess({ onViewAll }) {
             </div>
           </div>
 
-          {/* Row 2: Location | Hours | Grading */}
+          {/* Row 2: Location | Table Count | Grading */}
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-zinc-400">
             {/* Venue & Address */}
             {(expandedEvent.venue || expandedEvent.address) && (
@@ -201,17 +210,6 @@ export default function ConventionQuickAccess({ onViewAll }) {
                   {expandedEvent.venue && expandedEvent.address && ' · '}
                   {expandedEvent.address}
                 </span>
-              </span>
-            )}
-
-            {/* Show Hours */}
-            {expandedEvent.showHours && (
-              <span className="flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-orange-400 flex-shrink-0" />
-                <span>{expandedEvent.showHours}</span>
-                {expandedEvent.vipEntry && (
-                  <span className="text-zinc-500">(VIP: {expandedEvent.vipEntry})</span>
-                )}
               </span>
             )}
 
