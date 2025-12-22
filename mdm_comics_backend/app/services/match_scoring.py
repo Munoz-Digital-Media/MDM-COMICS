@@ -27,7 +27,8 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Scoring thresholds
-MATCH_THRESHOLD = 0.6  # Minimum score to consider a match
+MATCH_THRESHOLD = 0.6  # Minimum score to consider a match (comics)
+FUNKO_MATCH_THRESHOLD = 0.4  # Lower threshold for Funkos (less metadata available)
 HIGH_CONFIDENCE_THRESHOLD = 0.8  # Score for "high" confidence
 LOW_CONFIDENCE_THRESHOLD = 0.4  # Below this, match is rejected
 
@@ -243,9 +244,10 @@ def _score_funko_match(
     product: Dict,
     normalized_product: str,
 ) -> MatchResult:
-    """Score a funko match."""
+    """Score a funko match. Uses lower threshold than comics due to sparser metadata."""
     score = 0.0
     factors = {}
+    threshold = FUNKO_MATCH_THRESHOLD  # Use lower threshold for Funkos
 
     title = funko.get("title", "")
     normalized_title = normalize_title(title)
@@ -310,10 +312,10 @@ def _score_funko_match(
         factors["license_match"] = 0.05
         score += 0.05
 
-    # Determine confidence
+    # Determine confidence (using Funko-specific threshold)
     if score >= HIGH_CONFIDENCE_THRESHOLD:
         confidence = "high"
-    elif score >= MATCH_THRESHOLD:
+    elif score >= threshold:
         confidence = "medium"
     elif score >= LOW_CONFIDENCE_THRESHOLD:
         confidence = "low"
@@ -321,8 +323,8 @@ def _score_funko_match(
         confidence = "none"
 
     return MatchResult(
-        matched=score >= MATCH_THRESHOLD,
-        pricecharting_id=int(product.get("id")) if score >= MATCH_THRESHOLD else None,
+        matched=score >= threshold,
+        pricecharting_id=int(product.get("id")) if score >= threshold else None,
         score=round(score, 2),
         factors=factors,
         confidence=confidence,
@@ -334,7 +336,7 @@ def find_best_match(
     item: Dict,
     products: List[Dict],
     item_type: str = "comic",
-    threshold: float = MATCH_THRESHOLD,
+    threshold: float = None,  # Auto-selects based on item_type
     max_candidates: int = 10,
 ) -> Optional[MatchResult]:
     """
@@ -344,12 +346,16 @@ def find_best_match(
         item: Local record dict (comic or funko)
         products: List of PriceCharting products from search
         item_type: "comic" or "funko"
-        threshold: Minimum score to consider (default: MATCH_THRESHOLD)
+        threshold: Minimum score to consider (auto-selects if None)
         max_candidates: Max products to evaluate
 
     Returns:
         Best MatchResult above threshold, or None
     """
+    # Auto-select threshold based on item type
+    if threshold is None:
+        threshold = FUNKO_MATCH_THRESHOLD if item_type == "funko" else MATCH_THRESHOLD
+
     best_match = None
     best_score = 0.0
 
