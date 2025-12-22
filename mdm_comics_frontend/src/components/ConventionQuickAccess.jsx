@@ -20,23 +20,6 @@ export default function ConventionQuickAccess({ onViewAll }) {
   const [expandedEventId, setExpandedEventId] = useState(null);
   const uniqueId = useId();
 
-  // Animation styles for the detail card
-  const animStyles = `
-    .detail-card-enter {
-      animation: fadeIn 0.5s ease-out forwards;
-    }
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-      }
-      to {
-        opacity: 1;
-      }
-    }
-    .convention-btn {
-      transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-    }
-  `;
 
   // Process events: flatten, parse dates, filter future, sort ASC
   const processedEvents = useMemo(() => {
@@ -105,8 +88,6 @@ export default function ConventionQuickAccess({ onViewAll }) {
 
   return (
     <section className="max-w-7xl mx-auto px-4 pt-6 pb-4">
-      <style>{animStyles}</style>
-
       {/* Section Label */}
       <div className="mb-3">
         <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
@@ -117,66 +98,66 @@ export default function ConventionQuickAccess({ onViewAll }) {
         </p>
       </div>
 
-      {/* Button Row - stays fixed */}
-      <div
-        className="flex items-center gap-2 flex-wrap"
-        role="tablist"
-        aria-label="Convention events"
-      >
-        {visibleEvents.map((event) => {
-          const isSelected = expandedEventId === event.id;
+      {/* Button Row - inline-flex so it doesn't reflow */}
+      <div className="overflow-x-auto pb-2">
+        <div
+          className="inline-flex items-center gap-2"
+          role="tablist"
+          aria-label="Convention events"
+        >
+          {visibleEvents.map((event) => {
+            const isSelected = expandedEventId === event.id;
 
-          return (
-            <button
-              key={event.id}
-              onClick={() => handleButtonClick(event.id)}
-              className={`convention-btn flex items-center gap-2 px-3 py-2 rounded-lg border
-                ${isSelected
-                  ? 'bg-orange-500/20 text-orange-400 border-orange-500/50'
-                  : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600'
-                }
-              `}
-              role="tab"
-              aria-selected={isSelected}
-              aria-expanded={isSelected}
-            >
-              <Calendar className="w-4 h-4 flex-shrink-0" />
-              <div className="flex flex-col items-start leading-tight">
-                <span className={`text-xs ${isSelected ? 'text-orange-300/70' : 'text-zinc-500'}`}>
-                  {event.conventionName}
+            return (
+              <button
+                key={event.id}
+                type="button"
+                onClick={() => handleButtonClick(event.id)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border whitespace-nowrap transition-colors
+                  ${isSelected
+                    ? 'bg-orange-500/20 text-orange-400 border-orange-500/50'
+                    : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600'
+                  }
+                `}
+                role="tab"
+                aria-selected={isSelected}
+              >
+                <Calendar className="w-4 h-4 flex-shrink-0" />
+                <div className="flex flex-col items-start leading-tight">
+                  <span className={`text-xs ${isSelected ? 'text-orange-300/70' : 'text-zinc-500'}`}>
+                    {event.conventionName}
+                  </span>
+                  <span className="text-sm font-medium">{event.city}</span>
+                </div>
+                <span className={`text-xs px-2 py-0.5 rounded-full
+                  ${isSelected ? 'bg-orange-500/20 text-orange-300' : 'bg-zinc-900/80 text-zinc-400'}
+                `}>
+                  {formatDateShort(event.dateText)}
                 </span>
-                <span className="text-sm font-medium">{event.city}</span>
-              </div>
-              <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap
-                ${isSelected ? 'bg-orange-500/20 text-orange-300' : 'bg-zinc-900/80 text-zinc-400'}
-              `}>
-                {formatDateShort(event.dateText)}
-              </span>
-            </button>
-          );
-        })}
+              </button>
+            );
+          })}
 
-        {/* More events indicator */}
-        {hiddenEventCount > 0 && onViewAll && (
-          <button
-            onClick={onViewAll}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all whitespace-nowrap bg-zinc-800/50 text-orange-400 hover:bg-zinc-700 border border-zinc-700 hover:border-orange-500/30"
-          >
-            <span className="text-sm font-medium">+{hiddenEventCount} more</span>
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        )}
+          {/* More events indicator */}
+          {hiddenEventCount > 0 && onViewAll && (
+            <button
+              type="button"
+              onClick={onViewAll}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap bg-zinc-800/50 text-orange-400 hover:bg-zinc-700 border border-zinc-700 hover:border-orange-500/30 transition-colors"
+            >
+              <span className="text-sm font-medium">+{hiddenEventCount} more</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Detail Card - appears below buttons */}
+      {/* Detail Card - completely separate block below */}
       {expandedEvent && (
-        <div
-          key={expandedEvent.id}
-          className="detail-card-enter mt-3 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-xl shadow-orange-500/5"
-        >
+        <div className="mt-3 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 border border-orange-500/30 rounded-xl p-4 shadow-lg">
           {/* Row 1: Convention Name | Date | Time | Actions */}
-          <div className="flex items-center justify-between gap-4 mb-3">
-            <div className="flex items-center gap-4 flex-wrap min-w-0">
+          <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
+            <div className="flex items-center gap-4 flex-wrap">
               <h3 className="text-lg font-semibold text-white">
                 {expandedEvent.conventionName}
               </h3>
@@ -194,7 +175,7 @@ export default function ConventionQuickAccess({ onViewAll }) {
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2">
               <a
                 href={expandedEvent.ticketUrl || expandedEvent.eventUrl}
                 target="_blank"
@@ -205,6 +186,7 @@ export default function ConventionQuickAccess({ onViewAll }) {
                 Get Tickets
               </a>
               <button
+                type="button"
                 onClick={() => setExpandedEventId(null)}
                 className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-700 rounded-lg transition-colors"
                 aria-label="Close details"
