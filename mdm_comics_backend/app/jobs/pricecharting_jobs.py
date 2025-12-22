@@ -395,7 +395,7 @@ async def run_funko_pricecharting_match_job(
         batch_size = PC_BATCH_SIZE
 
     job_name = "funko_pricecharting_match"
-    batch_id = generate_batch_id("funko_pc_match")
+    batch_id = str(uuid4())  # Generate standard UUID for asyncpg compatibility
     metrics_batch_id = None  # Will be set after we know records_in_batch
 
     logger.info(f"[{job_name}] Starting Funko PriceCharting matching (batch: {batch_id}, batch_size: {batch_size})")
@@ -667,7 +667,7 @@ async def run_comic_pricecharting_match_job(
         batch_size = PC_BATCH_SIZE
 
     job_name = "comic_pricecharting_match"
-    batch_id = generate_batch_id("comic_pc_match")
+    batch_id = str(uuid4())  # Generate standard UUID for asyncpg compatibility
     metrics_batch_id = None
 
     logger.info(f"[{job_name}] Starting Comic PriceCharting matching (batch: {batch_id}, batch_size: {batch_size})")
@@ -969,7 +969,7 @@ async def run_funko_price_sync_job(
         batch_size = PC_BATCH_SIZE
 
     job_name = "funko_price_sync"
-    batch_id = generate_batch_id("funko_pc_sync")
+    batch_id = str(uuid4())  # Generate standard UUID for asyncpg compatibility
     metrics_batch_id = None
 
     logger.info(f"[{job_name}] Starting Funko price sync (batch: {batch_id}, batch_size: {batch_size})")
@@ -1427,7 +1427,7 @@ async def run_comic_price_sync_job(
         batch_size = PC_BATCH_SIZE
 
     job_name = "comic_price_sync"
-    batch_id = generate_batch_id("comic_pc_sync")
+    batch_id = str(uuid4())  # Generate standard UUID for asyncpg compatibility
     metrics_batch_id = None
 
     logger.info(f"[{job_name}] Starting Comic price sync (batch: {batch_id}, batch_size: {batch_size})")
