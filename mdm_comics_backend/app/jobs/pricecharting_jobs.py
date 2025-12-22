@@ -536,6 +536,19 @@ async def run_funko_pricecharting_match_job(
                                         item_type="funko",
                                     )
 
+                                    # Log match attempt for debugging
+                                    if match_result:
+                                        logger.info(
+                                            f"[{job_name}] Funko {funko_id} '{funko.title[:50]}': "
+                                            f"score={match_result.score:.2f}, matched={match_result.matched}, "
+                                            f"products_checked={len(products)}"
+                                        )
+                                    elif products:
+                                        logger.info(
+                                            f"[{job_name}] Funko {funko_id} '{funko.title[:50]}': "
+                                            f"no match result, {len(products)} products checked"
+                                        )
+
                                     if match_result and match_result.matched:
                                         pc_id = match_result.pricecharting_id
 
