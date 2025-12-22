@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MDM Comics - Standalone Cron Runner v1.7.0
+MDM Comics - Standalone Cron Runner v1.7.1
 
 This script runs the pipeline scheduler as a standalone service.
 Used by Railway's data-pipeline-cron service.
