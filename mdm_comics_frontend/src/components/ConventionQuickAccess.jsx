@@ -15,7 +15,7 @@ import { Calendar, ExternalLink, MapPin, ChevronDown, ChevronUp, ChevronRight } 
 import { DEFAULT_CONVENTIONS } from '../config/conventions.config';
 import { parseDateText, isFutureEvent, sortEventsByDate, formatDateShort } from '../utils/dateUtils';
 
-const MAX_TOTAL_ITEMS = 5; // Total items including "+more" button
+const MAX_TOTAL_ITEMS = 4; // Total items including "+more" button (3 events + 1 more)
 
 export default function ConventionQuickAccess({ onViewAll }) {
   const [expandedEventId, setExpandedEventId] = useState(null);
