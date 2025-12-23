@@ -106,10 +106,12 @@ async def attempt_self_heal(
 
         if job_name:
             # Clear stale checkpoint (allow job to restart)
+            # Note: use paused_at (timestamp) not is_paused (doesn't exist)
             result = await db.execute(text("""
                 UPDATE pipeline_checkpoints
                 SET is_running = false,
-                    is_paused = false,
+                    paused_at = NULL,
+                    control_signal = 'run',
                     last_error = COALESCE(last_error, '') || E'\n[StallDetector] Auto-cleared at ' || NOW()::text
                 WHERE job_name = :job_name
                 AND is_running = true

@@ -14,7 +14,7 @@ import logging
 from typing import Optional
 from math import ceil
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -22,6 +22,7 @@ from app.api.deps import get_current_admin
 from app.models.user import User
 from app.models.bundle import BundleStatus
 from app.services.bundle_service import BundleService
+from app.services.storage import StorageService
 from app.schemas.bundle import (
     BundleCreate,
     BundleUpdate,
@@ -38,9 +39,38 @@ from app.schemas.bundle import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/bundles", tags=["admin-bundles"])
+storage = StorageService()
 
 
 # ==================== Helper Functions ====================
+
+def normalize_images(images):
+    """Normalize images to dicts with url/is_primary/order/s3_key."""
+    normalized = []
+    for idx, img in enumerate(images or []):
+        if isinstance(img, str):
+            normalized.append({
+                "url": img,
+                "is_primary": idx == 0,
+                "order": idx,
+                "s3_key": None,
+            })
+        elif isinstance(img, dict):
+            normalized.append({
+                "url": img.get("url") or img.get("s3_url") or "",
+                "is_primary": bool(img.get("is_primary", False)),
+                "order": img.get("order", idx),
+                "s3_key": img.get("s3_key"),
+            })
+
+    normalized.sort(key=lambda x: x.get("order", 0))
+    if normalized:
+        primary_found = any(i.get("is_primary") for i in normalized)
+        if not primary_found:
+            normalized[0]["is_primary"] = True
+    for i, img in enumerate(normalized):
+        img["order"] = i
+    return normalized
 
 def bundle_to_response(bundle) -> BundleResponse:
     """Convert Bundle model to response schema."""
@@ -83,7 +113,7 @@ def bundle_to_response(bundle) -> BundleResponse:
         status=BundleStatus(bundle.status),
         available_qty=bundle.available_qty or 0,
         image_url=bundle.image_url,
-        images=bundle.images or [],
+        images=normalize_images(bundle.images),
         badge_text=bundle.badge_text,
         display_order=bundle.display_order or 0,
         category=bundle.category,
@@ -113,6 +143,7 @@ def bundle_to_list_response(bundle) -> BundleListResponse:
         status=BundleStatus(bundle.status),
         available_qty=bundle.available_qty or 0,
         image_url=bundle.image_url,
+        images=normalize_images(bundle.images),
         badge_text=bundle.badge_text,
         display_order=bundle.display_order or 0,
         category=bundle.category,
@@ -122,6 +153,46 @@ def bundle_to_list_response(bundle) -> BundleListResponse:
 
 
 # ==================== Bundle CRUD Routes ====================
+
+@router.post("/upload-image")
+async def upload_bundle_image(
+    file: UploadFile = File(...),
+    bundle_id: int | None = Form(None),
+    current_user: User = Depends(get_current_admin),
+):
+    """
+    Upload a bundle image to S3 and return its URL/key.
+
+    Reuses product image validation (max 10MB, common image types).
+    """
+    if not storage.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Storage not configured. Set S3_BUCKET and credentials."
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    content_type = file.content_type or "application/octet-stream"
+    result = await storage.upload_product_image(
+        content=content,
+        filename=file.filename or "bundle-image",
+        content_type=content_type,
+        product_type="bundle",
+        product_id=bundle_id,
+    )
+
+    if not result.success or not result.url:
+        raise HTTPException(status_code=400, detail=result.error or "Upload failed")
+
+    return {
+        "url": result.url,
+        "s3_key": result.key,
+        "content_type": result.content_type,
+        "size_bytes": result.size_bytes,
+    }
 
 @router.get("/", response_model=PaginatedBundleList)
 async def list_bundles(

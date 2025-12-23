@@ -76,6 +76,7 @@ F:/apps/governance
 .coverage
 
 # Debug/maintenance utility scripts
+reset_*.py
 mdm_comics_backend/check_*.py
 mdm_comics_backend/clear_*.py
 mdm_comics_backend/force_*.py

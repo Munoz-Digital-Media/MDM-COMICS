@@ -206,6 +206,8 @@ class BundleService:
             slug = BundleService.generate_slug(data.name)
 
         # Create bundle
+        images_payload = [img.model_dump() for img in data.images] if data.images else []
+
         bundle = Bundle(
             sku=sku,
             slug=slug,
@@ -216,7 +218,7 @@ class BundleService:
             category=data.category,
             tags=data.tags,
             image_url=data.image_url,
-            images=data.images,
+            images=images_payload,
             badge_text=data.badge_text,
             display_order=data.display_order,
             start_date=data.start_date,
@@ -256,6 +258,13 @@ class BundleService:
 
         # Update fields
         update_data = data.model_dump(exclude_unset=True)
+        if "images" in update_data and update_data["images"] is not None:
+            # Normalize BundleImage objects/dicts to plain dicts
+            update_data["images"] = [
+                img if isinstance(img, dict) else img.model_dump()
+                for img in update_data["images"]
+            ]
+
         for field, value in update_data.items():
             setattr(bundle, field, value)
 
