@@ -81,6 +81,20 @@ class BundleItemResponse(BaseModel):
 
 # ==================== Bundle Schemas ====================
 
+class BundleImage(BaseModel):
+    """Bundle image with ordering and primary flag."""
+    url: str = Field(..., max_length=1000, description="Public URL of the image")
+    is_primary: bool = Field(default=False, description="Whether this image is the primary")
+    order: int = Field(default=0, ge=0, description="Display order (0-based)")
+    s3_key: Optional[str] = Field(None, description="Optional S3 key for cleanup/reference")
+
+    @model_validator(mode="after")
+    def normalize(self):
+        # Trim whitespace on URL
+        if self.url:
+            self.url = self.url.strip()
+        return self
+
 class BundleBase(BaseModel):
     """Base schema for bundles."""
     name: str = Field(..., min_length=1, max_length=255, description="Bundle display name")
@@ -90,7 +104,7 @@ class BundleBase(BaseModel):
     category: Optional[str] = Field(None, max_length=100, description="Bundle category")
     tags: List[str] = Field(default_factory=list, description="Tags for filtering")
     image_url: Optional[str] = Field(None, max_length=500, description="Primary image URL")
-    images: List[str] = Field(default_factory=list, description="Additional image URLs")
+    images: List[BundleImage] = Field(default_factory=list, description="Image gallery with primary and order")
     badge_text: Optional[str] = Field(None, max_length=50, description="Badge text e.g., 'Best Seller'")
     display_order: int = Field(default=0, ge=0, description="Display order for sorting")
     start_date: Optional[datetime] = Field(None, description="Sale period start")
@@ -129,6 +143,40 @@ class BundleCreate(BundleBase):
                 raise ValueError("end_date must be after start_date")
         return self
 
+    @model_validator(mode="after")
+    def validate_images(self):
+        # If images empty but image_url provided, seed from image_url
+        if not self.images and self.image_url:
+            self.images = [BundleImage(url=self.image_url, is_primary=True, order=0)]
+
+        if len(self.images) == 0:
+            raise ValueError("At least one image is required")
+        if len(self.images) > 9:
+            raise ValueError("Maximum 9 images allowed")
+
+        # Ensure one primary
+        primary_count = sum(1 for img in self.images if img.is_primary)
+        if primary_count == 0 and self.images:
+            self.images[0].is_primary = True
+        elif primary_count > 1:
+            # Normalize to single primary: keep first primary, demote others
+            primary_seen = False
+            for img in self.images:
+                if img.is_primary:
+                    if primary_seen:
+                        img.is_primary = False
+                    else:
+                        primary_seen = True
+
+        # Normalize orders as sequential based on current ordering
+        for idx, img in enumerate(self.images):
+            img.order = idx
+
+        # Sync image_url with primary
+        primary = next((img for img in self.images if img.is_primary), self.images[0])
+        self.image_url = primary.url
+        return self
+
 
 class BundleUpdate(BaseModel):
     """Schema for updating a bundle."""
@@ -139,11 +187,39 @@ class BundleUpdate(BaseModel):
     category: Optional[str] = Field(None, max_length=100)
     tags: Optional[List[str]] = None
     image_url: Optional[str] = Field(None, max_length=500)
-    images: Optional[List[str]] = None
+    images: Optional[List[BundleImage]] = None
     badge_text: Optional[str] = Field(None, max_length=50)
     display_order: Optional[int] = Field(None, ge=0)
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def validate_images(self):
+        # Only enforce when images provided
+        if self.images is not None:
+            if len(self.images) == 0:
+                raise ValueError("At least one image is required")
+            if len(self.images) > 9:
+                raise ValueError("Maximum 9 images allowed")
+
+            primary_count = sum(1 for img in self.images if img.is_primary)
+            if primary_count == 0 and self.images:
+                self.images[0].is_primary = True
+            elif primary_count > 1:
+                primary_seen = False
+                for img in self.images:
+                    if img.is_primary:
+                        if primary_seen:
+                            img.is_primary = False
+                        else:
+                            primary_seen = True
+
+            for idx, img in enumerate(self.images):
+                img.order = idx
+
+            primary = next((img for img in self.images if img.is_primary), self.images[0])
+            self.image_url = primary.url
+        return self
 
 
 class BundleResponse(BaseModel):
@@ -163,7 +239,7 @@ class BundleResponse(BaseModel):
     status: BundleStatus
     available_qty: int
     image_url: Optional[str] = None
-    images: List[str]
+    images: List[BundleImage]
     badge_text: Optional[str] = None
     display_order: int
     category: Optional[str] = None
@@ -193,6 +269,7 @@ class BundleListResponse(BaseModel):
     status: BundleStatus
     available_qty: int
     image_url: Optional[str] = None
+    images: List[BundleImage] = []
     badge_text: Optional[str] = None
     display_order: int
     category: Optional[str] = None
@@ -244,7 +321,7 @@ class PublicBundleResponse(BaseModel):
     savings_percent: Optional[Decimal] = None
     available_qty: int
     image_url: Optional[str] = None
-    images: List[str]
+    images: List[BundleImage]
     badge_text: Optional[str] = None
     category: Optional[str] = None
     tags: List[str]

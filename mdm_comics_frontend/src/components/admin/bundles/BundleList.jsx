@@ -6,7 +6,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, Plus, Edit2, Trash2, Copy, Eye, EyeOff,
   ChevronLeft, ChevronRight, Loader2, Package, X,
-  DollarSign, Tag, Calendar, Archive
+  DollarSign, Tag, Calendar, Archive, Upload, Star,
+  ArrowUp, ArrowDown
 } from 'lucide-react';
 import { adminAPI } from '../../../services/adminApi';
 
@@ -29,6 +30,25 @@ function StatusBadge({ status }) {
 // Create/Edit Bundle Modal
 function BundleModal({ bundle, onClose, onSave }) {
   const isEdit = !!bundle;
+
+  const normalizeImages = (b) => {
+    if (!b) return [];
+    const imgs = b.images && Array.isArray(b.images) ? b.images : [];
+    if (imgs.length > 0) {
+      return imgs.map((img, idx) => ({
+        url: img.url || img,
+        is_primary: img.is_primary || (!img.is_primary && idx === 0),
+        order: typeof img.order === 'number' ? img.order : idx,
+        s3_key: img.s3_key || null,
+      })).sort((a, b) => a.order - b.order)
+        .map((img, idx) => ({ ...img, order: idx }));
+    }
+    if (b.image_url) {
+      return [{ url: b.image_url, is_primary: true, order: 0 }];
+    }
+    return [];
+  };
+
   const [formData, setFormData] = useState({
     name: bundle?.name || '',
     short_description: bundle?.short_description || '',
@@ -36,10 +56,71 @@ function BundleModal({ bundle, onClose, onSave }) {
     bundle_price: bundle?.bundle_price || '',
     category: bundle?.category || '',
     badge_text: bundle?.badge_text || '',
-    image_url: bundle?.image_url || '',
   });
+  const [images, setImages] = useState(normalizeImages(bundle));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+
+  const enforcePrimary = (list) => {
+    if (list.some((img) => img.is_primary)) return list;
+    if (list.length > 0) {
+      list[0].is_primary = true;
+    }
+    return list;
+  };
+
+  const handleFilesSelected = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+
+    if (images.length + files.length > 9) {
+      setUploadError('You can upload a maximum of 9 images.');
+      return;
+    }
+
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const uploaded = [];
+      for (const file of files) {
+        const result = await adminAPI.uploadBundleImage(file, bundle?.id);
+        uploaded.push({
+          url: result.url,
+          s3_key: result.s3_key || null,
+          is_primary: false,
+          order: images.length + uploaded.length,
+        });
+      }
+      const next = enforcePrimary([...images, ...uploaded]).map((img, idx) => ({ ...img, order: idx }));
+      setImages(next);
+    } catch (err) {
+      setUploadError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleRemoveImage = (index) => {
+    const next = images.filter((_, i) => i !== index).map((img, idx) => ({ ...img, order: idx }));
+    const withPrimary = enforcePrimary(next);
+    setImages(withPrimary);
+  };
+
+  const handleSetPrimary = (index) => {
+    const next = images.map((img, i) => ({ ...img, is_primary: i === index, order: img.order }));
+    setImages(next);
+  };
+
+  const handleMove = (index, direction) => {
+    const target = index + direction;
+    if (target < 0 || target >= images.length) return;
+    const next = [...images];
+    [next[index], next[target]] = [next[target], next[index]];
+    const reindexed = next.map((img, idx) => ({ ...img, order: idx }));
+    setImages(reindexed);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -47,14 +128,30 @@ function BundleModal({ bundle, onClose, onSave }) {
       setError('Name and price are required');
       return;
     }
+    if (images.length === 0) {
+      setError('At least one image is required');
+      return;
+    }
+    if (images.length > 9) {
+      setError('Maximum of 9 images allowed');
+      return;
+    }
 
     setLoading(true);
     setError(null);
 
     try {
+      const primary = images.find((img) => img.is_primary) || images[0];
       const data = {
         ...formData,
         bundle_price: parseFloat(formData.bundle_price),
+        image_url: primary?.url,
+        images: images.map((img, idx) => ({
+          url: img.url,
+          is_primary: img.is_primary || false,
+          order: idx,
+          s3_key: img.s3_key || null,
+        })),
       };
 
       if (isEdit) {
@@ -168,24 +265,86 @@ function BundleModal({ bundle, onClose, onSave }) {
           </div>
 
           <div>
-            <label className="block text-sm text-zinc-400 mb-1">Image URL</label>
-            <input
-              type="url"
-              value={formData.image_url}
-              onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
-              placeholder="https://example.com/bundle-image.jpg"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-orange-500"
-            />
-            {formData.image_url && (
-              <div className="mt-2 p-2 bg-zinc-800 rounded-lg border border-zinc-700">
-                <img
-                  src={formData.image_url}
-                  alt="Bundle preview"
-                  className="w-20 h-20 object-contain mx-auto rounded"
-                  onError={(e) => { e.target.style.display = 'none'; }}
-                />
+            <label className="block text-sm text-zinc-400 mb-2">Bundle Images (1-9)</label>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-3">
+                <label className="inline-flex items-center gap-2 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 cursor-pointer hover:border-orange-500">
+                  <Upload className="w-4 h-4" />
+                  <span className="text-sm">Upload images</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => handleFilesSelected(e.target.files)}
+                  />
+                </label>
+                <span className="text-xs text-zinc-500">Select 1 to 9 images. Primary is required.</span>
               </div>
-            )}
+              {uploadError && (
+                <p className="text-sm text-red-400">{uploadError}</p>
+              )}
+              {uploading && (
+                <div className="text-sm text-zinc-400 flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Uploading...
+                </div>
+              )}
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                {images.map((img, idx) => (
+                  <div key={idx} className="bg-zinc-800 border border-zinc-700 rounded-lg p-2 flex flex-col gap-2">
+                    <div className="relative w-full aspect-square rounded overflow-hidden bg-zinc-900 border border-zinc-800">
+                      <img src={img.url} alt={`Bundle ${idx + 1}`} className="w-full h-full object-contain" />
+                      {img.is_primary && (
+                        <span className="absolute top-1 left-1 px-2 py-0.5 text-[10px] bg-orange-500 text-white rounded-full">
+                          Primary
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-zinc-400">
+                      <span>Order: {idx + 1}</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleMove(idx, -1)}
+                          className="p-1 hover:bg-zinc-700 rounded disabled:opacity-40"
+                          disabled={idx === 0}
+                          title="Move up"
+                        >
+                          <ArrowUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMove(idx, 1)}
+                          className="p-1 hover:bg-zinc-700 rounded disabled:opacity-40"
+                          disabled={idx === images.length - 1}
+                          title="Move down"
+                        >
+                          <ArrowDown className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSetPrimary(idx)}
+                        className={`flex-1 px-2 py-1 text-xs rounded border ${img.is_primary ? 'border-orange-500 text-orange-400 bg-orange-500/10' : 'border-zinc-700 text-zinc-300 hover:border-orange-500'}`}
+                      >
+                        <Star className="w-3 h-3 inline mr-1" />
+                        {img.is_primary ? 'Primary' : 'Set primary'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveImage(idx)}
+                        className="px-2 py-1 text-xs text-red-400 border border-red-500/40 rounded hover:bg-red-500/10"
+                        disabled={images.length <= 1}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="flex gap-3 pt-4">

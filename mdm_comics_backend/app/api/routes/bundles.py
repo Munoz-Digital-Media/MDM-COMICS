@@ -23,6 +23,7 @@ from app.schemas.bundle import (
     PublicBundleListResponse,
     PaginatedPublicBundleList,
     PublicBundleItemResponse,
+    BundleImage,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,24 @@ router = APIRouter(prefix="/bundles", tags=["bundles"])
 
 
 # ==================== Helper Functions ====================
+
+def _normalize_images(images):
+    normalized = []
+    for idx, img in enumerate(images or []):
+        if isinstance(img, str):
+            normalized.append(BundleImage(url=img, is_primary=idx == 0, order=idx))
+        elif isinstance(img, dict):
+            normalized.append(BundleImage(
+                url=img.get("url") or img.get("s3_url") or "",
+                is_primary=bool(img.get("is_primary", False)),
+                order=img.get("order", idx),
+                s3_key=img.get("s3_key"),
+            ))
+    if normalized and not any(img.is_primary for img in normalized):
+        normalized[0].is_primary = True
+    for i, img in enumerate(normalized):
+        img.order = i
+    return normalized
 
 def bundle_to_public_response(bundle) -> PublicBundleResponse:
     """Convert Bundle model to public response schema (no cost data)."""
@@ -64,7 +83,7 @@ def bundle_to_public_response(bundle) -> PublicBundleResponse:
         savings_percent=bundle.savings_percent,
         available_qty=bundle.available_qty or 0,
         image_url=bundle.image_url,
-        images=bundle.images or [],
+        images=_normalize_images(bundle.images),
         badge_text=bundle.badge_text,
         category=bundle.category,
         tags=bundle.tags or [],
@@ -87,6 +106,7 @@ def bundle_to_public_list_response(bundle) -> PublicBundleListResponse:
         savings_percent=bundle.savings_percent,
         available_qty=bundle.available_qty or 0,
         image_url=bundle.image_url,
+        images=_normalize_images(bundle.images),
         badge_text=bundle.badge_text,
         category=bundle.category,
         item_count=len(bundle.items) if bundle.items else 0,

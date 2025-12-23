@@ -2584,11 +2584,15 @@ async def reset_funko_matching(
     """))
     queue_deleted = len(queue_result.fetchall())
 
-    # 2. Reset the checkpoint
+    # 2. Reset the checkpoint completely
+    # Note: state_data is json type (not jsonb), so use simple JSON replacement
+    # Note: control_signal has NOT NULL constraint, use 'run' as default
     await db.execute(text("""
         UPDATE pipeline_checkpoints
         SET is_running = false,
-            state_data = jsonb_set(COALESCE(state_data, '{}'), ARRAY['last_id'], '0'::jsonb),
+            control_signal = 'run',
+            paused_at = NULL,
+            state_data = '{"last_id": 0}'::json,
             total_processed = 0,
             total_updated = 0,
             total_errors = 0,
@@ -2597,15 +2601,24 @@ async def reset_funko_matching(
         WHERE job_name = 'funko_pricecharting_match'
     """))
 
+    # 3. Clear any stalled batches for this job
+    stalled_result = await db.execute(text("""
+        DELETE FROM pipeline_batch_metrics
+        WHERE pipeline_type = 'funko_pricecharting_match'
+        RETURNING batch_id
+    """))
+    stalled_cleared = len(stalled_result.fetchall())
+
     await db.commit()
 
-    logger.info(f"[ADMIN] Reset Funko matching: cleared {queue_deleted} queue entries, reset checkpoint to offset 0")
+    logger.info(f"[ADMIN] Reset Funko matching: cleared {queue_deleted} queue entries, {stalled_cleared} stalled batches, reset checkpoint to offset 0")
 
     return {
         "status": "success",
         "queue_cleared": queue_deleted,
+        "stalled_batches_cleared": stalled_cleared,
         "checkpoint_reset": True,
-        "message": f"Cleared {queue_deleted} queue entries and reset checkpoint to offset 0"
+        "message": f"Cleared {queue_deleted} queue entries, {stalled_cleared} stalled batches, and reset checkpoint to offset 0"
     }
 
 

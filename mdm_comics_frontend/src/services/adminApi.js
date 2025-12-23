@@ -812,6 +812,41 @@ export const adminAPI = {
     });
   },
 
+  uploadBundleImage: async (file, bundleId = null) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (bundleId) {
+      formData.append('bundle_id', bundleId);
+    }
+
+    const url = API_BASE + '/admin/bundles/upload-image';
+    const headers = {};
+
+    const storedToken = getStoredToken();
+    if (storedToken) {
+      headers['Authorization'] = 'Bearer ' + storedToken;
+    }
+
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Bundle image upload failed');
+    }
+
+    return response.json();
+  },
+
   // Pricing preview
   calculateBundlePricing: async (items) => {
     return fetchAPI('/admin/bundles/calculate-pricing', {
