@@ -27,7 +27,7 @@ def run_migrations():
             capture_output=True,
             text=True
         )
-        
+
         if result.returncode == 0:
             print("Migrations successful!")
             print(result.stdout)
@@ -37,9 +37,32 @@ def run_migrations():
             print(result.stderr)
             # In a strict environment, we might want to exit here.
             # For now, we'll log loudly but allow startup to attempt (it might fail if DB is broken)
-            
+
     except Exception as e:
         print(f"Migration error: {e}")
+
+
+def run_custom_migrations():
+    """Run custom app migrations (non-Alembic)."""
+    print("Running custom migrations...")
+
+    # BCW selectors column migration
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "app.migrations.add_bcw_selectors_column"],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
+        )
+        if result.returncode == 0:
+            print("BCW selectors migration: OK")
+            if result.stdout:
+                print(result.stdout)
+        else:
+            print(f"BCW selectors migration failed: {result.stderr}")
+    except Exception as e:
+        print(f"BCW selectors migration error: {e}")
 
 
 def start_api():
@@ -52,8 +75,11 @@ def start_api():
 
 
 def main():
-    # Run migrations
+    # Run standard Alembic migrations
     run_migrations()
+
+    # Run custom migrations
+    run_custom_migrations()
 
     # Start API
     start_api()
