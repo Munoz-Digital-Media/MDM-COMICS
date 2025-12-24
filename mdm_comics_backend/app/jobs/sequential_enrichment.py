@@ -2236,29 +2236,43 @@ async def run_sequential_exhaustive_enrichment_job(
     max_records: int = 0
 ) -> Dict[str, Any]:
     """
-    Parallel Optimized Enrichment v2.0.0
+    Sequential Enrichment v2.5.0 (SERIALIZE MODE)
+
+    v2.5.0: Changed to SEQUENTIAL by default per Metron dev team guidance.
+    Parallel requests cause rate limiting even when under daily quota.
 
     Algorithm:
     1. Fetch batch of 100 comics
-    2. Process 5 comics CONCURRENTLY (semaphore-limited)
+    2. Process comics ONE AT A TIME (when SERIALIZE_API_REQUESTS=true)
     3. For each comic:
-       a. Phase 1: Query Metron, ComicVine, relevant Fandom, MyComicShop, CBR in PARALLEL
+       a. Phase 1: Query sources SEQUENTIALLY with delay between requests
        b. Merge results, update comic dict
        c. Phase 2: Query PriceCharting (benefits from UPC found in Phase 1)
     4. Batch write updates every 50 comics
     5. Checkpoint every 50 comics
 
-    Key optimizations:
-    - Parallel source queries (~10x faster per comic)
-    - Parallel comic processing (5x throughput)
-    - Publisher pre-filtering (skip irrelevant Fandom sources)
-    - Series cache (avoid repeated series searches)
-    - Batch database writes (reduce DB overhead)
+    When SERIALIZE_API_REQUESTS=false (legacy mode):
+    - Parallel source queries
+    - 5 concurrent comics via semaphore
     """
+    from app.core.config import settings
+
     job_name = "sequential_enrichment"
     batch_id = str(uuid4())
 
-    logger.info(f"[{job_name}] Starting Parallel Optimized Enrichment v2.0.0 (batch: {batch_id})")
+    # v2.5.0: Check job enable flag
+    if not settings.JOB_SEQUENTIAL_ENRICHMENT_ENABLED:
+        logger.info(f"[{job_name}] Job disabled via JOB_SEQUENTIAL_ENRICHMENT_ENABLED=false")
+        return {"status": "disabled", "message": "Job disabled by configuration"}
+
+    # v2.5.0: Serialization settings
+    serialize_mode = settings.SERIALIZE_API_REQUESTS
+    inter_request_delay = settings.SERIALIZE_INTER_REQUEST_DELAY_MS / 1000.0
+
+    if serialize_mode:
+        logger.info(f"[{job_name}] Starting Sequential Enrichment v2.5.0 (SERIALIZE MODE, delay: {inter_request_delay}s)")
+    else:
+        logger.info(f"[{job_name}] Starting Parallel Optimized Enrichment v2.0.0 (batch: {batch_id})")
 
     # Source query functions in PRIORITY ORDER (most preferred first)
     # v2.1.1: Reordered per SEJ-SOURCE-PRIORITY directive:
@@ -2312,8 +2326,10 @@ async def run_sequential_exhaustive_enrichment_job(
     # H-H02 FIX: Circuit breaker for failing sources
     circuit_breaker = CircuitBreaker()
 
-    # v2.0.0: Semaphore for parallel comic processing
-    comic_semaphore = asyncio.Semaphore(5)  # Process 5 comics concurrently
+    # v2.5.0: Semaphore for comic processing - 1 when serialize mode, 5 for legacy parallel
+    comic_concurrency = 1 if serialize_mode else 5
+    comic_semaphore = asyncio.Semaphore(comic_concurrency)
+    logger.info(f"[{job_name}] Comic concurrency: {comic_concurrency}")
 
     # v2.0.0: Batch write accumulator
     pending_writes: List[tuple] = []  # [(comic_id, updates_dict), ...]
@@ -2469,13 +2485,27 @@ async def run_sequential_exhaustive_enrichment_job(
                         logger.warning(f"[enrichment] Error querying {source_name}: {e}")
                         return source_name, {"_error": True}
 
-                # Run Phase 1 sources in parallel
+                # v2.5.0: Run Phase 1 sources - SEQUENTIAL by default to prevent rate limiting
                 if relevant_phase1:
-                    phase1_tasks = [
-                        safe_query(name, func, comic, missing, rate_mgr)
-                        for name, func in relevant_phase1
-                    ]
-                    phase1_results = await asyncio.gather(*phase1_tasks, return_exceptions=True)
+                    if serialize_mode:
+                        # Sequential execution with delay between requests
+                        phase1_results = []
+                        for name, func in relevant_phase1:
+                            try:
+                                result = await safe_query(name, func, comic, missing, rate_mgr)
+                                phase1_results.append(result)
+                            except Exception as e:
+                                phase1_results.append(e)
+                            # Delay between requests to prevent rate limiting
+                            if inter_request_delay > 0:
+                                await asyncio.sleep(inter_request_delay)
+                    else:
+                        # Legacy parallel mode (not recommended)
+                        phase1_tasks = [
+                            safe_query(name, func, comic, missing, rate_mgr)
+                            for name, func in relevant_phase1
+                        ]
+                        phase1_results = await asyncio.gather(*phase1_tasks, return_exceptions=True)
 
                     # Merge results
                     for result in phase1_results:

@@ -292,6 +292,24 @@ class Settings(BaseSettings):
     METRON_COOLDOWN_SECONDS: float = 60.0  # Cooldown after 429 response
     METRON_BACKLOG_CAP: int = 100  # Max pending requests in queue
 
+    # ===== SERIALIZED API REQUESTS v1.0.0 =====
+    # IMPL-2025-1224-SERIALIZE: Prevents rate limit breaches from parallel requests
+    # Per Metron dev team: async/parallel requests cause rate limiting even under quota
+    SERIALIZE_API_REQUESTS: bool = True  # Force sequential API calls (recommended)
+    SERIALIZE_INTER_REQUEST_DELAY_MS: int = 500  # Delay between sequential requests (ms)
+
+    # ===== JOB ENABLE/DISABLE FLAGS v1.0.0 =====
+    # Individual toggles for high-volume jobs
+    JOB_COMPREHENSIVE_ENRICHMENT_ENABLED: bool = True
+    JOB_SEQUENTIAL_ENRICHMENT_ENABLED: bool = True
+    JOB_COVER_ENRICHMENT_ENABLED: bool = True
+    JOB_FUNKO_PRICECHARTING_MATCH_ENABLED: bool = True
+    JOB_COMIC_PRICECHARTING_MATCH_ENABLED: bool = True
+    JOB_FUNKO_PRICE_SYNC_ENABLED: bool = True
+    JOB_COMIC_PRICE_SYNC_ENABLED: bool = True
+    JOB_UPC_BACKFILL_ENABLED: bool = True
+    JOB_CROSS_REFERENCE_ENABLED: bool = True
+
     @model_validator(mode="after")
     def validate_production_config(self):
         """Runtime validation to catch insecure production configurations."""

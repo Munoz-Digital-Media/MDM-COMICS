@@ -749,11 +749,12 @@ async def run_pricecharting_matching_job(batch_size: int = 100, max_records: int
 
 async def run_comprehensive_enrichment_job(batch_size: int = 50, max_records: int = 0):
     """
-    COMPREHENSIVE multi-source enrichment - queries ALL sources in PARALLEL.
+    COMPREHENSIVE multi-source enrichment - queries sources SEQUENTIALLY by default.
 
-    This job enriches ALL missing fields from ALL available sources simultaneously:
+    v1.24.1: Changed from parallel to sequential execution per Metron dev team guidance.
+    Parallel requests cause rate limiting even when under daily quota.
 
-    SOURCES QUERIED (in parallel):
+    SOURCES QUERIED (sequentially when SERIALIZE_API_REQUESTS=true):
     - Metron API: covers, descriptions, creators, characters, arcs
     - ComicVine API: covers, descriptions, creators, characters
     - ComicBookRealm (scraper): covers, pricing, CGC census, grading
@@ -772,7 +773,7 @@ async def run_comprehensive_enrichment_job(batch_size: int = 50, max_records: in
     2. Scrapers fallback (ComicBookRealm > MyComicShop)
 
     Args:
-        batch_size: Records per batch (default 50 - lower due to parallel queries)
+        batch_size: Records per batch (default 50)
         max_records: Max total (0 = unlimited)
     """
     import asyncio as aio
@@ -783,10 +784,22 @@ async def run_comprehensive_enrichment_job(batch_size: int = 50, max_records: in
         create_comicbookrealm_adapter,
         create_mycomicshop_adapter
     )
+    from app.core.config import settings
     import os
 
     job_name = "comprehensive_enrichment"
     batch_id = str(uuid4())
+
+    # v1.24.1: Check job enable flag
+    if not settings.JOB_COMPREHENSIVE_ENRICHMENT_ENABLED:
+        logger.info(f"[{job_name}] Job disabled via JOB_COMPREHENSIVE_ENRICHMENT_ENABLED=false")
+        return {"status": "disabled", "message": "Job disabled by configuration"}
+
+    # v1.24.1: Log serialization mode
+    serialize_mode = settings.SERIALIZE_API_REQUESTS
+    inter_request_delay = settings.SERIALIZE_INTER_REQUEST_DELAY_MS / 1000.0
+    if serialize_mode:
+        logger.info(f"[{job_name}] Running in SEQUENTIAL mode (delay: {inter_request_delay}s between requests)")
 
     logger.info(f"[{job_name}] Starting COMPREHENSIVE enrichment (batch: {batch_id})")
     logger.info(f"[{job_name}] Querying: Metron, ComicVine, ComicBookRealm, MyComicShop, PriceCharting")
@@ -964,9 +977,23 @@ async def run_comprehensive_enrichment_job(batch_size: int = 50, max_records: in
                             tasks.append(query_pricecharting())
                             task_sources.append("pricecharting")
 
-                        # Execute all queries in parallel
+                        # v1.24.1: Execute queries - SEQUENTIAL by default to prevent rate limiting
                         if tasks:
-                            results = await aio.gather(*tasks, return_exceptions=True)
+                            if serialize_mode:
+                                # Sequential execution with delay between requests
+                                results = []
+                                for task in tasks:
+                                    try:
+                                        result = await task
+                                        results.append(result)
+                                    except Exception as e:
+                                        results.append(e)
+                                    # Delay between requests to prevent rate limiting
+                                    if inter_request_delay > 0:
+                                        await aio.sleep(inter_request_delay)
+                            else:
+                                # Legacy parallel mode (not recommended)
+                                results = await aio.gather(*tasks, return_exceptions=True)
                         else:
                             results = []
 
