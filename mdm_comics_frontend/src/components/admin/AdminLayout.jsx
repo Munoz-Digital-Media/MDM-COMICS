@@ -1,7 +1,7 @@
 /**
  * AdminLayout - Full-page admin console layout with sidebar navigation
- * Phase 3: MDM Admin Console Inventory System v1.3.0
- * CATALOG-001: Refactored Products/Bundles into tabbed CatalogManager
+ * Phase 3: MDM Admin Console Inventory System v1.4.0
+ * INVENTORY-001: Renamed Catalog to Inventory per EPIC_01
  * FULFILLMENT-001: Consolidated Orders/Shipping/Refunds into Fulfillment module
  */
 import React, { useState, useEffect } from 'react';
@@ -10,7 +10,7 @@ import {
   X, Menu, ChevronLeft, ChevronDown, Palette, ClipboardList, CalendarClock
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
-import CatalogManager from './catalog/CatalogManager';
+import InventoryManager from './inventory/InventoryManager';
 import ReportsManager from './reports/ReportsManager';
 import BrandAssets from './branding/BrandAssets';
 import IngestionManager from './ingestion/IngestionManager';
@@ -18,10 +18,10 @@ import FulfillmentManager from './fulfillment/FulfillmentManager';
 import ConventionsManager from './conventions/ConventionsManager';
 import ConventionQuickAccess from '../ConventionQuickAccess';
 
-// Navigation items
+// Navigation items - EPIC_01 AC2: "Catalog" renamed to "Inventory"
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'catalog', label: 'Catalog', icon: Package },
+  { id: 'inventory', label: 'Inventory', icon: Package },
   { id: 'ingestion', label: 'Ingestion', icon: Search },
   { id: 'fulfillment', label: 'Fulfillment', icon: ClipboardList },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
@@ -62,8 +62,8 @@ export default function AdminLayout({ onClose }) {
     switch (activeSection) {
       case 'dashboard':
         return <AdminDashboard onNavigate={setActiveSection} />;
-      case 'catalog':
-        return <CatalogManager />;
+      case 'inventory':
+        return <InventoryManager />;
       case 'ingestion':
         return <IngestionManager />;
       case 'fulfillment':

@@ -1,6 +1,7 @@
 /**
  * ProductList - Searchable, filterable product table with stock management
- * Phase 3: MDM Admin Console Inventory System v1.3.0
+ * Phase 3: MDM Admin Console Inventory System v1.4.0
+ * STORY_01: Products Tab per MDM-COMICS-INVENTORY-EPIC
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -219,6 +220,9 @@ function StockHistoryModal({ product, onClose }) {
   );
 }
 
+// STORY_01 AC3: Page size options
+const PAGE_SIZE_OPTIONS = [25, 50, 100];
+
 export default function ProductList() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -238,8 +242,7 @@ export default function ProductList() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
-
-  const limit = 25;
+  const [limit, setLimit] = useState(25); // STORY_01 AC3: Configurable page size
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -407,8 +410,9 @@ export default function ProductList() {
         >
           <option value="">Show All Products</option>
           <option value="comics">Comics</option>
-          <option value="funko">Funko</option>
+          <option value="funko">Funkos</option>
           <option value="supplies">Supplies</option>
+          <option value="bundles">Bundles</option>
         </select>
 
         <label className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg cursor-pointer">
@@ -594,12 +598,26 @@ export default function ProductList() {
           </div>
         )}
 
-        {/* Pagination */}
-        {total > limit && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800">
+        {/* Pagination - STORY_01 AC3 */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800">
+          <div className="flex items-center gap-4">
             <p className="text-sm text-zinc-500">
-              Showing {offset + 1} - {Math.min(offset + limit, total)} of {total}
+              Showing {total > 0 ? offset + 1 : 0} - {Math.min(offset + limit, total)} of {total}
             </p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-zinc-500">Per page:</span>
+              <select
+                value={limit}
+                onChange={(e) => { setLimit(parseInt(e.target.value)); setOffset(0); }}
+                className="px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-300"
+              >
+                {PAGE_SIZE_OPTIONS.map(size => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {totalPages > 1 && (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setOffset(o => Math.max(0, o - limit))}
@@ -619,8 +637,8 @@ export default function ProductList() {
                 <ChevronRight className="w-4 h-4 text-zinc-400" />
               </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Modals */}
