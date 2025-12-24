@@ -24,6 +24,14 @@ npm run dev       # start Vite dev server
 - Dockerfile at `mdm_comics_frontend/Dockerfile`
 - Root Directory: `mdm_comics_frontend/`
 - Healthcheck: `/` (configured in `railway.json`)
+- Set `BACKEND_URL` per environment (e.g., staging/prod API base); Dockerfile default is `http://localhost:8000` for local dev.
+
+## Environment variables
+
+| Name | Required | Default | Description |
+| --- | --- | --- | --- |
+| `BACKEND_URL` | yes (deploy) | `http://localhost:8000` | API base used by server.js proxy; set per-environment in Railway. |
+| `PORT` | no | `3000` | Frontend server port. |
 
 ## Notes
 - Conventions and other static data live in `src/config/` (dev-only copies); large assets remain in `assets/` which is gitignored.

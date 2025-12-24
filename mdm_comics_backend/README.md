@@ -13,6 +13,16 @@ cp .env.example .env  # configure secrets
 uvicorn app.main:app --reload --port 8000
 ```
 
+## Environment variables (common)
+
+| Name | Required | Notes |
+| --- | --- | --- |
+| `DATABASE_URL` | yes | Postgres connection string (asyncpg). |
+| `SECRET_KEY` | yes | JWT/session signing. |
+| `PRICECHARTING_API_TOKEN` | yes (price jobs) | Needed for PriceCharting match/sync. |
+| `AWS_*` | if S3 used | Bucket/region/creds for assets. |
+| `PORT` | no | Defaults to 8000. |
+
 ## Project Structure
 
 ```

@@ -80,6 +80,19 @@ mdm_comics/
 
 **Important:** Backend and Middleware services must have their Root Directory set to the **repository root** (leave blank or `/`), not their service folder. Their Dockerfiles use absolute paths from the repo root for build context. Frontend and Cron Jobs use their respective folders as Root Directory.
 
+## Environment quick ref
+
+Set these via Railway/environment per service:
+
+| Service | Key Vars (non-exhaustive) |
+| --- | --- |
+| Frontend | `BACKEND_URL` (API base per env), `PORT` |
+| Backend | `DATABASE_URL`, `SECRET_KEY`, `PRICECHARTING_API_TOKEN`, `AWS_*` (if S3 used), `PORT` |
+| Cron | Same as backend (shares code), plus any job-specific tokens |
+| Middleware | `PORT`, any downstream auth keys it propagates |
+
+Assets in `assets/` remain gitignored and are for AI/dev reference only; deploy-time config must come from env/DB, not local assets.
+
 ## Brand Colors
 
 - **Primary:** Orange (#F97316)

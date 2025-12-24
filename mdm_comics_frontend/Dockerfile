@@ -23,7 +23,8 @@ COPY --from=builder /app/dist ./dist
 COPY server.js ./
 
 ENV PORT=3000
-ENV BACKEND_URL=https://mdm-comics-backend-development.up.railway.app
+# Default for local development; override per-environment via Railway/ENV at runtime
+ENV BACKEND_URL=http://localhost:8000
 
 EXPOSE 3000
 
