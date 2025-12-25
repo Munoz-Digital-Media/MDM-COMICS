@@ -46,23 +46,28 @@ def run_custom_migrations():
     """Run custom app migrations (non-Alembic)."""
     print("Running custom migrations...")
 
-    # BCW selectors column migration
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "app.migrations.add_bcw_selectors_column"],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True,
-            text=True,
-            env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
-        )
-        if result.returncode == 0:
-            print("BCW selectors migration: OK")
-            if result.stdout:
-                print(result.stdout)
-        else:
-            print(f"BCW selectors migration failed: {result.stderr}")
-    except Exception as e:
-        print(f"BCW selectors migration error: {e}")
+    migrations = [
+        ("app.migrations.add_bcw_selectors_column", "BCW selectors"),
+        ("app.migrations.add_product_case_columns", "Product case columns"),
+    ]
+
+    for module_name, description in migrations:
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", module_name],
+                cwd=str(PROJECT_ROOT),
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
+            )
+            if result.returncode == 0:
+                print(f"{description} migration: OK")
+                if result.stdout:
+                    print(result.stdout)
+            else:
+                print(f"{description} migration failed: {result.stderr}")
+        except Exception as e:
+            print(f"{description} migration error: {e}")
 
 
 def start_api():
