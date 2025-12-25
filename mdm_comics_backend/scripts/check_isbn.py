@@ -1,8 +1,13 @@
 import asyncio
+import os
+
 import asyncpg
 
 async def check_isbn():
-    conn = await asyncpg.connect('postgresql://postgres:UAzxIlGnYJEeIZnrsPGWdkLNYWoEEIAx@caboose.proxy.rlwy.net:50641/railway')
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise EnvironmentError("DATABASE_URL environment variable is required.")
+    conn = await asyncpg.connect(db_url)
 
     # Sample some ISBNs
     print('=== SAMPLE ISBNs ===')

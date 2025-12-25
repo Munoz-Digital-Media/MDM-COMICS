@@ -8,8 +8,9 @@ Normalizes all ISBNs to ISBN-13 format for consistent matching.
 """
 
 import asyncio
+import os
+
 import asyncpg
-import time
 
 def isbn10_to_isbn13(isbn10: str) -> str | None:
     """Convert ISBN-10 to ISBN-13 format."""
@@ -67,9 +68,10 @@ def normalize_isbn(raw_isbn: str) -> str | None:
 
 async def normalize_all_isbns():
     """Normalize all ISBNs in comic_issues table."""
-    conn = await asyncpg.connect(
-        'postgresql://postgres:UAzxIlGnYJEeIZnrsPGWdkLNYWoEEIAx@caboose.proxy.rlwy.net:50641/railway'
-    )
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise EnvironmentError("DATABASE_URL environment variable is required.")
+    conn = await asyncpg.connect(db_url)
 
     # Get records needing normalization (by ID to avoid deadlocks)
     print("Fetching records needing normalization...")

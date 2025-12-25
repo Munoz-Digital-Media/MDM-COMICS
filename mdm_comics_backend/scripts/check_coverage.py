@@ -1,9 +1,13 @@
 #!/usr/bin/env python
 """Quick coverage check for pipeline monitoring."""
 import asyncio
+import os
+
 import asyncpg
 
-DB_URL = 'postgresql://postgres:UAzxIlGnYJEeIZnrsPGWdkLNYWoEEIAx@caboose.proxy.rlwy.net:50641/railway'
+DB_URL = os.environ.get("DATABASE_URL")
+if not DB_URL:
+    raise EnvironmentError("DATABASE_URL environment variable is required.")
 
 async def quick_check():
     conn = await asyncpg.connect(DB_URL)

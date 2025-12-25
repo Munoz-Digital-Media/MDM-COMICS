@@ -17,10 +17,9 @@ from psycopg2.extras import DictCursor
 
 
 # Get DATABASE_URL from environment (Railway provides this)
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://postgres:UAzxIlGnYJEeIZnrsPGWdkLNYWoEEIAx@monorail.proxy.rlwy.net:58855/railway"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise EnvironmentError("DATABASE_URL environment variable is required. Set it before running this script.")
 
 # Default CSV path relative to project root
 SCRIPT_DIR = Path(__file__).resolve().parent
