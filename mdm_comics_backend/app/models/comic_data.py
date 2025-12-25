@@ -295,39 +295,42 @@ class ComicIssue(Base):
 
     # -------------------------------------------------------------------------
     # CLZ/Collection Data (v2.1.0 - Personal Collection Import)
-    # Fields from CLZ Comic Collector exports
+    # Fields from CLZ Comic Collector exports - all TEXT for unlimited length
     # -------------------------------------------------------------------------
-    genre = Column(String(255))               # Genre from CLZ
-    storage_box = Column(String(255))         # User's storage location
-    story_arc = Column(String(500))           # Story arc name
-    subtitle = Column(String(500))            # Issue subtitle
+    genre = Column(Text)                      # Genre from CLZ
+    storage_box = Column(Text)                # User's storage location
+    story_arc = Column(Text)                  # Story arc name
+    subtitle = Column(Text)                   # Issue subtitle
     is_key_issue = Column(Boolean, default=False)  # Key issue flag
-    key_category = Column(String(255))        # Key category (1st appearance, etc.)
+    key_category = Column(Text)               # Key category (1st appearance, etc.)
     key_reason = Column(Text)                 # Full key reason text
 
-    # Creator credits (denormalized for quick access)
+    # Creator credits (denormalized for quick access) - all TEXT
     clz_artist = Column(Text)                 # Combined artist field
     clz_characters = Column(Text)             # Character appearances as text
-    colorist = Column(String(500))
-    cover_artist = Column(String(500))
-    cover_colorist = Column(String(500))
-    cover_inker = Column(String(500))
-    cover_painter = Column(String(500))
-    cover_penciller = Column(String(500))
-    cover_separator = Column(String(500))
+    colorist = Column(Text)
+    cover_artist = Column(Text)
+    cover_colorist = Column(Text)
+    cover_inker = Column(Text)
+    cover_painter = Column(Text)
+    cover_penciller = Column(Text)
+    cover_separator = Column(Text)
     clz_creators = Column(Text)               # Combined creators list
-    editor = Column(String(500))
-    editor_in_chief = Column(String(500))
-    inker = Column(String(500))
-    layouts = Column(String(500))
-    letterer = Column(String(500))
-    painter = Column(String(500))
-    penciller = Column(String(500))
-    plotter = Column(String(500))
-    scripter = Column(String(500))
-    separator = Column(String(500))
-    translator = Column(String(500))
-    writer = Column(String(500))
+    editor = Column(Text)
+    editor_in_chief = Column(Text)
+    inker = Column(Text)
+    layouts = Column(Text)
+    letterer = Column(Text)
+    painter = Column(Text)
+    penciller = Column(Text)
+    plotter = Column(Text)
+    scripter = Column(Text)
+    separator = Column(Text)
+    translator = Column(Text)
+    writer = Column(Text)
+
+    # Store complete CLZ row as JSON for future reference
+    clz_raw_data = Column(JSON)
 
     # Raw Metron response - STORE EVERYTHING
     raw_data = Column(JSON)

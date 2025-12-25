@@ -9,6 +9,7 @@ Modes:
 - full: Both update existing and create new records
 """
 import csv
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -136,6 +137,9 @@ def extract_row_data(row: Dict[str, str]) -> Dict[str, Any]:
             data[db_col] = parse_key_issue(value)
         else:
             data[db_col] = value
+
+    # Store the complete raw row as JSON
+    data["clz_raw_data"] = json.dumps({k: v for k, v in row.items() if v})
 
     return data
 
