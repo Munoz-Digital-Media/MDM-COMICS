@@ -361,25 +361,61 @@ async def trigger_inventory_sync(
 
     If skus provided, sync only those. Otherwise sync all active.
     """
-    # For now, return a placeholder - the actual sync service integration
-    # would be implemented based on BCWInventorySyncService
+    from app.services.bcw.browser_client import BCWBrowserClient
+    from app.services.dropship.inventory_sync import BCWInventorySyncService
+    
     skus = request.skus if request else None
-
     logger.info(f"[bcw_catalog] Inventory sync requested by user {current_user.id}, skus={skus}")
 
-    # TODO: Integrate with BCWInventorySyncService when ready
-    # from app.services.dropship.inventory_sync import BCWInventorySyncService
-    # service = BCWInventorySyncService()
-    # if skus:
-    #     result = await service.sync_specific_skus(skus)
-    # else:
-    #     result = await service.sync_all_active_products()
+    # Initialize client and service
+    # Note: This is a synchronous blocking call for now. In production, 
+    # this should be offloaded to a background task (Celery/Arq) to avoid timeouts.
+    # For MVP/Admin tool usage, we'll run it inline but be mindful of timeouts.
+    
+    try:
+        # Use headless browser for sync
+        async with BCWBrowserClient(headless=True) as client:
+            # Login required for accurate inventory? Usually yes for pricing/availability
+            # The service handles its own login checks if needed, or we can force it here
+            # For now, we assume the client handles session injection if configured
+            
+            service = BCWInventorySyncService(client, db)
+            
+            if skus:
+                # Sync specific items (faster)
+                # check_items_availability returns a dict, we want to return stats
+                # so we might need a different method or wrap this
+                availability = await service.check_items_availability(skus)
+                return {
+                    "status": "completed",
+                    "mode": "specific_skus",
+                    "count": len(availability),
+                    "results": [
+                        {
+                            "sku": sku, 
+                            "in_stock": info.in_stock, 
+                            "qty": info.available_qty
+                        } for sku, info in availability.items()
+                    ]
+                }
+            else:
+                # Sync all active (slower)
+                result = await service.sync_all_active_products(batch_size=20)
+                return {
+                    "status": "completed" if result.success else "partial_failure",
+                    "mode": "full_sync",
+                    "stats": {
+                        "checked": result.total_checked,
+                        "updated": result.updated_count,
+                        "out_of_stock": result.out_of_stock_count,
+                        "errors": result.error_count
+                    },
+                    "duration_ms": result.duration_ms
+                }
 
-    return {
-        "status": "queued",
-        "message": "Inventory sync has been queued",
-        "skus_requested": skus,
-    }
+    except Exception as e:
+        logger.error(f"[bcw_catalog] Inventory sync failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==============================================================================
