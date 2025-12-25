@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     METRON_USERNAME: str = ""
     METRON_PASSWORD: str = ""
     METRON_API_BASE: str = "https://metron.cloud/api"
+n    # BCW Supplies Integration
+    BCW_USERNAME: str = ""
+    BCW_PASSWORD: str = ""
+    BCW_BASE_URL: str = "https://www.bcwsupplies.com"
 
     # Stripe Payments
     STRIPE_SECRET_KEY: str = ""
