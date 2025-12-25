@@ -627,6 +627,8 @@ class MultiSourceSearchService:
                         timeout=8.0
                     )
 
+                    # Collect items for parallel image fetching
+                    items_to_fetch = []
                     for item in search_results[:5]:
                         title = item.get("title", "")
                         # Skip if we already have this result
@@ -635,20 +637,55 @@ class MultiSourceSearchService:
                         # Prefer titles that look like issue pages (contain Vol or #)
                         is_issue_page = "Vol" in title or "_" in title
                         # Extract issue number from title if present
-                        issue_match = re.search(r'_(\d+)$', title)
+                        # Match number at end after space, underscore, or "Vol X "
+                        issue_match = re.search(r'(?:Vol\s*\d+[\s_]+)?(\d+)$', title)
                         extracted_number = issue_match.group(1) if issue_match else (number or "")
 
-                        issue_display = title.replace("_", " ")
+                        items_to_fetch.append({
+                            "title": title,
+                            "is_issue_page": is_issue_page,
+                            "extracted_number": extracted_number,
+                            "pageid": item.get("pageid", ""),
+                        })
+
+                    # Fetch images in parallel for first 3 items (with short timeout)
+                    async def fetch_image_for_item(item_data):
+                        try:
+                            # Try to parse Vol and issue from title for fetch_issue_data
+                            vol_match = re.search(r'Vol[\s_]*(\d+)', item_data["title"])
+                            vol = int(vol_match.group(1)) if vol_match else 1
+                            issue_num = item_data["extracted_number"]
+                            if issue_num:
+                                issue_data = await asyncio.wait_for(
+                                    adapter.fetch_issue_data(series_name, vol, issue_num),
+                                    timeout=3.0
+                                )
+                                return issue_data.get("image") if issue_data else None
+                        except Exception:
+                            pass
+                        return None
+
+                    # Parallel image fetch for top 3 items
+                    image_tasks = [fetch_image_for_item(item) for item in items_to_fetch[:3]]
+                    images = await asyncio.gather(*image_tasks, return_exceptions=True)
+
+                    # Build results with fetched images
+                    for idx, item_data in enumerate(items_to_fetch):
+                        image_url = None
+                        if idx < len(images) and not isinstance(images[idx], Exception):
+                            image_url = images[idx]
+
+                        issue_display = item_data["title"].replace("_", " ")
                         wiki_results.append({
-                            "id": f"fandom_{wiki_key}_{item.get('pageid', '')}",
+                            "id": f"fandom_{wiki_key}_{item_data['pageid']}",
                             "issue": issue_display,
                             "series": {"name": series_name.title()},
-                            "number": extracted_number,
-                            "image": None,  # Would need fetch_issue_data for image
+                            "number": item_data["extracted_number"],
+                            "image": image_url,
                             "cover_date": None,
                             "_source": wiki_key,
-                            "_wiki_title": title,
-                            "_is_issue_page": is_issue_page,
+                            "_wiki_title": item_data["title"],
+                            "_is_issue_page": item_data["is_issue_page"],
                         })
 
                 return wiki_results[:5]
