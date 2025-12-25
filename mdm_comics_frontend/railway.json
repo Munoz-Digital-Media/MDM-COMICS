@@ -2,8 +2,8 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "Dockerfile",
-    "watchPatterns": ["src/**", "package.json", "server.js", "Dockerfile", "railway.json"]
+    "dockerfilePath": "mdm_comics_frontend/Dockerfile",
+    "watchPatterns": ["mdm_comics_frontend/src/**", "mdm_comics_frontend/package.json", "mdm_comics_frontend/server.js", "mdm_comics_frontend/Dockerfile"]
   },
   "deploy": {
     "healthcheckPath": "/",
