@@ -64,6 +64,8 @@ async def migrate():
         ("writer", "TEXT"),
         # Raw CLZ data as JSON
         ("clz_raw_data", "JSONB"),
+        # Back cover S3 storage (v2.0.0)
+        ("back_cover_s3_key", "VARCHAR(255)"),
     ]
 
     async with engine.begin() as conn:

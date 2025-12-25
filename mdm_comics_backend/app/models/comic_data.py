@@ -259,7 +259,8 @@ class ComicIssue(Base):
     # S3 Image Storage (v1.9.5 - Image Acquisition System)
     # Own the images, don't depend on external URLs
     # -------------------------------------------------------------------------
-    cover_s3_key = Column(String(255), index=True)    # S3 key: covers/{id}.jpg
+    cover_s3_key = Column(String(255), index=True)    # S3 key: covers/{id}/front.jpg
+    back_cover_s3_key = Column(String(255))           # S3 key: covers/{id}/back.jpg
     thumb_s3_key = Column(String(255))                 # S3 key: thumbs/{id}_sm.jpg
     image_acquired_at = Column(DateTime)               # When image was downloaded
     image_checksum = Column(String(64))                # SHA-256 of original image
