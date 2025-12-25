@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.auth import get_current_admin_user
+from app.api.deps import get_current_admin
 
 router = APIRouter(prefix="/clz-import", tags=["CLZ Import"])
 
@@ -236,7 +236,7 @@ async def run_import_job(db: AsyncSession, limit: int = 0, execute: bool = False
 
 @router.get("/status")
 async def get_import_status(
-    _admin=Depends(get_current_admin_user),
+    _admin=Depends(get_current_admin),
 ):
     """Get current import status."""
     return import_status
@@ -248,7 +248,7 @@ async def trigger_import(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(0, description="Row limit (0 = all)"),
     execute: bool = Query(False, description="Actually commit changes"),
-    _admin=Depends(get_current_admin_user),
+    _admin=Depends(get_current_admin),
 ):
     """
     Trigger CLZ import job.
