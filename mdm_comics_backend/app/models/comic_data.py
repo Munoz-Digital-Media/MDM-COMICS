@@ -293,6 +293,42 @@ class ComicIssue(Base):
     cbr_url = Column(Text)                    # ComicBookRealm source URL
     cbr_fetched_at = Column(DateTime)         # When CBR data was last fetched
 
+    # -------------------------------------------------------------------------
+    # CLZ/Collection Data (v2.1.0 - Personal Collection Import)
+    # Fields from CLZ Comic Collector exports
+    # -------------------------------------------------------------------------
+    genre = Column(String(255))               # Genre from CLZ
+    storage_box = Column(String(255))         # User's storage location
+    story_arc = Column(String(500))           # Story arc name
+    subtitle = Column(String(500))            # Issue subtitle
+    is_key_issue = Column(Boolean, default=False)  # Key issue flag
+    key_category = Column(String(255))        # Key category (1st appearance, etc.)
+    key_reason = Column(Text)                 # Full key reason text
+
+    # Creator credits (denormalized for quick access)
+    clz_artist = Column(Text)                 # Combined artist field
+    clz_characters = Column(Text)             # Character appearances as text
+    colorist = Column(String(500))
+    cover_artist = Column(String(500))
+    cover_colorist = Column(String(500))
+    cover_inker = Column(String(500))
+    cover_painter = Column(String(500))
+    cover_penciller = Column(String(500))
+    cover_separator = Column(String(500))
+    clz_creators = Column(Text)               # Combined creators list
+    editor = Column(String(500))
+    editor_in_chief = Column(String(500))
+    inker = Column(String(500))
+    layouts = Column(String(500))
+    letterer = Column(String(500))
+    painter = Column(String(500))
+    penciller = Column(String(500))
+    plotter = Column(String(500))
+    scripter = Column(String(500))
+    separator = Column(String(500))
+    translator = Column(String(500))
+    writer = Column(String(500))
+
     # Raw Metron response - STORE EVERYTHING
     raw_data = Column(JSON)
 

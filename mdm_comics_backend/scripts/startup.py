@@ -49,6 +49,7 @@ def run_custom_migrations():
     migrations = [
         ("app.migrations.add_bcw_selectors_column", "BCW selectors"),
         ("app.migrations.add_product_case_columns", "Product case columns"),
+        ("app.migrations.add_clz_columns", "CLZ collection columns"),
     ]
 
     for module_name, description in migrations:

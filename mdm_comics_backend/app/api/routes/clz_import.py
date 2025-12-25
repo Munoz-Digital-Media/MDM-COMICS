@@ -2,10 +2,13 @@
 CLZ Data Import API endpoint.
 
 Runs the CLZ import job on the Railway container where database access is reliable.
+
+Modes:
+- update: Match existing records and update metadata (default)
+- create: Create new comic_issues for unmatched rows
+- full: Both update existing and create new records
 """
-import asyncio
 import csv
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -26,8 +29,57 @@ CSV_PATH = Path("/app/mdm_comics_backend/data/20251224_MDM_COMICS_DATADUMP.csv")
 import_status: Dict[str, Any] = {
     "running": False,
     "last_run": None,
+    "mode": None,
     "stats": {},
     "errors": [],
+}
+
+# CSV column to DB column mapping
+CSV_TO_DB_MAPPING = {
+    # Core fields
+    "Series": "series_sort_name",
+    "Issue": "number",
+    "Full Title": "issue_name",
+    "Title": "story_title",
+    "Publisher": "publisher_name",
+    "Cover Date": "publication_date",
+    "Release Year": "series_year_began",
+    "Cover Year": "year",
+    "Cover Price": "price",
+    "Barcode": "upc",
+    # CLZ-specific fields
+    "Genre": "genre",
+    "Storage Box": "storage_box",
+    "Story Arc": "story_arc",
+    "Subtitle": "subtitle",
+    "Variant Description": "variant_name",
+    "Variant": "variant_name",  # Fallback
+    "Key": "is_key_issue",
+    "Key Category": "key_category",
+    "Key Reason": "key_reason",
+    # Creator credits
+    "Artist": "clz_artist",
+    "Characters": "clz_characters",
+    "Colorist": "colorist",
+    "Cover Artist": "cover_artist",
+    "Cover Colorist": "cover_colorist",
+    "Cover Inker": "cover_inker",
+    "Cover Painter": "cover_painter",
+    "Cover Penciller": "cover_penciller",
+    "Cover Separator": "cover_separator",
+    "Creators": "clz_creators",
+    "Editor": "editor",
+    "Editor in Chief": "editor_in_chief",
+    "Inker": "inker",
+    "Layouts": "layouts",
+    "Letterer": "letterer",
+    "Painter": "painter",
+    "Penciller": "penciller",
+    "Plotter": "plotter",
+    "Scripter": "scripter",
+    "Separator": "separator",
+    "Translator": "translator",
+    "Writer": "writer",
 }
 
 
@@ -36,19 +88,6 @@ def normalize_upc(barcode: str) -> Optional[str]:
         return None
     digits = "".join(ch for ch in barcode if ch.isdigit())
     return digits or None
-
-
-def parse_month_year(value: str) -> Optional[str]:
-    if not value:
-        return None
-    value = value.strip()
-    for fmt in ("%b %Y", "%B %Y"):
-        try:
-            dt = datetime.strptime(value, fmt)
-            return datetime(dt.year, dt.month, 1).isoformat()
-        except ValueError:
-            continue
-    return None
 
 
 def parse_cover_price(value: str) -> Optional[float]:
@@ -60,15 +99,45 @@ def parse_cover_price(value: str) -> Optional[float]:
         return None
 
 
-def build_description(key: str, key_category: str, key_reason: str) -> Optional[str]:
-    parts = []
-    if key and key.lower() == "yes":
-        parts.append("Key issue")
-    if key_category:
-        parts.append(f"Category: {key_category}")
-    if key_reason:
-        parts.append(f"Reason: {key_reason}")
-    return " | ".join(parts) if parts else None
+def parse_year(value: str) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def parse_key_issue(value: str) -> bool:
+    return value.lower() == "yes" if value else False
+
+
+def extract_row_data(row: Dict[str, str]) -> Dict[str, Any]:
+    """Extract all fields from a CSV row into database format."""
+    data = {}
+
+    for csv_col, db_col in CSV_TO_DB_MAPPING.items():
+        value = (row.get(csv_col) or "").strip()
+        if not value:
+            continue
+
+        # Skip if we already have this db column set (handles fallbacks)
+        if db_col in data and data[db_col]:
+            continue
+
+        # Special handling for certain fields
+        if db_col == "price":
+            data[db_col] = parse_cover_price(value)
+        elif db_col in ("year", "series_year_began"):
+            data[db_col] = parse_year(value)
+        elif db_col == "upc":
+            data[db_col] = normalize_upc(value)
+        elif db_col == "is_key_issue":
+            data[db_col] = parse_key_issue(value)
+        else:
+            data[db_col] = value
+
+    return data
 
 
 async def match_issue(
@@ -125,15 +194,73 @@ async def match_issue(
     return row[0] if row else None
 
 
-async def run_import_job(db: AsyncSession, limit: int = 0, execute: bool = False):
-    """Run the CLZ import job."""
+async def update_issue(db: AsyncSession, issue_id: int, data: Dict[str, Any]) -> bool:
+    """Update an existing issue with new data."""
+    if not data:
+        return False
+
+    # Filter out None values and id
+    updates = {k: v for k, v in data.items() if v is not None and k != "id"}
+    if not updates:
+        return False
+
+    set_clauses = [f"{k} = :{k}" for k in updates.keys()]
+    set_clauses.append("updated_at = NOW()")
+
+    stmt = f"UPDATE comic_issues SET {', '.join(set_clauses)} WHERE id = :id"
+    updates["id"] = issue_id
+
+    await db.execute(text(stmt), updates)
+    return True
+
+
+async def create_issue(db: AsyncSession, data: Dict[str, Any]) -> Optional[int]:
+    """Create a new comic_issue record."""
+    if not data:
+        return None
+
+    # Filter out None values
+    fields = {k: v for k, v in data.items() if v is not None}
+
+    # Add metadata
+    fields["data_source"] = "clz"
+    fields["created_at"] = datetime.utcnow()
+    fields["updated_at"] = datetime.utcnow()
+
+    columns = list(fields.keys())
+    placeholders = [f":{k}" for k in columns]
+
+    stmt = f"INSERT INTO comic_issues ({', '.join(columns)}) VALUES ({', '.join(placeholders)}) RETURNING id"
+
+    result = await db.execute(text(stmt), fields)
+    row = result.fetchone()
+    return row[0] if row else None
+
+
+async def run_import_job(db: AsyncSession, limit: int = 0, execute: bool = False, mode: str = "full"):
+    """Run the CLZ import job.
+
+    Args:
+        db: Database session
+        limit: Row limit (0 = all)
+        execute: If True, commit changes; if False, dry-run
+        mode: 'update' (only update), 'create' (only create), 'full' (both)
+    """
     global import_status
 
     import_status["running"] = True
     import_status["last_run"] = datetime.utcnow().isoformat()
+    import_status["mode"] = mode
     import_status["errors"] = []
 
-    stats = {"rows": 0, "matched": 0, "updated": 0, "not_found": 0}
+    stats = {
+        "rows": 0,
+        "matched": 0,
+        "updated": 0,
+        "created": 0,
+        "not_found": 0,
+        "skipped": 0,
+    }
 
     try:
         if not CSV_PATH.exists():
@@ -149,76 +276,38 @@ async def run_import_job(db: AsyncSession, limit: int = 0, execute: bool = False
                 stats["rows"] += 1
 
                 try:
-                    series = (row.get("Series") or "").strip()
-                    issue = (row.get("Issue") or "").strip()
-                    publisher = (row.get("Publisher") or "").strip() or None
-                    cover_year = row.get("Cover Year") or row.get("Release Year") or ""
-                    upc = normalize_upc(row.get("Barcode") or "")
+                    # Extract all data from row
+                    data = extract_row_data(row)
 
-                    year_int = None
-                    try:
-                        year_int = int(cover_year) if cover_year else None
-                    except ValueError:
-                        pass
+                    series = data.get("series_sort_name", "")
+                    issue_num = data.get("number", "")
+                    publisher = data.get("publisher_name")
+                    year = data.get("year")
+                    upc = data.get("upc")
 
-                    issue_id = await match_issue(db, series, issue, publisher, year_int, upc)
-
-                    if not issue_id:
-                        stats["not_found"] += 1
+                    if not series or not issue_num:
+                        stats["skipped"] += 1
                         continue
 
-                    stats["matched"] += 1
+                    # Try to match existing issue
+                    issue_id = await match_issue(db, series, issue_num, publisher, year, upc)
 
-                    if execute:
-                        # Build update
-                        title = (row.get("Title") or row.get("Full Title") or "").strip()
-                        variant = (row.get("Variant Description") or row.get("Variant") or "").strip()
-                        cover_price = parse_cover_price(row.get("Cover Price") or "")
-                        pub_date = (row.get("Cover Date") or "").strip() or None
-                        store_date = parse_month_year(row.get("Release Date") or "")
-                        desc = build_description(
-                            row.get("Key") or "",
-                            row.get("Key Category") or "",
-                            row.get("Key Reason") or "",
-                        )
+                    if issue_id:
+                        stats["matched"] += 1
 
-                        updates = []
-                        params = []
-                        if title:
-                            updates.append("issue_name = :title")
-                            params.append(("title", title))
-                        if variant:
-                            updates.append("variant_name = :variant")
-                            params.append(("variant", variant))
-                        if cover_price:
-                            updates.append("price = :price")
-                            params.append(("price", cover_price))
-                        if pub_date:
-                            updates.append("publication_date = :pub_date")
-                            params.append(("pub_date", pub_date))
-                        if store_date:
-                            updates.append("store_date = :store_date")
-                            params.append(("store_date", store_date))
-                        if year_int:
-                            updates.append("year = :year")
-                            params.append(("year", year_int))
-                        if upc:
-                            updates.append("upc = :upc")
-                            params.append(("upc", upc))
-                        if desc:
-                            updates.append("description = :desc")
-                            params.append(("desc", desc))
+                        if mode in ("update", "full") and execute:
+                            if await update_issue(db, issue_id, data):
+                                stats["updated"] += 1
+                    else:
+                        stats["not_found"] += 1
 
-                        if updates:
-                            updates.append("updated_at = NOW()")
-                            stmt = f"UPDATE comic_issues SET {', '.join(updates)} WHERE id = :id"
-                            param_dict = dict(params)
-                            param_dict["id"] = issue_id
-                            await db.execute(text(stmt), param_dict)
-                            stats["updated"] += 1
+                        if mode in ("create", "full") and execute:
+                            new_id = await create_issue(db, data)
+                            if new_id:
+                                stats["created"] += 1
 
                 except Exception as e:
-                    import_status["errors"].append(f"Row {idx}: {str(e)}")
+                    import_status["errors"].append(f"Row {idx}: {str(e)[:100]}")
 
                 # Progress every 500 rows
                 if idx % 500 == 0:
@@ -248,6 +337,7 @@ async def trigger_import(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(0, description="Row limit (0 = all)"),
     execute: bool = Query(False, description="Actually commit changes"),
+    mode: str = Query("full", description="Mode: 'update', 'create', or 'full'"),
     _admin=Depends(get_current_admin),
 ):
     """
@@ -255,18 +345,26 @@ async def trigger_import(
 
     - limit: Number of rows to process (0 = all)
     - execute: If False, dry-run only (no database changes)
+    - mode:
+        - 'update': Only update existing matched records
+        - 'create': Only create new records for unmatched
+        - 'full': Both update and create (default)
     """
     global import_status
 
     if import_status["running"]:
         raise HTTPException(status_code=409, detail="Import already running")
 
+    if mode not in ("update", "create", "full"):
+        raise HTTPException(status_code=400, detail="Mode must be 'update', 'create', or 'full'")
+
     # Run in background
-    background_tasks.add_task(run_import_job, db, limit, execute)
+    background_tasks.add_task(run_import_job, db, limit, execute, mode)
 
     return {
         "message": "Import started",
         "limit": limit,
         "execute": execute,
+        "mode": mode,
         "check_status_at": "/api/clz-import/status",
     }
