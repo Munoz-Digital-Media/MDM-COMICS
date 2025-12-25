@@ -309,18 +309,31 @@ export default function CreateComicsForm() {
 
         {/* Search Results */}
         {searchResults.length > 0 && (
-          <div className="mt-3 grid grid-cols-4 gap-2 max-h-48 overflow-auto">
-            {searchResults.slice(0, 8).map((comic) => (
+          <div className="mt-3 grid grid-cols-4 gap-3 max-h-[400px] overflow-auto pr-2">
+            {searchResults.slice(0, 12).map((comic) => (
               <div
                 key={comic.id}
                 onClick={() => selectComic(comic)}
                 className="bg-zinc-900 rounded-lg p-2 cursor-pointer hover:bg-zinc-700 transition-colors"
               >
-                <div className="aspect-[2/3] bg-zinc-800 rounded mb-1">
-                  {comic.image && <img src={comic.image} alt="" className="w-full h-full object-contain rounded" />}
+                <div className="aspect-[2/3] bg-zinc-800 rounded mb-1 flex items-center justify-center overflow-hidden">
+                  {comic.image ? (
+                    <img
+                      src={comic.image}
+                      alt={`${comic.series?.name} #${comic.number}`}
+                      className="w-full h-full object-cover rounded"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.nextSibling?.classList.remove('hidden');
+                      }}
+                    />
+                  ) : null}
+                  <div className={`text-zinc-600 text-xs text-center p-2 ${comic.image ? 'hidden' : ''}`}>
+                    No Cover
+                  </div>
                 </div>
                 <p className="text-xs text-white truncate">{comic.series?.name}</p>
-                <p className="text-xs text-zinc-400">#{comic.number}</p>
+                <p className="text-xs text-zinc-400">#{comic.number || '?'}</p>
               </div>
             ))}
           </div>
