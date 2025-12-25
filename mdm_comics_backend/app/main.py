@@ -50,6 +50,8 @@ from app.api.routes import refunds, admin_refunds
 from app.api.routes import admin_orders
 # BCW Catalog Search & Create v1.0.0
 from app.api.routes import bcw_catalog
+# CLZ Data Import v1.0.0
+from app.api.routes import clz_import
 # Outreach System v1.5.0 - optional imports for graceful degradation
 try:
     from app.api.routes import newsletter, webhooks
@@ -537,6 +539,8 @@ app.include_router(admin_refunds.router, prefix="/api", tags=["Admin - Refunds"]
 app.include_router(admin_orders.router, prefix="/api", tags=["Admin - Orders"])
 # BCW Catalog Search & Create v1.0.0
 app.include_router(bcw_catalog.router, prefix="/api", tags=["Admin - BCW Catalog"])
+# CLZ Data Import v1.0.0
+app.include_router(clz_import.router, prefix="/api", tags=["Admin - CLZ Import"])
 # Homepage Section Management
 from app.api.routes import homepage
 app.include_router(homepage.router, prefix="/api", tags=["Homepage"])
