@@ -69,25 +69,41 @@ def parse_filename(filename: str) -> Optional[Dict[str, Any]]:
     Expected formats:
         spawn_vol_1_10_front.jpg
         spawn_vol_1_100E_back.jpg
-        spawn_vol_1_1_info.png
+        the_spectacular_spider-man_v1_102_front.jpg
 
     Returns dict with: series, volume, issue, cover_type, variant
     """
     # Remove extension
     name = Path(filename).stem.lower()
 
-    # Pattern: {series}_vol_{volume}_{issue}[{variant}]_{type}
-    # Examples: spawn_vol_1_10_front, spawn_vol_1_100E_back
-    pattern = r'^([a-z_]+)_vol_(\d+)_(\d+)([a-z])?_(front|back|info)$'
-    match = re.match(pattern, name)
+    # Try multiple patterns
+    patterns = [
+        # Pattern 1: {series}_vol_{volume}_{issue}[{variant}]_{type}
+        # Examples: spawn_vol_1_10_front, spawn_vol_1_100E_back
+        r'^([a-z_]+)_vol_(\d+)_(\d+)([a-z])?_(front|back|info)$',
+
+        # Pattern 2: {series}_v{volume}_{issue}[{variant}]_{type}
+        # Examples: the_spectacular_spider-man_v1_102_front
+        r'^([a-z0-9_-]+)_v(\d+)_(\d+)([a-z])?_(front|back|info)$',
+    ]
+
+    match = None
+    for pattern in patterns:
+        match = re.match(pattern, name)
+        if match:
+            break
 
     if not match:
         return None
 
     series_raw, volume, issue, variant, cover_type = match.groups()
 
-    # Convert series name: spawn -> Spawn, amazing_spider_man -> Amazing Spider-Man
-    series = series_raw.replace('_', ' ').title()
+    # Convert series name:
+    # spawn -> Spawn
+    # the_spectacular_spider-man -> The Spectacular Spider-Man
+    series = series_raw.replace('_', ' ').replace('-', '-').title()
+    # Fix common title issues (re-capitalize after hyphen)
+    series = '-'.join(word.title() for word in series.split('-'))
 
     return {
         'series': series,
