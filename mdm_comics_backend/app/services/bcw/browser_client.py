@@ -18,6 +18,7 @@ Run: playwright install chromium
 import asyncio
 import logging
 import random
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
@@ -525,6 +526,8 @@ class BCWBrowserClient:
     async def login(self, username: str, password: str) -> bool:
         """
         Log in to BCW website.
+        
+        v1.3.0: Supports cookie injection via BCW_SESSION_COOKIES to bypass CAPTCHA.
 
         Args:
             username: BCW account email
@@ -532,18 +535,36 @@ class BCWBrowserClient:
 
         Returns:
             True if login successful
-
-        Raises:
-            BCWAuthError: If login fails
         """
         await self._check_circuit_breaker()
         await self._check_rate_limit()
 
-        logger.info("Attempting BCW login...")
+        # Step 1: Check for session cookies in environment (CAPTCHA bypass)
+        session_cookies_json = os.getenv("BCW_SESSION_COOKIES")
+        if session_cookies_json:
+            try:
+                import json
+                cookies = json.loads(session_cookies_json)
+                await self.set_cookies(cookies)
+                logger.info("[BCW] Session cookies injected from environment")
+                
+                # Navigate to verify session
+                await self.navigate("/")
+                if await self.is_logged_in():
+                    logger.info("[BCW] Verified active session via injected cookies")
+                    self._is_logged_in = True
+                    return True
+                else:
+                    logger.warning("[BCW] Injected session cookies are expired or invalid")
+            except Exception as e:
+                logger.error(f"[BCW] Failed to inject session cookies: {e}")
+
+        # Step 2: Fall back to manual login if no valid session
+        logger.info("Attempting manual BCW login...")
 
         try:
             # Navigate to login page
-            await self.navigate("/account/login")
+            await self.navigate("/customer/account/login/")
             await self._human_delay()
 
             # Fill login form
@@ -617,8 +638,61 @@ class BCWBrowserClient:
             return False
 
     # =========================================================================
-    # PRODUCT SEARCH
+    # PRODUCT SEARCH & NAVIGATION
     # =========================================================================
+
+    async def go_to_product(self, url: str) -> Optional[ProductInfo]:
+        """
+        Navigate directly to a product page and scrape details.
+        Bypasses search fragility.
+        """
+        await self._check_circuit_breaker()
+        await self._check_rate_limit()
+
+        logger.info(f"Navigating to product URL: {url}")
+
+        try:
+            await self._page.goto(url, wait_until="domcontentloaded")
+            await self._human_delay()
+
+            # Scrape details from the current page (Product Detail Page)
+            # We reuse the logic from search_product, but adapted for PDP
+            
+            # SKU
+            sku_el = await self.client._page.query_selector(".sku .value")
+            bcw_sku = await sku_el.text_content() if sku_el else None
+
+            # Name
+            name_el = await self.client._page.query_selector("h1.page-title")
+            name = await name_el.text_content() if name_el else None
+
+            # Price
+            price_el = await self.client._page.query_selector(".price-final_price .price")
+            price_text = await price_el.text_content() if price_el else None
+            price = self._parse_price(price_text)
+
+            # Stock
+            stock_el = await self.client._page.query_selector(".stock.available")
+            in_stock = "in stock" in (await stock_el.text_content() or "").lower() if stock_el else False
+            
+            # Qty
+            qty = None # Difficult to scrape available qty without adding to cart, assume high if in stock
+
+            self._circuit_breaker.record_success()
+            
+            return ProductInfo(
+                sku=bcw_sku or "UNKNOWN", # We might not parse SKU correctly if selector fails
+                bcw_sku=bcw_sku,
+                name=name.strip() if name else None,
+                price=price,
+                in_stock=in_stock,
+                available_qty=qty
+            )
+
+        except Exception as e:
+            self._circuit_breaker.record_failure()
+            logger.error(f"Failed to navigate to product {url}: {e}")
+            return None
 
     async def search_product(self, sku: str) -> Optional[ProductInfo]:
         """
@@ -722,13 +796,14 @@ class BCWBrowserClient:
     # CART OPERATIONS
     # =========================================================================
 
-    async def add_to_cart(self, sku: str, quantity: int = 1) -> bool:
+    async def add_to_cart(self, sku: str, quantity: int = 1, product_url: str = None) -> bool:
         """
         Add a product to the cart.
 
         Args:
             sku: Product SKU
             quantity: Quantity to add
+            product_url: Direct URL to product (optional, bypasses search)
 
         Returns:
             True if successful
@@ -739,19 +814,23 @@ class BCWBrowserClient:
         logger.info(f"Adding to cart: {sku} x {quantity}")
 
         try:
-            # Search for product first
-            product = await self.search_product(sku)
-            if not product:
-                raise BCWError(f"Product not found: {sku}", code="BCW_PRODUCT_NOT_FOUND")
+            # Navigate to product page
+            if product_url:
+                await self.navigate(product_url)
+            else:
+                # Search for product first
+                product = await self.search_product(sku)
+                if not product:
+                    raise BCWError(f"Product not found: {sku}", code="BCW_PRODUCT_NOT_FOUND")
 
-            # Click on product to go to detail page
-            product_cards = await self._page.query_selector_all(
-                get_selector("search", "product_card").primary
-            )
-            if product_cards:
-                await product_cards[0].click()
-                await self._page.wait_for_load_state("domcontentloaded")
-                await self._human_delay()
+                # Click on product to go to detail page
+                product_cards = await self._page.query_selector_all(
+                    get_selector("search", "product_card").primary
+                )
+                if product_cards:
+                    await product_cards[0].click()
+                    await self._page.wait_for_load_state("domcontentloaded")
+                    await self._human_delay()
 
             # Set quantity
             qty_input = await self._find_element("product_detail", "quantity_input")

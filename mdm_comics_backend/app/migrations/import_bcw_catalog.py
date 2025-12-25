@@ -8,6 +8,7 @@ Run: python -m app.migrations.import_bcw_catalog
 """
 import asyncio
 import logging
+import json
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -57,9 +58,17 @@ async def import_bcw_catalog():
             bcw_name = str(row.get('BCW-NAME', '')).strip() if pd.notna(row.get('BCW-NAME')) else None
             bcw_url = str(row.get('URL', '')).strip() if pd.notna(row.get('URL')) else None
             bcw_category = str(row.get('CATEGORY', '')).strip() if pd.notna(row.get('CATEGORY')) else None
+            
+            # New fields
+            bcw_upc = str(row.get('UPC', '')).strip() if pd.notna(row.get('UPC')) else None
+            case_qty = int(row.get('CASE-QTY', 0)) if pd.notna(row.get('CASE-QTY')) else None
+            weight = float(row.get('WEIGHT', 0)) if pd.notna(row.get('WEIGHT')) else None
+            dims = str(row.get('DIMENSIONS', '')).strip() if pd.notna(row.get('DIMENSIONS')) else None
+            desc = str(row.get('DESCRIPTION', '')).strip() if pd.notna(row.get('DESCRIPTION')) else None
 
             # Build S3 image URL (primary image is 00_)
             s3_image_url = f"{S3_BASE_URL}/bcw-products/{mdm_sku}/00_{bcw_sku.lower()}.jpg"
+            images = [s3_image_url] # Start with primary, can expand later
 
             try:
                 # Check if exists
@@ -75,6 +84,13 @@ async def import_bcw_catalog():
                         SET bcw_sku = :bcw_sku,
                             product_name = :product_name,
                             bcw_category = :bcw_category,
+                            url = :url,
+                            upc = :upc,
+                            case_quantity = :case_quantity,
+                            weight = :weight,
+                            dimensions = :dimensions,
+                            description = :description,
+                            images = :images,
                             updated_at = NOW()
                         WHERE mdm_sku = :mdm_sku
                     """), {
@@ -82,6 +98,13 @@ async def import_bcw_catalog():
                         "bcw_sku": bcw_sku,
                         "product_name": bcw_name,
                         "bcw_category": bcw_category,
+                        "url": bcw_url,
+                        "upc": bcw_upc,
+                        "case_quantity": case_qty,
+                        "weight": weight,
+                        "dimensions": dims,
+                        "description": desc,
+                        "images": json.dumps(images),
                     })
                     updated += 1
                     print(f"  Updated: {mdm_sku}")
@@ -90,10 +113,12 @@ async def import_bcw_catalog():
                     await db.execute(text("""
                         INSERT INTO bcw_product_mappings (
                             mdm_sku, bcw_sku, product_name, bcw_category,
+                            url, upc, case_quantity, weight, dimensions, description, images,
                             is_active, is_dropship_only, sync_inventory,
                             imported_at, imported_from, created_at, updated_at
                         ) VALUES (
                             :mdm_sku, :bcw_sku, :product_name, :bcw_category,
+                            :url, :upc, :case_quantity, :weight, :dimensions, :description, :images,
                             true, true, true,
                             NOW(), 'bcw_catalog_excel', NOW(), NOW()
                         )
@@ -102,6 +127,13 @@ async def import_bcw_catalog():
                         "bcw_sku": bcw_sku,
                         "product_name": bcw_name,
                         "bcw_category": bcw_category,
+                        "url": bcw_url,
+                        "upc": bcw_upc,
+                        "case_quantity": case_qty,
+                        "weight": weight,
+                        "dimensions": dims,
+                        "description": desc,
+                        "images": json.dumps(images),
                     })
                     imported += 1
                     print(f"  Imported: {mdm_sku} -> {bcw_name}")

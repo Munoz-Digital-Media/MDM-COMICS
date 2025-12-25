@@ -59,6 +59,8 @@ LOGIN_SELECTORS = {
             "#password",
             "#login-password",
             "input.password-input",
+            "#pass",
+            "input[name='login[password]']",
         ],
         description="Password input field on login page"
     ),
@@ -109,14 +111,17 @@ SEARCH_SELECTORS = {
             ".search-input",
             "input.search-field",
             "#product-search",
+            "input[type='text'][placeholder*='Search']",
         ],
         description="Product search input field"
     ),
     "search_submit": SelectorConfig(
-        primary="button[type='submit'].search-btn, .search-button",
+        primary="button[type='submit'].search-btn, .search-button, button.action.search",
         fallbacks=[
             "#search-submit",
             ".btn-search",
+            "button[title='Search']",
+            "button:has(.fa-search)",
         ],
         description="Search form submit button"
     ),
