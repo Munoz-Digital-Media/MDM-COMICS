@@ -459,19 +459,34 @@ async def activate_bcw_product(
             # Update existing product
             await db.execute(text("""
                 UPDATE products
-                SET price = :price, is_active = true, updated_at = NOW()
+                SET price = :price, 
+                    is_active = true, 
+                    case_quantity = :case_qty,
+                    case_weight = :case_weight,
+                    case_dimensions = :case_dims,
+                    updated_at = NOW()
                 WHERE id = :product_id
-            """), {"product_id": row.product_id, "price": price})
+            """), {
+                "product_id": row.product_id, 
+                "price": price,
+                "case_qty": row.case_quantity,
+                "case_weight": row.weight,
+                "case_dims": row.dimensions
+            })
             action = "updated"
         else:
             # Create new product
             await db.execute(text("""
                 INSERT INTO products (
                     sku, name, description, category, price, stock,
-                    image_url, is_active, created_at, updated_at
+                    image_url, is_active, 
+                    case_quantity, case_weight, case_dimensions,
+                    created_at, updated_at
                 ) VALUES (
                     :sku, :name, :description, 'Supplies', :price, 0,
-                    :image_url, true, NOW(), NOW()
+                    :image_url, true, 
+                    :case_qty, :case_weight, :case_dims,
+                    NOW(), NOW()
                 )
             """), {
                 "sku": mdm_sku,
@@ -479,6 +494,9 @@ async def activate_bcw_product(
                 "description": f"BCW {row.product_name}. Professional-grade comic book storage and protection.",
                 "price": price,
                 "image_url": f"https://mdm-comics-assets.s3.us-east-2.amazonaws.com/bcw-products/{mdm_sku}/00_{row.bcw_sku.lower()}.jpg",
+                "case_qty": row.case_quantity,
+                "case_weight": row.weight,
+                "case_dims": row.dimensions
             })
             action = "created"
 

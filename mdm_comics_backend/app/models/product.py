@@ -106,6 +106,11 @@ class Product(Base):
     weight = Column(String(50))  # e.g., "2.5 lbs", "100g"
     material = Column(String(100))  # e.g., "Acid-free cardboard", "Polypropylene"
 
+    # Case Intelligence
+    case_quantity = Column(Integer, nullable=True)
+    case_weight = Column(Numeric(10, 2), nullable=True)
+    case_dimensions = Column(String(100), nullable=True)
+
     # Timestamps - NASTY-008: Fixed to timezone-aware
     created_at = Column(
         DateTime(timezone=True),

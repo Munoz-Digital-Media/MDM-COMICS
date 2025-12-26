@@ -43,6 +43,11 @@ class ProductCreate(ProductBase):
     certification_number: Optional[str] = Field(None, max_length=50)
     grade_label: Optional[GradeLabel] = None
 
+    # Case Intelligence
+    case_quantity: Optional[int] = None
+    case_weight: Optional[float] = None
+    case_dimensions: Optional[str] = None
+
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
@@ -77,6 +82,11 @@ class ProductUpdate(BaseModel):
     # Physical properties
     weight: Optional[str] = None
     material: Optional[str] = None
+
+    # Case Intelligence
+    case_quantity: Optional[int] = None
+    case_weight: Optional[float] = None
+    case_dimensions: Optional[str] = None
 
     # Grading
     cgc_grade: Optional[float] = Field(None, ge=0.5, le=10.0, description="Numeric grade 0.5-10.0")
@@ -118,6 +128,11 @@ class ProductResponse(ProductBase):
     # Physical properties
     weight: Optional[str] = None
     material: Optional[str] = None
+
+    # Case Intelligence
+    case_quantity: Optional[int] = None
+    case_weight: Optional[float] = None
+    case_dimensions: Optional[str] = None
 
     # Grading
     cgc_grade: Optional[float] = None
