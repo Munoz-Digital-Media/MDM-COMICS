@@ -64,7 +64,7 @@ class ProductUpdateRequest(BaseModel):
     upc: Optional[str] = None
     isbn: Optional[str] = None
     category: Optional[str] = None
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=5000, description="Product description (max 5000 chars)")
 
 
 # ----- Dashboard -----

@@ -10,7 +10,7 @@ from app.models.product import GradingCompany, GradeLabel
 
 class ProductBase(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=5000, description="Product description (max 5000 chars)")
     category: str
     subcategory: Optional[str] = None
     price: float
@@ -51,7 +51,7 @@ class ProductCreate(ProductBase):
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=5000, description="Product description (max 5000 chars)")
     category: Optional[str] = None
     subcategory: Optional[str] = None
     price: Optional[float] = None

@@ -65,7 +65,7 @@ class CategoryResponse(CategoryBase):
 # ============================================================================
 class ProductBase(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=5000, description="Product description (max 5000 chars)")
     price: Decimal
     original_price: Optional[Decimal] = None
     stock: int = 0
@@ -82,7 +82,7 @@ class ProductCreate(ProductBase):
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=5000, description="Product description (max 5000 chars)")
     price: Optional[Decimal] = None
     original_price: Optional[Decimal] = None
     stock: Optional[int] = None
