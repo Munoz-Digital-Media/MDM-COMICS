@@ -166,6 +166,31 @@ class CoverIngestionService:
         # Parse filename for issue details
         self._parse_filename(filename, metadata)
 
+        # Fallback: if issue number not found in filename, check parent folder
+        if not metadata.issue_number and len(parts) >= 2:
+            parent_folder = parts[-2]
+            # Try to extract issue from parent folder
+            # Patterns: 
+            # 1. "spawn_v1_1" -> 1
+            # 2. "Series vVol 1" -> 1
+            # 3. "1" -> 1
+            
+            # Look for number at end of string, possibly preceded by _ or space
+            # e.g. "spawn_v1_1" matches "_1" -> 1
+            # "Deadpool v5 1" matches " 1" -> 1
+            
+            # Pattern: (anything)(separator)(issue_num)(end)
+            # where separator is _ or space or nothing if pure number
+            
+            folder_issue_pattern = re.compile(r'(?:^|[\s_])(\d+(?:\.\d+)?)$', re.IGNORECASE)
+            folder_match = folder_issue_pattern.search(parent_folder)
+            
+            if folder_match:
+                metadata.issue_number = folder_match.group(1)
+            
+            # Also check for variant in folder if not in filename? 
+            # (Keeping it simple for now, user asked about data points/structure)
+
         # Check for CGC grade in folder path
         full_path_lower = file_path.lower()
         cgc_match = self.CGC_PATTERN.search(full_path_lower)

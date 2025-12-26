@@ -80,15 +80,15 @@ def parse_filename(filename: str) -> Optional[Dict[str, Any]]:
     patterns = [
         # Pattern 1: {series}_vol_{volume}_{issue}[{variant}]_{type}
         # Examples: spawn_vol_1_10_front, spawn_vol_1_100E_back
-        r'^([a-z_]+)_vol_(\d+)_(\d+)([a-z])?_(front|back|info)$',
+        r'^([a-z_]+)_vol_(\d+)_(-?\d+)([a-z])?_(front|back|info)$',
 
         # Pattern 2: {series}_v{volume}_{issue}[{variant}]_{type}
-        # Examples: the_spectacular_spider-man_v1_102_front
-        r'^([a-z0-9_-]+)_v(\d+)_(\d+)([a-z])?_(front|back|info)$',
+        # Examples: the_spectacular_spider-man_v1_102_front, what_if_v2_-1_front
+        r'^([a-z0-9_-]+)_v(\d+)_(-?\d+)([a-z])?_(front|back|info)$',
 
         # Pattern 3: {series}_vol_{volume}_{issue.decimal}[{variant}]_{type}
         # Examples: iron_man_vol_1_258.1A_front, iron_man_vol_1_258.2_back
-        r'^([a-z_]+)_vol_(\d+)_(\d+\.\d+)([a-z])?_(front|back|info)$',
+        r'^([a-z_]+)_vol_(\d+)_(-?\d+\.\d+)([a-z])?_(front|back|info)$',
     ]
 
     match = None
@@ -128,6 +128,17 @@ def get_file_checksum(filepath: Path) -> str:
     return sha256.hexdigest()
 
 
+def normalize_series_name(name: Optional[str]) -> str:
+    """Normalize series name by removing punctuation and extra whitespace."""
+    if not name:
+        return ""
+    # Remove common punctuation that varies between sources
+    normalized = re.sub(r'[.!?\-\'\"]+', '', name)
+    # Collapse multiple spaces
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    return normalized.lower()
+
+
 def match_to_database(
     conn,
     series: str,
@@ -143,8 +154,10 @@ def match_to_database(
     """
     cur = conn.cursor()
 
-    # Try exact match first: series name + issue number
-    # Look for series with matching name and volume/year
+    # Normalize the series name from filename
+    normalized_series = normalize_series_name(series)
+
+    # First try exact match on series name + issue number
     query = """
         SELECT ci.id, ci.series_name, ci.number, ci.variant_name, ci.series_year_began
         FROM comic_issues ci
@@ -158,6 +171,43 @@ def match_to_database(
 
     cur.execute(query, params)
     rows = cur.fetchall()
+
+    # If no exact match, try normalized matching (strips punctuation)
+    if not rows:
+        query = """
+            SELECT ci.id, ci.series_name, ci.number, ci.variant_name, ci.series_year_began
+            FROM comic_issues ci
+            WHERE ci.number = %s
+        """
+        cur.execute(query, [issue])
+        all_rows = cur.fetchall()
+
+        # Filter by normalized series name match
+        rows = [
+            row for row in all_rows
+            if normalize_series_name(row[1]) == normalized_series
+        ]
+
+    # If still no match AND we have a variant letter, try {issue}{variant} as the number
+    # This handles cases like "394B" where DB stores number='394B' not number='394'
+    if not rows and variant:
+        combined_number = f"{issue}{variant}"
+        query = """
+            SELECT ci.id, ci.series_name, ci.number, ci.variant_name, ci.series_year_began
+            FROM comic_issues ci
+            WHERE ci.number = %s
+        """
+        cur.execute(query, [combined_number])
+        all_rows = cur.fetchall()
+
+        # Filter by normalized series name match
+        rows = [
+            row for row in all_rows
+            if normalize_series_name(row[1]) == normalized_series
+        ]
+
+        if rows and verbose:
+            print(f"    Matched via combined number: {issue}{variant}")
 
     if not rows:
         if verbose:
