@@ -85,6 +85,10 @@ def parse_filename(filename: str) -> Optional[Dict[str, Any]]:
         # Pattern 2: {series}_v{volume}_{issue}[{variant}]_{type}
         # Examples: the_spectacular_spider-man_v1_102_front
         r'^([a-z0-9_-]+)_v(\d+)_(\d+)([a-z])?_(front|back|info)$',
+
+        # Pattern 3: {series}_vol_{volume}_{issue.decimal}[{variant}]_{type}
+        # Examples: iron_man_vol_1_258.1A_front, iron_man_vol_1_258.2_back
+        r'^([a-z_]+)_vol_(\d+)_(\d+\.\d+)([a-z])?_(front|back|info)$',
     ]
 
     match = None
