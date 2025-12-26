@@ -4,7 +4,7 @@ Pipeline Job Scheduler v1.24.0
 Automated data acquisition jobs that ACTUALLY RUN.
 
 Jobs:
-1. Comic Enrichment - Fetch metadata from Metron, match to existing comics
+1. Comic Enrichment - Fetch metadata from multiple sources (Metron reserved for search)
 2. Funko Enrichment - Fetch data from PriceCharting, update prices
 3. DLQ Retry - Retry failed jobs from dead letter queue
 4. Quarantine Cleanup - Auto-resolve old low-priority quarantine items

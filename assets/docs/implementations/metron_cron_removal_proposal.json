@@ -1,0 +1,173 @@
+{
+  "proposal": {
+    "id": "IMP-20251226-METRON-CRON-REMOVAL",
+    "version": "1.2.0",
+    "title": "Remove Metron from Cron Jobs - Preserve for Search Only",
+    "status": "PENDING_AUTHORIZATION",
+    "created": "2025-12-26",
+    "author": "Claude Code AI Assistant",
+    "sponsor": "Jay @ MDM Comics",
+    "priority": "HIGH",
+    "estimated_complexity": "LOW",
+    "governance_alignment": "constitution_binder.json (web v1.0)"
+  },
+
+  "executive_summary": {
+    "objective": "Remove Metron API from background enrichment cron jobs to preserve API quota exclusively for user-facing search functionality, eliminating risk of rate limit lockouts that would break search.",
+    "business_value": [
+      "Protects user-facing search from rate limit lockouts",
+      "Preserves 10,000/day Metron quota for real-time search",
+      "Eliminates risk of IP ban from aggressive background enrichment",
+      "Simplifies enrichment pipeline (one less rate-limited source)"
+    ],
+    "risk_level": "LOW",
+    "reversibility": "FULL - Can re-add Metron to enrichment if quota increases"
+  },
+
+  "analysis_report": {
+    "pros": [
+      "Infrastructure Isolation: The system uses a dedicated PHASE1_5_SOURCES structure for Metron, making removal clean.",
+      "Source Redundancy: ComicVine and Fandom wikis provide sufficient coverage for description and image data.",
+      "Worker Singleton: The Metron worker is already managed as a singleton, simplifying resource cleanup."
+    ],
+    "cons": [
+      "Data Gaps: Some niche titles might lose automated description coverage provided only by Metron.",
+      "Metadata Drift: Future records will lack metron_id by default, creating minor database inconsistency."
+    ],
+    "opportunities": [
+      "Resource Optimization: Removing the worker lifecycle calls saves event loop overhead during cron runs.",
+      "Logic Simplification: The conditional Phase 1.5 logic can be entirely removed to simplify the codebase.",
+      "Quota Reallocation: 100% of Metron quota can now be used for rich user-facing features (e.g., live suggestions)."
+    ],
+    "hidden_nasties": [
+      "Field Source Dictionary: The ENRICHABLE_FIELDS map must be updated to prevent 'phantom' source lookups.",
+      "Subtle Dependencies: Any deduplication logic relying specifically on metron_id must be verified (verified as safe)."
+    ]
+  },
+
+  "current_state_analysis": {
+    "metron_usage_in_cron": {
+      "file": "mdm_comics_backend/app/jobs/sequential_enrichment.py",
+      "integration_points": [
+        {
+          "location": "Line 2302-2304",
+          "code": "PHASE1_5_SOURCES = [(\"metron\", query_metron)]",
+          "purpose": "Conditional enrichment when description missing"
+        },
+        {
+          "location": "Lines 987-1130",
+          "code": "async def query_metron(...)",
+          "purpose": "Enrichment query function"
+        },
+        {
+          "location": "Lines 2533-2577",
+          "code": "Phase 1.5 execution block",
+          "purpose": "Conditional Metron query logic"
+        },
+        {
+          "location": "Lines 2340-2341, 2897",
+          "code": "start_metron_worker() / stop_metron_worker()",
+          "purpose": "Worker lifecycle management"
+        }
+      ],
+      "rate_limiting": {
+        "per_minute": 30,
+        "per_day": 10000,
+        "persistence": "SQLite (Mokkari library)",
+        "hardening": "Global rate limiter (v2.4.0)"
+      }
+    },
+    "metron_usage_in_search": {
+      "files": [
+        "mdm_comics_backend/app/api/routes/comics.py",
+        "mdm_comics_backend/app/services/metron.py"
+      ],
+      "endpoints_using_metron": [
+        "GET /api/comics/search - Issue search",
+        "GET /api/comics/issues/{id} - Issue lookup",
+        "GET /api/comics/series/{id} - Series lookup",
+        "GET /api/comics/publishers - Publisher list",
+        "GET /api/comics/characters - Character search",
+        "GET /api/comics/creators - Creator search"
+      ],
+      "status": "PRESERVE - Critical for user-facing search"
+    }
+  },
+
+  "implementation_plan": {
+    "feature_branch": {
+      "name": "feature/remove-metron-from-cron",
+      "base": "development",
+      "branch_creation_command": "git checkout development && git pull && git checkout -b feature/remove-metron-from-cron"
+    },
+
+    "changes": [
+      {
+        "id": "1",
+        "file": "mdm_comics_backend/app/jobs/sequential_enrichment.py",
+        "change_type": "MODIFY",
+        "description": "Empty PHASE1_5_SOURCES list",
+        "action": "PHASE1_5_SOURCES = []"
+      },
+      {
+        "id": "2",
+        "file": "mdm_comics_backend/app/jobs/sequential_enrichment.py",
+        "change_type": "MODIFY",
+        "description": "Deprecate query_metron function",
+        "action": "Add @deprecated decorator or clear docstring notice; prevent execution."
+      },
+      {
+        "id": "3",
+        "file": "mdm_comics_backend/app/jobs/sequential_enrichment.py",
+        "change_type": "MODIFY",
+        "description": "Remove worker start/stop lifecycle calls",
+        "action": "Delete await start_metron_worker() and await stop_metron_worker() from run function."
+      },
+      {
+        "id": "4",
+        "file": "mdm_comics_backend/app/jobs/sequential_enrichment.py",
+        "change_type": "MODIFY",
+        "description": "Update ENRICHABLE_FIELDS source mappings",
+        "action": "Remove 'metron' from the sources list for all fields."
+      },
+      {
+        "id": "5",
+        "file": "mdm_comics_backend/app/jobs/pipeline_scheduler.py",
+        "change_type": "MODIFY",
+        "description": "Remove Metron reference from Comic Enrichment job overview",
+        "action": "Update comments and logging to reflect search-only Metron status."
+      }
+    ]
+  },
+
+  "testing_requirements": [
+    {
+      "id": "T1",
+      "type": "Unit",
+      "description": "Verify PHASE1_5_SOURCES is empty",
+      "expected": "List should be empty"
+    },
+    {
+      "id": "T2",
+      "type": "Integration",
+      "description": "Run enrichment job on small batch",
+      "expected": "Job completes without Metron calls, other sources still work"
+    },
+    {
+      "id": "T3",
+      "type": "E2E",
+      "description": "Verify search still works",
+      "expected": "/api/comics/search returns results from Metron"
+    }
+  ],
+
+  "rollback_plan": {
+    "trigger": "If enrichment quality drops significantly without Metron data",
+    "steps": [
+      "Re-add metron to PHASE1_5_SOURCES",
+      "Restore ENRICHABLE_FIELDS mappings",
+      "Re-add worker start/stop calls"
+    ],
+    "estimated_time": "10 minutes"
+  }
+}

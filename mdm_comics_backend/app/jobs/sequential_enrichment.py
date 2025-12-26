@@ -1,5 +1,11 @@
 """
-Sequential Exhaustive Enrichment Job v2.4.0
+Sequential Exhaustive Enrichment Job v2.5.0
+
+v2.5.0 Changes (METRON CRON REMOVAL - IMP-20251226-METRON-CRON-REMOVAL):
+- REMOVED: Metron from background enrichment sources entirely.
+- PRESERVED: Metron for real-time user-facing search functionality only.
+- RESOURCE: Removed Metron worker lifecycle (start/stop) from background jobs.
+- SAFETY: Updated ENRICHABLE_FIELDS to eliminate phantom Metron lookups.
 
 v2.4.0 Changes (METRON RATE LIMIT HARDENING - IMPL-2025-1221-METRON-RL):
 - NEW: Global Metron rate limiter with strict serialization (max concurrency = 1)
@@ -918,28 +924,28 @@ class CircuitBreaker:
 #   - dynamite_fandom: Dynamite Entertainment only
 ENRICHABLE_FIELDS = {
     # Core identifiers
-    "metron_id": {"sources": ["metron"], "required_for_lookup": False},
+    "metron_id": {"sources": [], "required_for_lookup": False},
     "comicvine_id": {"sources": ["comicvine"], "required_for_lookup": False},
     "pricecharting_id": {"sources": ["pricecharting"], "required_for_lookup": False},
 
     # Barcodes - EXPANDED with mycomicshop
-    "upc": {"sources": ["metron", "comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
-    "isbn": {"sources": ["metron", "comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "upc": {"sources": ["comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "isbn": {"sources": ["comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
 
     # Bibliographic - EXPANDED with ALL Fandom wikis (TEXT ONLY), mycomicshop, cbr
     # NOTE: Fandom sources filter by publisher automatically - no cross-wiki queries
-    "description": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
-    "page_count": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
-    "price": {"sources": ["metron", "comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
-    "cover_date": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
-    "store_date": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "description": {"sources": ["comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "page_count": {"sources": ["comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "price": {"sources": ["comicvine", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "cover_date": {"sources": ["comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "store_date": {"sources": ["comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
 
     # Market data (from PriceCharting once we have PC ID)
     "price_loose": {"sources": ["pricecharting"], "required_for_lookup": True},
     "price_graded": {"sources": ["pricecharting"], "required_for_lookup": True},
 
     # Images - ALL sources including Fandom (for perceptual hash matching database)
-    "image": {"sources": ["metron", "comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
+    "image": {"sources": ["comicvine", "marvel_fandom", "dc_fandom", "image_fandom", "idw_fandom", "darkhorse_fandom", "dynamite_fandom", "comicbookrealm", "mycomicshop"], "required_for_lookup": False},
 }
 
 
@@ -990,15 +996,20 @@ async def query_metron(
     rate_mgr: RateLimitManager
 ) -> Dict[str, Any]:
     """
-    Query Metron for missing fields. Returns dict of field->value.
+    DEPRECATED (v2.5.0): Metron is now reserved for search only.
+    This function remains for reference but will not execute queries.
+    
+    IMP-20251226-METRON-CRON-REMOVAL: Preserve quota for search.
+    """
+    return {}
 
-    v2.0.0: Uses official Mokkari library with built-in rate limiting.
-    Mokkari handles: 30 req/min, 10,000 req/day (SQLite persisted).
-
-    v2.4.0: Global rate limiter integration (IMPL-2025-1221-METRON-RL)
-    - Strict serialization (max concurrency = 1)
-    - Global daily budget with persistence
-    - Cooldown after 429 responses
+async def _LEGACY_query_metron_reference(
+    comic: Dict[str, Any],
+    missing_fields: Set[str],
+    rate_mgr: RateLimitManager
+) -> Dict[str, Any]:
+    """
+    Legacy Metron query logic (preserved for reference).
     """
     from app.adapters.metron_adapter import MetronAdapter, RateLimitError
 
@@ -2299,8 +2310,9 @@ async def run_sequential_exhaustive_enrichment_job(
 
     # v2.2.1: Phase 1.5 - Metron queried ONLY if description missing after Phase 1
     # This prevents 429 storms by reducing Metron requests to only essential cases
+    # v2.5.0: Metron REMOVED from enrichment - reserved for search only (IMP-20251226-METRON-CRON-REMOVAL)
     PHASE1_5_SOURCES = [
-        ("metron", query_metron),             # Conditional - only if description missing
+        # ("metron", query_metron),
     ]
 
     # Phase 2 sources: Run after Phase 1 (benefit from UPC found in Phase 1)
@@ -2336,9 +2348,8 @@ async def run_sequential_exhaustive_enrichment_job(
     BATCH_WRITE_SIZE = 50
     CHECKPOINT_INTERVAL = 50
 
-    # Start global Metron worker (idempotent)
-    from app.adapters.metron_adapter import start_metron_worker, stop_metron_worker
-    await start_metron_worker()
+    # Metron worker NO LONGER STARTED for background enrichment (IMP-20251226-METRON-CRON-REMOVAL)
+    # Preservation for search functionality only.
 
     try:
         async with AsyncSessionLocal() as db:
@@ -2893,8 +2904,7 @@ async def run_sequential_exhaustive_enrichment_job(
                 stats["errors"] += 1  # Increment errors counter, not overwrite
 
     finally:
-        # Stop Metron serial worker
-        await stop_metron_worker()
+        # Metron worker removed (IMP-20251226-METRON-CRON-REMOVAL)
 
         # E-H01 FIX: Always cleanup HTTP connections
         await cleanup_http_pool()
