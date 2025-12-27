@@ -129,14 +129,16 @@ def get_file_checksum(filepath: Path) -> str:
 
 
 def normalize_series_name(name: Optional[str]) -> str:
-    """Normalize series name by removing punctuation and extra whitespace."""
+    """Normalize series name by removing punctuation, articles, and extra whitespace."""
     if not name:
         return ""
     # Remove common punctuation that varies between sources
     normalized = re.sub(r'[.!?\-\'\"]+', '', name)
     # Collapse multiple spaces
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    return normalized.lower()
+    normalized = re.sub(r'\s+', ' ', normalized).strip().lower()
+    # Remove leading articles (the, a, an)
+    normalized = re.sub(r'^(the|a|an)\s+', '', normalized)
+    return normalized
 
 
 def match_to_database(
