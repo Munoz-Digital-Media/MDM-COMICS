@@ -1425,12 +1425,45 @@ async def query_pricecharting(
                                 updates["pricecharting_id"] = int(products[0]["id"])
                                 pc_id = products[0]["id"]
 
-                # If no UPC/ISBN match, try title search
+                # If no UPC/ISBN match, try specific title search
                 if not pc_id and comic.get("series_name") and comic.get("number"):
                     if not await rate_mgr.wait_for_source(source):
                         return updates
 
-                    query = f"{comic['series_name']} {comic['number']}"
+                    # Build specific query: Publisher + Series + Vol + #Num + Artist
+                    query_parts = []
+                    
+                    # 1. Publisher
+                    if comic.get("publisher_name"):
+                        query_parts.append(comic["publisher_name"])
+                    
+                    # 2. Series Name
+                    query_parts.append(comic["series_name"])
+                    
+                    # 3. Volume (estimate from year)
+                    year = None
+                    if comic.get("series_year_began"):
+                        year = comic["series_year_began"]
+                    elif comic.get("cover_date"):
+                        try:
+                            year = int(str(comic["cover_date"])[:4])
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    volume = estimate_volume(comic["series_name"], year)
+                    if volume > 1:
+                        query_parts.append(f"Vol {volume}")
+                        
+                    # 4. Issue Number
+                    query_parts.append(f"#{comic['number']}")
+                    
+                    # 5. Cover Artist (if available)
+                    # Note: 'cover_artist' isn't always in the input dict, check keys
+                    if comic.get("cover_artist"):
+                        query_parts.append(comic["cover_artist"])
+
+                    query = " ".join(query_parts)
+                    
                     response = await client.get(
                         "https://www.pricecharting.com/api/products",
                         params={"t": api_token, "q": query, "console-name": "Comics"}
