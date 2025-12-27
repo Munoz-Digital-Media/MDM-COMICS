@@ -1403,7 +1403,29 @@ async def query_pricecharting(
                                 updates["pricecharting_id"] = int(products[0]["id"])
                                 pc_id = products[0]["id"]
 
-                # If no UPC match, try title search
+                # Try ISBN if no PC ID found yet (v2.5.1 enhancement)
+                if not pc_id and comic.get("isbn"):
+                    isbn = "".join(c for c in str(comic["isbn"]) if c.isdigit())
+                    if len(isbn) >= 10:
+                        updates["_queried_with_isbn"] = True
+                        response = await client.get(
+                            "https://www.pricecharting.com/api/products",
+                            params={"t": api_token, "isbn": isbn}
+                        )
+
+                        if response.status_code == 429:
+                            rate_mgr.get_limiter(source).record_rate_limit()
+                            return updates
+
+                        rate_mgr.get_limiter(source).record_success()
+
+                        if response.status_code == 200:
+                            products = response.json().get("products", [])
+                            if products:
+                                updates["pricecharting_id"] = int(products[0]["id"])
+                                pc_id = products[0]["id"]
+
+                # If no UPC/ISBN match, try title search
                 if not pc_id and comic.get("series_name") and comic.get("number"):
                     if not await rate_mgr.wait_for_source(source):
                         return updates
